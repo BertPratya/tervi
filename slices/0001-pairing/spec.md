@@ -89,46 +89,49 @@ and other real-network protections (4), Windows (5), and sign-in (later).
 - R8. The worker shall never show the pairing code. It appears only in the browser.
 - R9. When Reject is clicked, the browser shall show that the computer was not
   paired, and the worker shall report the rejection within a few seconds and stop.
-- R10. If Pair or Reject is clicked again, or on another device, the first
-  decision shall stay. Opening the link again shall show the same code while
-  waiting for the code, and only the result after that.
+- R10. Once Pair or Reject has been clicked, later clicks on either button,
+  from any tab or device, shall not change the decision. The page shall show
+  the current state instead.
+- R11. When the link is opened again, the page shall show the current state:
+  the buttons while waiting for approval, the same code while waiting for the
+  code, and otherwise the result (paired, rejected, failed, or expired).
 
 **Entering the code**
 
-- R11. The worker shall ask for the code only after the pairing is approved,
+- R12. The worker shall ask for the code only after the pairing is approved,
   and shall show the same expiry time again.
-- R12. If a wrong code is typed, then the worker shall show how many tries are
+- R13. If a wrong code is typed, then the worker shall show how many tries are
   left. After 5 wrong codes, the pairing shall fail, and both the terminal and
   the browser shall say so.
-- R13. A pairing code shall only work for the pairing that created it.
+- R14. A pairing code shall only work for the pairing that created it.
 
 **Deadline**
 
-- R14. If the pairing is not approved and the correct code typed within 10
+- R15. If the pairing is not approved and the correct code typed within 10
   minutes of starting, then the pairing shall expire: the worker shall say so
   and stop, and the link shall show that it has expired.
-- R15. While a pairing is expired, rejected, or failed, the link shall show only
+- R16. While a pairing is expired, rejected, or failed, the link shall show only
   the result, and no code shall be accepted.
 
 **Finishing**
 
-- R16. When the correct code is typed, the worker shall receive its credential.
-- R17. The worker shall save the credential in the OS secret store, and never
+- R17. When the correct code is typed, the worker shall receive its credential.
+- R18. The worker shall save the credential in the OS secret store, and never
   in a plain file, in terminal output, or in logs.
-- R18. When the credential is saved, the worker shall confirm with the server.
+- R19. When the credential is saved, the worker shall confirm with the server.
   Then the terminal shall show `✓ Paired successfully.`, and the browser shall
   show that the computer is paired and the tab can be closed.
-- R19. If saving the credential fails, then the worker shall say that pairing
+- R20. If saving the credential fails, then the worker shall say that pairing
   was not completed.
 
 **Secrets**
 
-- R20. Having only the approval link shall not be enough to get the credential.
-- R21. The server shall store only hashes of the secrets, never the secrets themselves.
+- R21. Having only the approval link shall not be enough to get the credential.
+- R22. The server shall store only hashes of the secrets, never the secrets themselves.
 
 **Cancelling**
 
-- R22. When the user presses Ctrl+C, the worker shall show
+- R23. When the user presses Ctrl+C, the worker shall show
   `Pairing cancelled. Nothing was saved.` and stop. The pairing then expires on
   its own.
 
