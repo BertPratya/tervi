@@ -1,6 +1,6 @@
 # 0001 Pairing — slice 1
 
-Status: draft
+Status: approved
 
 ## What the user does
 
@@ -135,6 +135,12 @@ and other real-network protections (4), Windows (5), and sign-in (later).
   `Pairing cancelled. Nothing was saved.` and stop. The pairing then expires on
   its own.
 
+**Network**
+
+- R24. If the connection to the server is lost while waiting for approval, then
+  the worker shall show `Connection lost, retrying...`, keep trying until the
+  deadline, and continue normally when the connection returns.
+
 ## Not in this slice
 
 - Sign-in. Anyone with the link can approve; the pairing code limits the risk.
@@ -148,8 +154,7 @@ and other real-network protections (4), Windows (5), and sign-in (later).
 
 ## Open questions
 
-- If the network drops while the terminal waits for approval, should the worker
-  retry until the deadline, or stop?
+None.
 
 ## Decisions
 
@@ -171,6 +176,9 @@ and other real-network protections (4), Windows (5), and sign-in (later).
   when saved to a log file.
 - The 10-minute deadline covers only the human steps — finishing takes seconds,
   and a deadline there would fail someone who types the code at minute 9:59.
+- Retry until the deadline when the connection drops while waiting for
+  approval — the worker is already asking the server every few seconds, and a
+  short network blip shouldn't force the user to start over.
 - Check the secret store before contacting the server — no link is created that
   could never finish.
 - The credential lives in the OS secret store, never in a file — other programs
