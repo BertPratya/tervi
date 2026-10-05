@@ -16,7 +16,7 @@ Status: draft
    Open this link (on any device) and approve this computer:
      https://tervi.example.com/pair/k7Fq...x2
 
-   Waiting for approval... (expires in 10 minutes)
+   Waiting for approval... (expires at 14:32)
    ```
 
 2. The user opens the link on any device. No sign-in is needed. The page shows
@@ -33,7 +33,7 @@ Status: draft
 
    ```text
    ✓ Approved in the browser.
-   Type the code shown in the browser:
+   Type the code shown in the browser (expires at 14:32):
    Code: 4827-1934
    ✓ Paired successfully.
    ```
@@ -76,7 +76,8 @@ and other real-network protections (4), Windows (5), and sign-in (later).
 - R4. If the server cannot be reached when starting, then the worker shall say
   so and stop.
 - R5. When pairing starts, the worker shall show the computer name, the OS, an
-  approval link, and that it expires in 10 minutes.
+  approval link, and the clock time the pairing expires (10 minutes after
+  starting).
 
 **Approving**
 
@@ -94,7 +95,8 @@ and other real-network protections (4), Windows (5), and sign-in (later).
 
 **Entering the code**
 
-- R11. The worker shall ask for the code only after the pairing is approved.
+- R11. The worker shall ask for the code only after the pairing is approved,
+  and shall show the same expiry time again.
 - R12. If a wrong code is typed, then the worker shall show how many tries are
   left. After 5 wrong codes, the pairing shall fail, and both the terminal and
   the browser shall say so.
@@ -161,6 +163,9 @@ and other real-network protections (4), Windows (5), and sign-in (later).
 - Ctrl+C lets the pairing expire instead of cancelling it on the server —
   expiry is needed anyway for crashes and power loss, when the program can't
   send anything.
+- Show the expiry as a fixed clock time, not a live countdown — nothing moves
+  on screen, typing the code is never disturbed, and the output stays readable
+  when saved to a log file.
 - The 10-minute deadline covers only the human steps — finishing takes seconds,
   and a deadline there would fail someone who types the code at minute 9:59.
 - Check the secret store before contacting the server — no link is created that
