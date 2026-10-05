@@ -1,0 +1,5 @@
+# Local settings and secrets
+.env
+
+# Built binaries
+/bin/

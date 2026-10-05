@@ -87,7 +87,7 @@ The machine connector opens an outbound, authenticated connection from Computer 
 
 This means the platform can send a request to B without requiring the user to open an incoming port on B. Computer A must still be reachable by both the browser and the connector, through the user's chosen network setup.
 
-Feature 001 selects a secure WebSocket for the authenticated worker control connection, as defined in the `contracts/worker-control/` (not yet designed). Its initial protocol establishes the connection; later features add commands and events. IDE access also needs an authenticated tunnel or proxy that supports the HTTP and WebSocket traffic used by Theia, terminals, and previews. One physical connection is not required for all traffic.
+The worker's control connection is authenticated and encrypted, and it carries commands and events in both directions. IDE access also needs an authenticated tunnel or proxy that supports the HTTP and WebSocket traffic used by Theia, terminals, and previews. One physical connection is not required for all traffic.
 
 The user should not have to expose separate public addresses for every terminal, agent, or Theia service. Access goes through the platform's authorized connection path.
 
@@ -99,9 +99,7 @@ The same installation owner can use multiple browser clients simultaneously to a
 
 Opening a second client must not replace the first client's access, create another worker registration, or require another worker control connection. Relevant shared-state updates must reach all authorized clients viewing that state. Closing or losing one browser session must not disconnect another client or the worker, or stop eligible ongoing work.
 
-Concurrent operations must preserve consistent shared state and prevent unintended duplicate execution or silent loss of accepted changes. Each affected feature must define how it handles simultaneous requests, stale client state, retries, and conflicting changes before implementation. The exact policies for simultaneous conversation messages, competing approval decisions, job requests, and file edits remain to be designed in their respective product sections and feature contracts; this requirement does not select a universal lock, queue, or last-write-wins policy.
-
-This is a recorded product requirement for subsequent features, not an expansion of feature 001's pairing and connection-establishment acceptance scope. See [Multiple clients and concurrent operations in the architecture](../architecture.md#multiple-clients-and-concurrent-operations).
+Concurrent operations must preserve consistent shared state and prevent unintended duplicate execution or silent loss of accepted changes. Each affected feature must define how it handles simultaneous requests, stale client state, retries, and conflicting changes before implementation. The exact policies for simultaneous conversation messages, competing approval decisions, job requests, and file edits remain to be designed in their respective product sections; this requirement does not select a universal lock, queue, or last-write-wins policy.
 
 ## 2.4. Adding a Machine
 

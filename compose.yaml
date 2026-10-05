@@ -1,0 +1,15 @@
+# Local development database. Start it with: docker compose up -d
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: tervi
+      POSTGRES_PASSWORD: tervi-dev-password # local development only
+      POSTGRES_DB: tervi
+    ports:
+      - "127.0.0.1:5432:5432" # reachable only from this computer
+    volumes:
+      - postgres-data:/var/lib/postgresql # keeps data when the container is removed
+
+volumes:
+  postgres-data:
