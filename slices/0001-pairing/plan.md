@@ -57,6 +57,17 @@ Only `active` machines exist for the user. A `pending`, `failed`, or `expired`
 machine appears nowhere the user can see, and its credential is accepted for
 nothing except acknowledging or reporting a failure while `pending`.
 
+### Worker state
+
+A small file on the paired computer: `~/.config/tervi/state.json`. It never
+holds the credential, which lives only in the OS secret store (R18).
+
+| Field | Meaning |
+| --- | --- |
+| `server` | The server address used with `--server` |
+| `machine_id` | The machine this computer became |
+| `confirmed` | `false` from just before the acknowledgment is sent; `true` once the server answered OK |
+
 ### Names
 
 | Name | What it is |
@@ -84,6 +95,23 @@ with an optional port: `http://localhost:8080`. An invalid address stops the
 command before anything is contacted.
 
 ## Flow
+
+### Step 0 — The worker reads its state
+
+Before contacting the server, the worker reads `state.json`.
+
+| `state.json` | Worker does |
+| --- | --- |
+| Missing | Starts a new pairing (step 1) |
+| `confirmed: true` | Already paired (R2) |
+| `confirmed: false` | Finishes the earlier pairing: sends the acknowledgment again, as in step 7b, instead of starting a new pairing |
+
+**When finishing an earlier pairing**, the server's answer decides:
+
+- OK → `confirmed: true`, and `✓ Paired successfully.`
+- The machine expired or failed → the credential will never work, so the
+  worker deletes `state.json` and the credential from the secret store, and
+  shows: `✗ The earlier pairing didn't finish in time. Run the same command again to start a new one.`
 
 ### Step 1 — The worker starts a pairing
 
@@ -182,9 +210,29 @@ worker crashed. The machine's 5-minute expiry covers that case.
 
 | Question | Answer |
 | --- | --- |
+| Worker first | Writes `state.json` with `confirmed: false` |
 | Worker sends | The acknowledgment, with the credential as proof |
 | Server does | The machine's status becomes `active`; the pairing request's status becomes `paired`. The server answers OK. |
-| Worker shows | `✓ Paired successfully.` |
+| Worker then | Updates `state.json` to `confirmed: true` and shows `✓ Paired successfully.` |
+
+**The acknowledgment is safe to repeat.** If it arrives again for a machine
+that is already `active`, with the same credential, the server answers OK
+again and changes nothing. A repeat cannot create anything, so retrying it is
+safe (unlike step 1).
+
+**When the answer does not arrive**, the worker retries: 3 tries in total,
+2 seconds apart, and shows each one:
+
+```text
+✓ Credential saved.
+Confirming with the server...
+  No answer, retrying (2 of 3)...
+  No answer, retrying (3 of 3)...
+✗ Saved, but couldn't confirm with the server. Run the same command again to finish.
+```
+
+`state.json` then still says `confirmed: false`, and the next run finishes
+the pairing (step 0).
 | Browser shows | The approval page changes to the result, with the display name, OS name, and OS version: `✓ Paired: bert-desktop · Ubuntu 26.04` (R19) |
 
 ## Mechanisms
@@ -249,6 +297,16 @@ when it is compared, so one clock decides.
   credential does not linger.
 - The credential is never stored in plain form, even for resending — nothing
   secret waits on the server; a lost credential means pairing again.
+- The acknowledgment is safe to repeat, and the worker retries it 3 times,
+  2 seconds apart, showing each try — a lost answer must not leave the worker
+  unsure whether it is paired, and a repeated acknowledgment cannot create
+  anything.
+- The worker writes `state.json` with `confirmed: false` before acknowledging,
+  and `true` after the OK — whatever goes wrong in between, the next run knows
+  whether to start, finish, or refuse. Without it, a lost answer could lead to
+  a second pairing that replaces a working credential.
+- An unconfirmed pairing is finished, not restarted — the server may already
+  consider the machine active.
 - Expiry is checked at every request and also cleaned up every minute — the
   check keeps expired credentials useless at every moment; the clean-up only
   keeps the stored status truthful.
@@ -262,7 +320,8 @@ when it is compared, so one clock decides.
 
 To add later in this plan:
 
-- Local check before step 1: already paired (R2).
+- Already paired (R2): the exact message, and what to do when `state.json` and
+  the credential disagree (one exists without the other).
 - Local check before step 1: the OS secret store is usable (R3).
 - Rename "worker's own secret" to "polling key" in `spec.md`.
 - Update `spec.md` for the machine expiry and the "saving failed" report
