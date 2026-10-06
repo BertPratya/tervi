@@ -47,7 +47,7 @@ A pairing moves through these states:
 ```text
 waiting for approval ──Pair──► waiting for code ──correct code──► finishing ──computer confirms──► paired
         │                           │                                  │
-        ├──Reject──► rejected       ├──5 wrong codes──► failed         └──no confirmation in time──► unfinished (slice 2)
+        ├──Reject──► rejected       ├──5 wrong codes──► failed ◄───────┴──saving failed, or no confirmation within 5 minutes
         └──10 minutes──► expired ◄──┘ (10 minutes)
 ```
 
@@ -56,12 +56,12 @@ Four secrets are involved:
 | Secret | Who has it | What it allows |
 | --- | --- | --- |
 | Approval link | Whoever the terminal shows it to | See the request; click Pair or Reject |
-| Worker's own secret | The worker, in memory, for this attempt only | Check the pairing's progress |
+| Polling key | The worker, in memory, for this attempt only | Check the pairing's progress |
 | Pairing code | Shown only in the browser, typed into the terminal | Prove the approver is at the computer being paired |
 | Credential | The worker, saved in the OS secret store | Act as this paired computer from now on |
 
-Later slices add: cleanup when finishing fails (2), crash recovery (3), HTTPS
-and other real-network protections (4), Windows (5), and sign-in (later).
+Later slices add: crash recovery and re-pairing, HTTPS and other real-network
+protections, Windows, and sign-in.
 
 ## Must always be true (this slice)
 
@@ -120,9 +120,16 @@ and other real-network protections (4), Windows (5), and sign-in (later).
   in a plain file, in terminal output, or in logs.
 - R19. When the credential is saved, the worker shall confirm with the server.
   Then the terminal shall show `✓ Paired successfully.`, and the browser shall
-  show that the computer is paired and the tab can be closed.
+  show that the computer is paired, with its name and OS, and that the tab can
+  be closed.
 - R20. If saving the credential fails, then the worker shall say that pairing
   was not completed.
+- R25. If saving the credential fails, then the worker shall report it, and the
+  pairing shall fail; the browser shall show that it failed.
+- R26. If the worker has not confirmed within 5 minutes after the correct code,
+  then the pairing shall fail, and its credential shall never work.
+- R27. Until the worker confirms, the computer shall not appear anywhere as
+  paired.
 
 **Secrets**
 
@@ -144,7 +151,8 @@ and other real-network protections (4), Windows (5), and sign-in (later).
 ## Not in this slice
 
 - Sign-in. Anyone with the link can approve; the pairing code limits the risk.
-- Cleanup when finishing fails after the correct code (slice 2).
+- Resuming a pairing whose credential never reached the worker. The user runs
+  `tervi pair` again.
 - Crash recovery, re-pairing, and unpairing (slice 3).
 - HTTPS. Slice 1 runs only on one computer (`localhost`); HTTPS comes in slice 4,
   before tervi is used over a real network.
@@ -181,6 +189,9 @@ None.
   short network blip shouldn't force the user to start over.
 - Check the secret store before contacting the server — no link is created that
   could never finish.
+- The server never keeps the credential, not even to send it again — nothing
+  secret waits on the server; if the credential is lost on the way, the user
+  pairs again.
 - The credential lives in the OS secret store, never in a file — other programs
   can read or copy files.
 - An already-paired computer refuses to pair again — re-pairing needs crash
