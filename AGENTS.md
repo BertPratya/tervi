@@ -21,7 +21,7 @@ commands with `GOCACHE=/tmp/<worktree folder name>-gocache`.
 | --- | --- | --- |
 | User | The human owner | Writes specs, makes decisions, reviews and merges every pull request |
 | Architect | The main Claude Code session | Plans, dispatches work, commits, opens pull requests, records every review. The only role that talks to the others. |
-| Worker | `.claude/agents/worker.md`, which runs Codex (`gpt-6-luna`, effort `xhigh`) | Builds one task inside its worktree |
+| Worker | Codex (`gpt-6-luna`, effort `xhigh`) through the Codex plugin, launched by `scripts/run-worker.sh` | Builds one task inside its worktree |
 | Reviewer | `.claude/agents/reviewer.md` (`claude-opus-5-5`, effort `high`) | Reviews a plan or a task. Read-only. |
 
 The worker and the reviewer see files and diffs only, never each other's words.
@@ -53,9 +53,12 @@ Formats for every file, message, report, and pull request are in
    instead (a stack). A stack holds at most one day of work, 3–4 pull requests.
 2. **Worktree.** The architect runs
    `git worktree add ../tervi-task-NNNN-NN -b task/NNNN-NN-name <base>`.
-3. **Build.** The architect sends the worker message. The worker writes tests
-   and code in the worktree, runs the checks, and reports. The worker leaves
-   committing to the architect: Codex's sandbox makes git metadata read-only.
+3. **Build.** The architect saves the worker message to a file and runs
+   `scripts/run-worker.sh <worktree> <message file>` as a background command;
+   Claude Code notifies the architect when Codex finishes, and the command's
+   output is the worker report. The worker writes tests and code in the
+   worktree, runs the checks, and reports. The worker leaves committing to the
+   architect: Codex's sandbox makes git metadata read-only.
 4. **Commit.** The architect commits with the worker's suggested message.
 5. **Review.** The architect sends the code review message to the reviewer.
 6. **Fix.** If the reviewer reports `changes needed`, the architect sends the
