@@ -159,6 +159,7 @@ different `--server` is refused instead of used. Once `tervi unpair` exists
 `TERVI_PUBLIC_URL`: the address other devices use to reach the server. It is
 never taken from the request. The worker shows the link exactly as received.
 In this slice the public address is `http://localhost:8080`.
+| If the worker cannot connect | No connection within 10 seconds (wrong address, server not running, no network). The worker does not retry. It shows `✗ Can't reach <server>. Check that the server is running, then run the command again.` and stops with exit code `1` (R4). |
 | If the request times out after it was sent | The worker does not retry. It says the pairing could not be started and the user can run the command again. A pairing the server did create expires by itself. |
 
 **Values the worker cannot read** are left out. The terminal and the browser
@@ -352,6 +353,10 @@ The worker saves the standard form in its secret store entry.
 - The hostname is the name shown to the user — custom names come later.
 - Hostname and OS name up to 64 characters, OS version up to 32 — 64 is the
   longest hostname Linux allows, and real OS names and versions are far shorter.
+- No automatic retry when the server cannot be reached, after 10 seconds — if
+  the server is not running, retrying will not help, and the user is right
+  there to run the command again; 10 seconds covers a slow network without
+  looking frozen.
 - No automatic retry after a start request times out — the server may already
   have created the pairing, and a retry could create a second one.
 - The record is a *pairing request* — it is temporary; a successful pairing
