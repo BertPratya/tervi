@@ -67,6 +67,22 @@ nothing except acknowledging or reporting a failure while `pending`.
 | Pairing code | The code the browser shows and the user types into the terminal |
 | Credential | The permanent proof the worker receives at the end |
 
+## Worker command
+
+The only command in this slice is `tervi pair --server <url>`. Covers R1.
+
+| Input | Output | Exit code |
+| --- | --- | --- |
+| `tervi pair --server <valid url>` | Starts pairing (step 1) | `0` paired, `1` any failure |
+| `--server` missing | `Usage: tervi pair --server <url>` | `2` |
+| Invalid server address | `Invalid server address: <value>` + usage | `2` |
+| Unknown flag | `Unknown flag: <flag>` + usage | `2` |
+| Unknown command, or no command | `Unknown command: <command>` + usage | `2` |
+
+**A valid server address** starts with `http://` or `https://` and has a host,
+with an optional port: `http://localhost:8080`. An invalid address stops the
+command before anything is contacted.
+
 ## Flow
 
 ### Step 1 — The worker starts a pairing
@@ -77,7 +93,12 @@ nothing except acknowledging or reporting a failure while `pending`.
 | Endpoint | `POST /api/v1/pairings` |
 | Sends | `hostname` (≤ 64), `os_name` (≤ 64), `os_version` (≤ 32). Each one is optional. |
 | Server does | Creates a pairing request with status `waiting_for_approval` and `expires_at` 10 minutes later. Generates a polling key and an approval key and stores only their hashes. |
-| Server answers | The polling key, the approval link (`/pair/<approval key>`), and `expires_at`, which the terminal shows as the expiry time (R5) |
+| Server answers | The polling key, the approval link (`<public address>/pair/<approval key>`), and `expires_at`, which the terminal shows as the expiry time (R5) |
+
+**The approval link's address** comes from the server's own setting,
+`TERVI_PUBLIC_URL`: the address other devices use to reach the server. It is
+never taken from the request. The worker shows the link exactly as received.
+In this slice the public address is `http://localhost:8080`.
 | If the request times out after it was sent | The worker does not retry. It says the pairing could not be started and the user can run the command again. A pairing the server did create expires by itself. |
 
 **Values the worker cannot read** are left out. The terminal and the browser
@@ -196,6 +217,14 @@ when it is compared, so one clock decides.
 
 ## Technical decisions
 
+- One command, `tervi pair --server <url>`; anything else is wrong usage —
+  slice 1 needs nothing more, and a clear "Unknown flag" beats a silent default.
+- Exit codes `0` paired, `1` failure, `2` wrong usage — scripts can tell the
+  three apart; finer codes can come later.
+- The approval link uses the server's configured public address, never the
+  worker's `--server` value or the request's `Host` header — the worker and a
+  phone often need different addresses for the same server, and a request's
+  `Host` header can be forged to point links at another site.
 - Resource-style paths (`POST /api/v1/pairings` creates a pairing) — the common
   REST convention; every endpoint in this plan follows the same style.
 - The hostname is the name shown to the user — custom names come later.
