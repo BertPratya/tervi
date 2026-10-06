@@ -96,6 +96,10 @@ Tables and columns, or files and fields, with types.
 ## Interfaces
 Endpoints, commands, or messages: who calls them, with what proof, for what purpose.
 
+## Mechanisms
+Methods that apply to several steps (expiry, retries, hashing, ...). For each:
+what it applies to, which requirements it covers, and how it works.
+
 ## Technical decisions
 - <decision> — <one-line why>
 

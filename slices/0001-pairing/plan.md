@@ -166,6 +166,34 @@ worker crashed. The machine's 5-minute expiry covers that case.
 | Worker shows | `✓ Paired successfully.` |
 | Browser shows | The approval page changes to the result, with the display name, OS name, and OS version: `✓ Paired: bert-desktop · Ubuntu 26.04` (R19) |
 
+## Mechanisms
+
+Methods that apply to several steps.
+
+### Expiry
+
+Applies to: pairing requests (10 minutes) and pending machines (5 minutes).
+Covers: R15, R16, R26.
+
+Two separate jobs:
+
+1. **Enforcing (at every request).** Before it reads or changes a pairing
+   request or a machine, the server compares `expires_at` with the current
+   time. Anything past its `expires_at` is treated as expired, even if its
+   stored status still says otherwise: a read answers `expired`, and a change
+   is refused. This alone keeps R26 true at every moment.
+2. **Cleaning up (every minute).** A background job updates the stored status
+   of everything past its `expires_at`:
+   - pairing requests in `waiting_for_approval` or `waiting_for_code` become `expired`;
+   - pending machines become `expired`, and their pairing requests, in
+     `finishing`, become `failed`.
+
+The clean-up only makes the stored status truthful. If it runs late or stops,
+nothing unsafe happens, because step 1 already refuses expired records.
+
+All times come from the database's clock, both when `expires_at` is set and
+when it is compared, so one clock decides.
+
 ## Technical decisions
 
 - Resource-style paths (`POST /api/v1/pairings` creates a pairing) — the common
@@ -192,6 +220,12 @@ worker crashed. The machine's 5-minute expiry covers that case.
   credential does not linger.
 - The credential is never stored in plain form, even for resending — nothing
   secret waits on the server; a lost credential means pairing again.
+- Expiry is checked at every request and also cleaned up every minute — the
+  check keeps expired credentials useless at every moment; the clean-up only
+  keeps the stored status truthful.
+- The database's clock decides every expiry — the server and the database run
+  in different processes, and two clocks can disagree by a few milliseconds
+  exactly at the deadline.
 - Success is shown on the approval page itself — the frontend is the easiest
   part to change, so a separate Machines page can come later.
 
