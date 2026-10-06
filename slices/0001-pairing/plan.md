@@ -324,6 +324,51 @@ nothing unsafe happens, because step 1 already refuses expired records.
 All times come from the database's clock, both when `expires_at` is set and
 when it is compared, so one clock decides.
 
+### Status changes
+
+Applies to: every change of a pairing request's or a machine's status, and to
+`tries_left`. Covers: R10, R13, R26, and "never a second credential".
+
+**Change first, in one step; ask why only if nothing changed.**
+
+1. One `UPDATE` changes the record **only if it is still in the expected
+   state** and not past its `expires_at`, and returns the changed row:
+
+   ```sql
+   UPDATE pairing_requests
+      SET status = 'rejected'
+    WHERE approval_key_hash = $1
+      AND status = 'waiting_for_approval'
+      AND expires_at > now()
+   RETURNING status;
+   ```
+
+2. **A row came back:** this request made the change. Answer with the new state.
+3. **Nothing came back:** something else changed it first, or it expired, or
+   it never existed. Only now read the record, and answer with what is really
+   there (`Already accepted`, `Already rejected`, `This link has expired`), or
+   `Invalid link` if no record has that key.
+
+The database lets only one of two simultaneous requests match the condition,
+so two clicks, two tabs, or a double-click can never both win. Reading first
+and changing afterwards would be a race: both requests could read "waiting"
+before either one writes.
+
+Where it is used:
+
+| Step | Change | Only if |
+| --- | --- | --- |
+| 4 | Accept → `waiting_for_code`; Reject → `rejected` | status is `waiting_for_approval` |
+| 5 | Wrong code: `tries_left` − 1, and `failed` when it reaches 0 | status is `waiting_for_code` and `tries_left` > 0 |
+| 6 | Correct code → `finishing`, and the machine is created | status is `waiting_for_code` |
+| 7a | Machine → `failed` | machine is `pending` |
+| 7b | Machine → `active`, pairing request → `paired` | machine is `pending` |
+| Expiry clean-up | Machine → `expired` | machine is `pending` |
+
+Step 6's condition is why the server can never issue a second credential: once
+one correct code moved the request to `finishing`, another submission finds
+nothing to change.
+
 ### Secret store access
 
 Applies to: every read, save, and delete of the worker's secret store entry.
@@ -394,6 +439,9 @@ The worker saves the standard form in its secret store entry.
   will later create a separate, permanent record for the computer.
 - Opening the approval page is a `GET` — reading must never change anything (R6).
 - Only the server counts tries — a single count cannot disagree with itself.
+- Every status change is one conditional `UPDATE`, and the record is read only
+  when nothing changed — reading first and writing afterwards lets two
+  simultaneous requests both believe they won.
 - The worker stops polling once the pairing is accepted — from then on it only
   submits codes.
 - Machines live in their own table — a pairing request is temporary and holds
@@ -454,7 +502,8 @@ To add later in this plan:
 - Update `spec.md` for the machine expiry and the "saving failed" report
   (it currently leaves this cleanup to slice 2).
 - If step 5's answer is lost after the code matched, may the worker send the
-  code again? (The server must never issue a second credential.)
+  code again? (The server already cannot issue a second credential; see Status
+  changes. What remains is what the worker does and shows.)
 - R21: anyone with the approval link can approve.
 - R11 vs R22: showing the pairing code again.
 
