@@ -12,6 +12,9 @@ go vet ./...
 go test ./...
 ```
 
+Inside the Codex sandbox the default Go build cache is read-only. Prefix Go
+commands with `GOCACHE=/tmp/<worktree folder name>-gocache`.
+
 ## Roles
 
 | Role | Who | Job |
