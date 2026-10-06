@@ -62,7 +62,11 @@ Formats for every file, message, report, and pull request are in
    findings to the worker and repeats steps 3–5. After 2 fix rounds without a
    pass, the architect opens the pull request marked `Needs you`.
 7. **Pull request.** On `pass`, the architect pushes the branch, opens the
-   pull request with one comment per review round, and removes the worktree.
+   pull request with one comment per review round, and removes the worktree:
+   `scripts/stop-codex.sh <worktree>` first, then `git worktree remove <worktree>`.
+   The script stops the Codex plugin's background process for that folder,
+   which would otherwise outlive the folder and break any later worktree at
+   the same path.
 8. **User review.** The user reviews. Change requests go to the worker as
    findings, followed by a new review round and a new comment.
 9. **After merge.** The architect updates local `main`, rebases any stacked
