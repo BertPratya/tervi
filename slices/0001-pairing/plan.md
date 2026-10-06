@@ -153,14 +153,20 @@ different `--server` is refused instead of used. Once `tervi unpair` exists
 | Endpoint | `POST /api/v1/pairings` |
 | Sends | `hostname` (≤ 64), `os_name` (≤ 64), `os_version` (≤ 32). Each one is optional. |
 | Server does | Creates a pairing request with status `waiting_for_approval` and `expires_at` 10 minutes later. Generates a polling key and an approval key and stores only their hashes. |
-| Server answers | The polling key, the approval link (`<public address>/pair/<approval key>`), and `expires_at`, which the terminal shows as the expiry time (R5) |
+| Server answers | The polling key, the approval link (`<public address>/pair/<approval key>`), and `expires_in_seconds` (600 at the start) |
+| Worker then | Shows the computer's details, the link, and the expiry as a clock time in its own local time (R5), then polls (step 2) |
+| If the worker cannot connect | No connection within 10 seconds (wrong address, server not running, no network). The worker does not retry. It shows `✗ Can't reach <server>. Check that the server is running, then run the command again.` and stops with exit code `1` (R4). |
+| If the request times out after it was sent | The worker does not retry. It says the pairing could not be started and the user can run the command again. A pairing the server did create expires by itself. |
 
 **The approval link's address** comes from the server's own setting,
 `TERVI_PUBLIC_URL`: the address other devices use to reach the server. It is
 never taken from the request. The worker shows the link exactly as received.
 In this slice the public address is `http://localhost:8080`.
-| If the worker cannot connect | No connection within 10 seconds (wrong address, server not running, no network). The worker does not retry. It shows `✗ Can't reach <server>. Check that the server is running, then run the command again.` and stops with exit code `1` (R4). |
-| If the request times out after it was sent | The worker does not retry. It says the pairing could not be started and the user can run the command again. A pairing the server did create expires by itself. |
+
+**The worker's deadline** is its own clock at the moment the answer arrived,
+plus `expires_in_seconds`. The server sends a duration rather than a time of
+day, so a wrong clock on either computer cannot move the worker's deadline.
+While the server can be reached, the server's own answer (`expired`) decides.
 
 **Values the worker cannot read** are left out. The terminal and the browser
 show `unknown` in their place.
@@ -182,6 +188,24 @@ worker never sends one; the check protects against other callers.
 | Sends | The polling key |
 | Server does | Finds the pairing request by the polling key's hash and answers with its status |
 | Worker then | `waiting_for_approval`: poll again. `rejected` or `expired`: say so and stop. `waiting_for_code`: stop polling and ask for the code (step 5); the answer includes `tries_left`. |
+| Covers | R9, R24 |
+
+**When to poll.** The next poll starts 2 seconds after the previous one ended.
+A poll ends when an answer arrives, when it fails at once (for example,
+connection refused), or when 10 seconds pass without an answer. So polls never
+overlap, and a failing server is not hammered. Polling only reads, so repeating
+it is always safe.
+
+**What the terminal shows:**
+
+| Moment | Terminal | Then |
+| --- | --- | --- |
+| Polling starts | `Waiting for approval... (expires at 14:32)` | Poll |
+| First failed poll | `Connection lost, retrying...` (once, not on every failure) | Keep polling |
+| First successful poll after failures | `Connection restored.` | Keep polling |
+| `rejected` | `✗ Pairing was rejected in the browser.` | Stop, exit code `1` |
+| `expired`, or the worker's deadline passes while the server cannot be reached | `✗ The link expired. Run the command again.` | Stop, exit code `1` |
+| `waiting_for_code` | `✓ Approved in the browser.` then `Type the code shown in the browser (expires at 14:32, 5 tries left):` | Step 5 |
 
 ### Step 3 — The user opens the approval link
 
@@ -353,6 +377,13 @@ The worker saves the standard form in its secret store entry.
 - The hostname is the name shown to the user — custom names come later.
 - Hostname and OS name up to 64 characters, OS version up to 32 — 64 is the
   longest hostname Linux allows, and real OS names and versions are far shorter.
+- Polling every 2 seconds, counted from the end of the previous poll — R9's
+  "within a few seconds" holds, polls never overlap, and an instant failure
+  cannot become a tight loop.
+- Every network request waits at most 10 seconds for an answer — one rule for
+  the whole worker.
+- The server sends the time left (`expires_in_seconds`), not a time of day —
+  clocks on different computers can disagree.
 - No automatic retry when the server cannot be reached, after 10 seconds — if
   the server is not running, retrying will not help, and the user is right
   there to run the command again; 10 seconds covers a slow network without
