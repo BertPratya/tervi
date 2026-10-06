@@ -34,7 +34,10 @@ Formats for every file, message, report, and pull request are in
 1. **Spec.** The user writes `slices/NNNN-name/spec.md` while the architect asks
    questions. The user approves it, and it is merged through a pull request.
 2. **Plan.** The architect writes `plan.md` and `tasks/*.md` on branch
-   `plan/NNNN-name`.
+   `plan/NNNN-name`. A slice has 4–8 tasks; a plan that needs more than 8
+   means the slice is too big, so the architect proposes splitting it. Each
+   task's pull request must be reviewable in 20–40 minutes: roughly 300–400
+   changed lines, not counting tests.
 3. **Plan review.** The reviewer checks the spec, plan, and task files. The
    architect fixes findings marked `Architect`, up to 2 fix rounds. Findings
    marked `User` go to the user.
@@ -71,9 +74,27 @@ Formats for every file, message, report, and pull request are in
    which would otherwise outlive the folder and break any later worktree at
    the same path.
 8. **User review.** The user reviews. Change requests go to the worker as
-   findings, followed by a new review round and a new comment.
+   findings, followed by a new review round and a new comment. See
+   "How the user asks for changes" below.
 9. **After merge.** The architect updates local `main`, rebases any stacked
    branches onto it, and starts the next task.
+
+## How the user asks for changes
+
+- **A change** is a comment on the pull request, on the line it concerns. The
+  user then tells the architect, for example "PR #5 has comments"; the
+  architect does not watch GitHub on its own. Each comment becomes a finding
+  for the worker.
+- **A question** ("why is this written this way?") goes in chat. If the answer
+  shows something should change, it becomes a comment.
+- **Unsure what to change:** the user and the architect discuss it in chat
+  first, and only the decision goes on the pull request. The architect may
+  post that comment for the user, but only after the user approves its exact
+  text, and it ends with "(Decided in discussion with the architect.)".
+- **A discussion that changes behavior** updates `spec.md` first, with the
+  user seeing the diff. One that defers work adds a row to `slices/backlog.md`.
+- **Commits the user pushes** go through the reviewer like any other change;
+  the user tells the architect.
 
 ## When the user must decide
 

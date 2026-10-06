@@ -21,7 +21,7 @@ the worktree the message names.
 
 ## Plan review
 
-Check all six, for every requirement and every task file:
+Check all seven, for every requirement and every task file:
 
 1. **Coverage**: every requirement is handled by a task, and every test in a
    task's "Definition of done" proves a requirement or states its purpose.
@@ -35,6 +35,9 @@ Check all six, for every requirement and every task file:
    finish that task.
 6. **Scope**: everything stays inside the spec and outside its "Not in this
    slice" list.
+7. **Size**: the slice has 4–8 tasks, and each task's pull request can be
+   reviewed in 20–40 minutes (roughly 300–400 changed lines, not counting
+   tests).
 
 ## Code review
 
