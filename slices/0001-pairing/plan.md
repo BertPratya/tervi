@@ -118,7 +118,7 @@ entry, compared with `--server` in standard form (see Mechanisms).
 
 | `state.json` | Worker does |
 | --- | --- |
-| Missing, and no secret store entry | Starts a new pairing (step 1) |
+| Missing, and no secret store entry | Checks that the secret store is usable (see Mechanisms), then starts a new pairing (step 1) |
 | `confirmed: true` | Already paired (R2): `This computer is already paired with <saved server>. Nothing was changed.` Exit code `1`. |
 | Present, but no secret store entry | Incomplete data: stop, change nothing (R31) |
 | Missing, but a secret store entry exists | Incomplete data: stop, change nothing (R31) |
@@ -299,6 +299,30 @@ nothing unsafe happens, because step 1 already refuses expired records.
 All times come from the database's clock, both when `expires_at` is set and
 when it is compared, so one clock decides.
 
+### Secret store access
+
+Applies to: every read, save, and delete of the worker's secret store entry.
+Covers: R3, R18, R20.
+
+**Every operation is checked, and every failure is shown to the user.** No
+secret store failure is ever silent. The worker names the operation that
+failed, adds a hint, and stops with exit code `1`:
+
+```text
+✗ Can't use this computer's secret store (GNOME Keyring). Pairing needs it to keep the credential safe.
+  Make sure you are logged in to a desktop session and the keyring is unlocked.
+```
+
+| Where | Operation | If it fails |
+| --- | --- | --- |
+| Before step 1 (R3) | Save a test value, read it back, delete it | Stop before contacting the server |
+| Step 0 | Read the entry | Stop |
+| Step 6 | Save the real entry, read it back, compare | Saving failed: step 7a |
+| Step 0, cleaning up an expired pairing | Delete the entry | Stop |
+
+**A save counts as successful only if reading it back returns exactly what
+was saved.**
+
 ### Server address comparison
 
 Applies to: comparing `--server` with the saved server (step 0). Covers: R30.
@@ -365,6 +389,13 @@ The worker saves the standard form in its secret store entry.
 - The server address is saved only in the secret store entry, next to the
   credential, not in `state.json` — a plain file is easy to edit or copy by
   mistake, and a credential sent to the wrong server cannot be taken back.
+- Every secret store failure is shown to the user — a silent failure would
+  look like success, or leave the user guessing.
+- The secret store is checked before step 1 with a test value — finding a
+  locked or missing store after the user approved and typed the code would
+  waste their time and leave a pending machine behind.
+- A save is verified by reading it back — it proves the credential can really
+  be used later.
 - Incomplete local data stops the worker, which changes nothing — repairing it
   belongs to `tervi unpair` in a later slice; until then a hint explains the
   manual clean-up so the user is not stuck.
@@ -383,7 +414,6 @@ The worker saves the standard form in its secret store entry.
 
 To add later in this plan:
 
-- Local check before step 1: the OS secret store is usable (R3).
 - Rename "worker's own secret" to "polling key" in `spec.md`.
 - Update `spec.md` for the machine expiry and the "saving failed" report
   (it currently leaves this cleanup to slice 2).
