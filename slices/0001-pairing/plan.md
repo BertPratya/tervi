@@ -118,10 +118,21 @@ entry, compared with `--server` in standard form (see Mechanisms).
 
 | `state.json` | Worker does |
 | --- | --- |
-| Missing | Starts a new pairing (step 1) |
-| `confirmed: true` | Already paired (R2) |
+| Missing, and no secret store entry | Starts a new pairing (step 1) |
+| `confirmed: true` | Already paired (R2): `This computer is already paired with <saved server>. Nothing was changed.` Exit code `1`. |
+| Present, but no secret store entry | Incomplete data: stop, change nothing (R31) |
+| Missing, but a secret store entry exists | Incomplete data: stop, change nothing (R31) |
 | `confirmed: false`, `--server` equals the saved server | Finishes the earlier pairing: sends the acknowledgment again, as in step 7b, instead of starting a new pairing |
 | `confirmed: false`, `--server` differs from the saved server | Refuses and changes nothing: `✗ A pairing with <saved server> isn't finished yet.` followed by `To finish it, run:  tervi pair --server <saved server>` |
+
+**Incomplete data** gets a message naming what is missing, and a hint for
+cleaning up by hand until `tervi unpair` exists:
+
+```text
+✗ The local pairing data is incomplete: state.json exists, but the secret store entry is missing.
+  Nothing was changed.
+  To start over, delete ~/.config/tervi/state.json and the "tervi" entry in Passwords and Keys.
+```
 
 **A credential only ever goes to the server that issued it.** That is why a
 different `--server` is refused instead of used. Once `tervi unpair` exists
@@ -354,6 +365,9 @@ The worker saves the standard form in its secret store entry.
 - The server address is saved only in the secret store entry, next to the
   credential, not in `state.json` — a plain file is easy to edit or copy by
   mistake, and a credential sent to the wrong server cannot be taken back.
+- Incomplete local data stops the worker, which changes nothing — repairing it
+  belongs to `tervi unpair` in a later slice; until then a hint explains the
+  manual clean-up so the user is not stuck.
 - Addresses are compared in a standard form — otherwise `http://LOCALHOST:8080/`
   would be refused as a different server.
 - Expiry is checked at every request and also cleaned up every minute — the
@@ -369,8 +383,6 @@ The worker saves the standard form in its secret store entry.
 
 To add later in this plan:
 
-- Already paired (R2): the exact message, and what to do when `state.json` and
-  the credential disagree (one exists without the other).
 - Local check before step 1: the OS secret store is usable (R3).
 - Rename "worker's own secret" to "polling key" in `spec.md`.
 - Update `spec.md` for the machine expiry and the "saving failed" report
@@ -385,4 +397,5 @@ For a later slice (move to `slices/backlog.md` when this plan is done):
 - Custom computer names chosen by the user.
 - A Machines page listing every active machine.
 - `tervi unpair`: remove a pairing. Then the "isn't finished yet" message also
-  offers unpairing.
+  offers unpairing, and incomplete local data can be cleaned up by the command
+  instead of by hand.
