@@ -57,14 +57,28 @@ Only `active` machines exist for the user. A `pending`, `failed`, or `expired`
 machine appears nowhere the user can see, and its credential is accepted for
 nothing except acknowledging or reporting a failure while `pending`.
 
+### Worker secret store entry
+
+One entry in the OS secret store (GNOME Keyring on Linux), named
+service `tervi`, user `worker`. Its value holds the credential together with
+the server it belongs to:
+
+```json
+{ "server": "http://localhost:8080", "credential": "<credential>" }
+```
+
+**This entry is the only place the worker reads the server address from
+before sending the credential.** The credential is sent only to the server
+saved with it (R30).
+
 ### Worker state
 
-A small file on the paired computer: `~/.config/tervi/state.json`. It never
-holds the credential, which lives only in the OS secret store (R18).
+A small file on the paired computer: `~/.config/tervi/state.json`. It holds
+nothing secret and no server address, so editing it cannot redirect the
+credential.
 
 | Field | Meaning |
 | --- | --- |
-| `server` | The server address used with `--server` |
 | `machine_id` | The machine this computer became |
 | `confirmed` | `false` from just before the acknowledgment is sent; `true` once the server answered OK |
 
@@ -98,14 +112,16 @@ command before anything is contacted.
 
 ### Step 0 — The worker reads its state
 
-Before contacting the server, the worker reads `state.json`.
+Before contacting the server, the worker reads `state.json` and its secret
+store entry. "Saved server" below always means the server in the secret store
+entry, compared with `--server` in standard form (see Mechanisms).
 
 | `state.json` | Worker does |
 | --- | --- |
 | Missing | Starts a new pairing (step 1) |
 | `confirmed: true` | Already paired (R2) |
-| `confirmed: false`, same `--server` | Finishes the earlier pairing: sends the acknowledgment again, as in step 7b, instead of starting a new pairing |
-| `confirmed: false`, different `--server` | Refuses and changes nothing: `✗ A pairing with <saved server> isn't finished yet.` followed by `To finish it, run:  tervi pair --server <saved server>` |
+| `confirmed: false`, `--server` equals the saved server | Finishes the earlier pairing: sends the acknowledgment again, as in step 7b, instead of starting a new pairing |
+| `confirmed: false`, `--server` differs from the saved server | Refuses and changes nothing: `✗ A pairing with <saved server> isn't finished yet.` followed by `To finish it, run:  tervi pair --server <saved server>` |
 
 **A credential only ever goes to the server that issued it.** That is why a
 different `--server` is refused instead of used. Once `tervi unpair` exists
@@ -115,7 +131,7 @@ different `--server` is refused instead of used. Once `tervi unpair` exists
 
 - OK → `confirmed: true`, and `✓ Paired successfully.`
 - The machine expired or failed → the credential will never work, so the
-  worker deletes `state.json` and the credential from the secret store, and
+  worker deletes `state.json` and its secret store entry, and
   shows: `✗ The earlier pairing didn't finish in time. Run the same command again to start a new one.`
 
 ### Step 1 — The worker starts a pairing
@@ -194,7 +210,7 @@ a lost response or a restarted terminal.
 | When | Step 5's code matches |
 | Server does | Creates a credential and a machine with status `pending` and `expires_at` 5 minutes later, storing only the credential's hash. The pairing request's status becomes `finishing`. |
 | Server answers | The credential |
-| Worker then | Saves the credential in the OS secret store (R18), then step 7a or 7b |
+| Worker then | Saves the credential together with the server address in its secret store entry (R18), then step 7a or 7b |
 
 **The server never keeps the credential in plain form, not even to send it
 again.** If the answer is lost, the worker never has the credential, the
@@ -272,6 +288,20 @@ nothing unsafe happens, because step 1 already refuses expired records.
 All times come from the database's clock, both when `expires_at` is set and
 when it is compared, so one clock decides.
 
+### Server address comparison
+
+Applies to: comparing `--server` with the saved server (step 0). Covers: R30.
+
+Two addresses can look different and mean the same server, such as
+`http://LOCALHOST:8080/` and `http://localhost:8080`. Both are first put into
+a standard form, then compared exactly:
+
+- scheme and host in lowercase;
+- the default port removed (`:80` for `http`, `:443` for `https`);
+- no trailing `/`.
+
+The worker saves the standard form in its secret store entry.
+
 ## Technical decisions
 
 - One command, `tervi pair --server <url>`; anything else is wrong usage —
@@ -321,6 +351,11 @@ when it is compared, so one clock decides.
   the same command".
 - A different `--server` during an unfinished pairing is refused — a credential
   must only ever be sent to the server that issued it.
+- The server address is saved only in the secret store entry, next to the
+  credential, not in `state.json` — a plain file is easy to edit or copy by
+  mistake, and a credential sent to the wrong server cannot be taken back.
+- Addresses are compared in a standard form — otherwise `http://LOCALHOST:8080/`
+  would be refused as a different server.
 - Expiry is checked at every request and also cleaned up every minute — the
   check keeps expired credentials useless at every moment; the clean-up only
   keeps the stored status truthful.

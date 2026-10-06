@@ -130,6 +130,20 @@ protections, Windows, and sign-in.
   then the pairing shall fail, and its credential shall never work.
 - R27. Until the worker confirms, the computer shall not appear anywhere as
   paired.
+- R28. If the server's answer to the confirmation is lost, then the worker
+  shall retry the confirmation 3 times, showing each try. If every try fails,
+  the worker shall say that the credential is saved but not confirmed, and
+  show the full command that finishes the pairing.
+- R29. When the command runs again after a pairing that was saved but not
+  confirmed, the worker shall finish that pairing instead of starting a new
+  one. If that pairing already failed or expired, the worker shall say so,
+  remove what it saved, and the next run shall start a new pairing.
+- R30. If the command names a different server while a pairing is saved but
+  not confirmed, then the worker shall change nothing, say which server the
+  unfinished pairing belongs to, and show the command that finishes it. The
+  credential shall never be sent to any server other than the one that issued
+  it: the server address is saved with the credential in the OS secret store,
+  and only that saved address decides where the credential may go.
 
 **Secrets**
 
