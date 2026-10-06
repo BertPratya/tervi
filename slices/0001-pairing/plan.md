@@ -104,7 +104,12 @@ Before contacting the server, the worker reads `state.json`.
 | --- | --- |
 | Missing | Starts a new pairing (step 1) |
 | `confirmed: true` | Already paired (R2) |
-| `confirmed: false` | Finishes the earlier pairing: sends the acknowledgment again, as in step 7b, instead of starting a new pairing |
+| `confirmed: false`, same `--server` | Finishes the earlier pairing: sends the acknowledgment again, as in step 7b, instead of starting a new pairing |
+| `confirmed: false`, different `--server` | Refuses and changes nothing: `✗ A pairing with <saved server> isn't finished yet.` followed by `To finish it, run:  tervi pair --server <saved server>` |
+
+**A credential only ever goes to the server that issued it.** That is why a
+different `--server` is refused instead of used. Once `tervi unpair` exists
+(a later slice), this message will also offer unpairing.
 
 **When finishing an earlier pairing**, the server's answer decides:
 
@@ -228,8 +233,12 @@ safe (unlike step 1).
 Confirming with the server...
   No answer, retrying (2 of 3)...
   No answer, retrying (3 of 3)...
-✗ Saved, but couldn't confirm with the server. Run the same command again to finish.
+✗ Saved, but couldn't confirm with the server.
+  To finish, run:  tervi pair --server http://localhost:8080
 ```
+
+The message always prints the full command with the saved server address, so
+the user can copy it.
 
 `state.json` then still says `confirmed: false`, and the next run finishes
 the pairing (step 0).
@@ -307,6 +316,11 @@ when it is compared, so one clock decides.
   a second pairing that replaces a working credential.
 - An unconfirmed pairing is finished, not restarted — the server may already
   consider the machine active.
+- Finishing uses the same `tervi pair --server <url>` command, printed in full
+  — no second command for a rare case, and a ready-to-copy line beats "run
+  the same command".
+- A different `--server` during an unfinished pairing is refused — a credential
+  must only ever be sent to the server that issued it.
 - Expiry is checked at every request and also cleaned up every minute — the
   check keeps expired credentials useless at every moment; the clean-up only
   keeps the stored status truthful.
@@ -335,3 +349,5 @@ For a later slice (move to `slices/backlog.md` when this plan is done):
 
 - Custom computer names chosen by the user.
 - A Machines page listing every active machine.
+- `tervi unpair`: remove a pairing. Then the "isn't finished yet" message also
+  offers unpairing.
