@@ -20,14 +20,42 @@ One record per pairing attempt. Table `pairing_requests`.
 | `tries_left` | Wrong codes still allowed. Starts at 5. |
 | `expires_at` | 10 minutes after creation |
 
-### Lifecycle
+### Pairing request lifecycle
 
 ```text
-waiting_for_approval ──Accept──► waiting_for_code ──correct code──► (next steps: not designed yet)
-        │                              │
-        ├──Reject──► rejected          ├──tries_left reaches 0──► failed
+waiting_for_approval ──Accept──► waiting_for_code ──correct code──► finishing ──acknowledged──► paired
+        │                              │                               │
+        ├──Reject──► rejected          ├──tries_left reaches 0──► failed ◄──saving failed, or machine expired
         └──expires_at passes──► expired ◄──────────── expires_at passes
 ```
+
+### Machine
+
+One record per paired computer. Table `machines`. Created when the correct
+code arrives; a pairing request holds only the pairing state, never the
+credential.
+
+| Field | Meaning |
+| --- | --- |
+| `machine_id` | The machine's permanent ID |
+| `pairing_request_id` | The pairing request that created this machine |
+| `hostname`, `os_name`, `os_version` | As reported during pairing |
+| `display_name` | Starts as the hostname; editing it comes later |
+| `credential_hash` | Hash of the credential; the credential itself is never stored |
+| `status` | Lifecycle state (below) |
+| `expires_at` | 5 minutes after creation; matters only while `pending` |
+
+### Machine lifecycle
+
+```text
+pending ──acknowledged──► active
+   ├──worker reports saving failed──► failed
+   └──expires_at passes──► expired
+```
+
+Only `active` machines exist for the user. A `pending`, `failed`, or `expired`
+machine appears nowhere the user can see, and its credential is accepted for
+nothing except acknowledging or reporting a failure while `pending`.
 
 ### Names
 
@@ -98,12 +126,45 @@ Sign-in before this step comes in a later slice.
 | --- | --- |
 | Who → who | Worker → Server |
 | Sends | The pairing code the user typed, and the polling key |
-| Code matches | Next steps: not designed yet |
+| Code matches | Step 6 |
 | Code does not match | `tries_left` goes down by 1. The server answers with the new `tries_left`, and the worker shows it. At 0 the status becomes `failed` and the worker stops. |
 
 **Only the server counts tries.** The worker shows the number the server sends
 and never counts by itself, so the two can never disagree, for example after
 a lost response or a restarted terminal.
+
+### Step 6 — The server issues the credential
+
+| Question | Answer |
+| --- | --- |
+| When | Step 5's code matches |
+| Server does | Creates a credential and a machine with status `pending` and `expires_at` 5 minutes later, storing only the credential's hash. The pairing request's status becomes `finishing`. |
+| Server answers | The credential |
+| Worker then | Saves the credential in the OS secret store (R18), then step 7a or 7b |
+
+**The server never keeps the credential in plain form, not even to send it
+again.** If the answer is lost, the worker never has the credential, the
+machine expires, and the user pairs again.
+
+### Step 7a — Saving failed
+
+| Question | Answer |
+| --- | --- |
+| Worker shows | `✗ Couldn't save the credential. Pairing was not completed.` (R20) |
+| Worker sends | "Saving failed", with the credential as proof |
+| Server does | The machine's status becomes `failed`; the pairing request's status becomes `failed`, and the browser shows that pairing failed |
+
+This report may never arrive, for example when the network is down or the
+worker crashed. The machine's 5-minute expiry covers that case.
+
+### Step 7b — Saving succeeded
+
+| Question | Answer |
+| --- | --- |
+| Worker sends | The acknowledgment, with the credential as proof |
+| Server does | The machine's status becomes `active`; the pairing request's status becomes `paired`. The server answers OK. |
+| Worker shows | `✓ Paired successfully.` |
+| Browser shows | The approval page changes to the result, with the display name, OS name, and OS version: `✓ Paired: bert-desktop · Ubuntu 26.04` (R19) |
 
 ## Technical decisions
 
@@ -120,6 +181,19 @@ a lost response or a restarted terminal.
 - Only the server counts tries — a single count cannot disagree with itself.
 - The worker stops polling once the pairing is accepted — from then on it only
   submits codes.
+- Machines live in their own table — a pairing request is temporary and holds
+  only the pairing state; a machine is permanent and holds the credential.
+- A machine is created at the correct code, as `pending` — the acknowledgment
+  needs a stored credential hash to check against.
+- Only `active` machines are visible — a credential nobody confirmed must not
+  look like a paired computer.
+- A pending machine expires after 5 minutes — saving and acknowledging take
+  seconds; 5 minutes leaves room for a slow network, and an unconfirmed
+  credential does not linger.
+- The credential is never stored in plain form, even for resending — nothing
+  secret waits on the server; a lost credential means pairing again.
+- Success is shown on the approval page itself — the frontend is the easiest
+  part to change, so a separate Machines page can come later.
 
 ## Parked
 
@@ -127,11 +201,15 @@ To add later in this plan:
 
 - Local check before step 1: already paired (R2).
 - Local check before step 1: the OS secret store is usable (R3).
-- What happens after the correct code: credential delivery and confirmation.
 - Rename "worker's own secret" to "polling key" in `spec.md`.
+- Update `spec.md` for the machine expiry and the "saving failed" report
+  (it currently leaves this cleanup to slice 2).
+- If step 5's answer is lost after the code matched, may the worker send the
+  code again? (The server must never issue a second credential.)
 - R21: anyone with the approval link can approve.
 - R11 vs R22: showing the pairing code again.
 
 For a later slice (move to `slices/backlog.md` when this plan is done):
 
 - Custom computer names chosen by the user.
+- A Machines page listing every active machine.
