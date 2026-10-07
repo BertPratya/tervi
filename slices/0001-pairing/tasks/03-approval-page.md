@@ -5,15 +5,15 @@ Slice: 0001-pairing    Risk: low    Depends on: 02
 ## Goal
 
 The page a user opens from the approval link: it shows the computer's
-details, lets the user click Pair or Reject, shows the pairing code, and keeps
+details, lets the user click Accept or Reject, shows the pairing code, and keeps
 itself up to date until the pairing ends.
 
 ## Requirements (copied from the spec)
 
 - R6. When someone opens the approval link, the server shall show the computer
-  name and OS, as reported by the worker, with Pair and Reject. Opening the
+  name and OS, as reported by the worker, with Accept and Reject. Opening the
   link shall not change the pairing.
-- R7. When Pair is clicked on a pairing that is waiting for approval, the server
+- R7. When Accept is clicked on a pairing that is waiting for approval, the server
   shall show a pairing code in the browser.
 - R9. When Reject is clicked, the browser shall show that the computer was not
   paired, and the worker shall report the rejection within a few seconds and stop.
@@ -43,7 +43,7 @@ itself up to date until the pairing ends.
 | Method and path | Does |
 | --- | --- |
 | `GET /api/v1/approvals/current` | Current state; changes nothing |
-| `POST /api/v1/approvals/current/accept` | The Pair button |
+| `POST /api/v1/approvals/current/accept` | The Accept button |
 | `POST /api/v1/approvals/current/reject` | The Reject button |
 
 Each answers `200` with
@@ -85,7 +85,7 @@ below is the hostname (`display_name` when paired).
 | Status | The page shows | Polls? |
 | --- | --- | --- |
 | Before the first answer arrives, or while the first request keeps failing | Loading… | Yes |
-| `waiting_for_approval` | "Pair a computer?", the name, OS name and version, and **Pair** and **Reject** buttons | Yes |
+| `waiting_for_approval` | "Pair a computer?", the name, OS name and version, and **Accept** and **Reject** buttons | Yes |
 | `waiting_for_code` | "Type this code into the terminal of `<name>`:", the code in large type, and "Never give this code to anyone." | Yes |
 | `finishing` | Code accepted. Finishing on `<name>`… | Yes |
 | `paired` | ✓ **`<name>` is paired.** `<OS name> <OS version>`. You can close this tab. | No |

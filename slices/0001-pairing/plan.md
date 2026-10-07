@@ -45,7 +45,7 @@ One record per pairing attempt. Table `pairing_requests`.
 ### Pairing request lifecycle
 
 ```text
-waiting_for_approval ───Pair───► waiting_for_code ──correct code──► finishing ──acknowledged──► paired
+waiting_for_approval ──Accept──► waiting_for_code ──correct code──► finishing ──acknowledged──► paired
         │                              │                               │
         ├──Reject──► rejected          ├──tries_left reaches 0──► failed ◄──saving failed, or machine expired
         └──expires_at passes──► expired ◄──────────── expires_at passes
@@ -164,7 +164,7 @@ answer is JSON, and every error answer is `{"error": "<code>"}`.
 | 5 | `POST /api/v1/machines/current/save-failure` | Worker | Credential | Report that saving failed (step 7a) |
 | 6 | `GET /pair/{approval_key}` | Browser | Approval key in the path | The approval page itself (HTML) |
 | 7 | `GET /api/v1/approvals/current` | Browser | Approval key | The page's data, also used for polling (step 3) |
-| 8 | `POST /api/v1/approvals/current/accept` | Browser | Approval key | The **Pair** button (step 4) |
+| 8 | `POST /api/v1/approvals/current/accept` | Browser | Approval key | The **Accept** button (step 4) |
 | 9 | `POST /api/v1/approvals/current/reject` | Browser | Approval key | Reject (step 4) |
 
 **1 — Start.** Request: `{"hostname": "...", "os_name": "...", "os_version": "..."}`,
@@ -340,7 +340,7 @@ it is always safe.
 | Who → who | Browser → Server |
 | Request | `GET`, with the approval key. Opening the page changes nothing (R6). |
 | Server answers | `hostname`, `os_name`, `os_version`, and the status |
-| Browser then | Shows the computer's details with **Pair** and **Reject** |
+| Browser then | Shows the computer's details with **Accept** and **Reject** |
 
 Sign-in before this step comes in a later slice.
 
@@ -350,7 +350,7 @@ Sign-in before this step comes in a later slice.
 | --- | --- |
 | Who → who | Browser → Server, with the approval key |
 | Reject | Status becomes `rejected`. The worker learns it at its next poll. |
-| Pair (the accept action) | Status becomes `waiting_for_code`. The server creates the pairing code, saves it, and the page shows it and asks the user to type it into the terminal. |
+| Accept | Status becomes `waiting_for_code`. The server creates the pairing code, saves it, and the page shows it and asks the user to type it into the terminal. |
 
 ### The approval page stays up to date
 
@@ -361,7 +361,7 @@ R19.
 
 | Status | The page shows |
 | --- | --- |
-| `waiting_for_approval` | The computer's details with **Pair** and **Reject** (keeps polling) |
+| `waiting_for_approval` | The computer's details with **Accept** and **Reject** (keeps polling) |
 | `waiting_for_code` | The pairing code, and "Type this code into the terminal of bert-desktop" (keeps polling) |
 | `finishing` | Code accepted. Finishing on bert-desktop… (keeps polling) |
 | `paired` | ✓ **bert-desktop is paired.** Ubuntu 26.04. You can close this tab. |
@@ -547,7 +547,7 @@ Where it is used:
 
 | Step | Change | Only if |
 | --- | --- | --- |
-| 4 | Pair → `waiting_for_code`; Reject → `rejected` | status is `waiting_for_approval` |
+| 4 | Accept → `waiting_for_code`; Reject → `rejected` | status is `waiting_for_approval` |
 | 5 | Wrong code: `tries_left` − 1, and `failed` with `wrong_codes` when it reaches 0 | status is `waiting_for_code` and `tries_left` > 0 |
 | 6 | Correct code → `finishing`, and the machine is created | status is `waiting_for_code` |
 | 7a | Machine → `failed`; pairing request → `failed` with `not_saved` | machine is `pending` |
@@ -769,7 +769,7 @@ The worker saves the standard form in its secret store entry.
 | R4 (server unreachable) | 06 |
 | R5 (show details, link, expiry) | 02, 06 |
 | R6 (page shows details; opening changes nothing) | 02, 03 |
-| R7 (Pair shows the code) | 02, 03 |
+| R7 (Accept shows the code) | 02, 03 |
 | R8 (worker never shows the code) | 07 |
 | R9 (rejection reported within seconds) | 02, 03, 06, 08 |
 | R10 (first decision stays) | 02 |

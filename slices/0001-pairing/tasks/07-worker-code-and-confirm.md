@@ -36,7 +36,7 @@ earlier unconfirmed pairing, and handle Ctrl+C after saving has begun.
 - R25. If saving the credential fails, then the worker shall report it, and the
   pairing shall fail; the browser shall show that it failed.
 - R28. If the server's answer to the confirmation is lost, then the worker
-  shall retry the confirmation 3 times, showing each try. If every try fails,
+  shall try the confirmation up to 3 times in total, showing each try. If every try fails,
   the worker shall say that the credential is saved but not confirmed, and
   show the full command that finishes the pairing.
 - R29. When the command runs again after a pairing that was saved but not

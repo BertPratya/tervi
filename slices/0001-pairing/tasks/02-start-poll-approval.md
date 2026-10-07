@@ -5,7 +5,7 @@ Slice: 0001-pairing    Risk: core    Depends on: 01
 ## Goal
 
 Add the endpoints for the first half of pairing: the worker starts a pairing
-and polls its status; the approval page reads the pairing and clicks Pair or
+and polls its status; the approval page reads the pairing and clicks Accept or
 Reject. Two simultaneous clicks must never both win.
 
 ## Requirements (copied from the spec)
@@ -14,13 +14,13 @@ Reject. Two simultaneous clicks must never both win.
   approval link, and the clock time the pairing expires (10 minutes after
   starting). *This task provides the link and the time left.*
 - R6. When someone opens the approval link, the server shall show the computer
-  name and OS, as reported by the worker, with Pair and Reject. Opening the
+  name and OS, as reported by the worker, with Accept and Reject. Opening the
   link shall not change the pairing.
-- R7. When Pair is clicked on a pairing that is waiting for approval, the server
+- R7. When Accept is clicked on a pairing that is waiting for approval, the server
   shall show a pairing code in the browser.
 - R9. When Reject is clicked, the browser shall show that the computer was not
   paired, and the worker shall report the rejection within a few seconds and stop.
-- R10. Once Pair or Reject has been clicked, later clicks on either button,
+- R10. Once Accept or Reject has been clicked, later clicks on either button,
   from any tab or device, shall not change the decision. The page shall show
   the current state instead.
 - R11. When the link is opened again, the page shall show the current state:
@@ -97,7 +97,7 @@ malformed → `404 {"error": "invalid_link"}` (the same answer in every case).
 | Method and path | Does |
 | --- | --- |
 | `GET /api/v1/approvals/current` | Reads. Changes nothing. |
-| `POST /api/v1/approvals/current/accept` | The **Pair** button: `waiting_for_approval` → `waiting_for_code`, storing a new pairing code |
+| `POST /api/v1/approvals/current/accept` | The **Accept** button: `waiting_for_approval` → `waiting_for_code`, storing a new pairing code |
 | `POST /api/v1/approvals/current/reject` | The **Reject** button: `waiting_for_approval` → `rejected` |
 
 All three answer `200` with:

@@ -94,7 +94,7 @@ Table `pairing_requests`:
 | `status` | `text not null`, check: one of `waiting_for_approval`, `waiting_for_code`, `finishing`, `paired`, `rejected`, `failed`, `expired` |
 | `polling_key_hash` | `bytea not null unique` |
 | `approval_key_hash` | `bytea not null unique` |
-| `pairing_code` | `text` (null until the Pair button is clicked) |
+| `pairing_code` | `text` (null until the Accept button is clicked) |
 | `tries_left` | `integer not null default 5` |
 | `failure_reason` | `text`, null, or one of `wrong_codes`, `not_saved`, `not_confirmed` |
 | `created_at` | `timestamptz not null default now()` |

@@ -20,8 +20,8 @@ Status: approved
    ```
 
 2. The user opens the link on any device. No sign-in is needed. The page shows
-   the computer name and OS, with **Pair** and **Reject** buttons.
-3. The user clicks **Pair**. The page shows a pairing code:
+   the computer name and OS, with **Accept** and **Reject** buttons.
+3. The user clicks **Accept**. The page shows a pairing code:
 
    ```text
    Type this code into the terminal of bert-desktop:
@@ -33,19 +33,22 @@ Status: approved
 
    ```text
    ✓ Approved in the browser.
-   Type the code shown in the browser (expires at 14:32):
+   Type the code shown in the browser (expires at 14:32, 5 tries left):
    Code: 4827-1934
+   ✓ Code accepted.
+   ✓ Credential saved.
+   Confirming with the server...
    ✓ Paired successfully.
    ```
 
-5. The page changes to: `✓ bert-desktop is paired. You can now close this tab.`
+5. The page changes to: `✓ bert-desktop is paired. Ubuntu 26.04. You can close this tab.`
 
 ## Whole design (all slices, short)
 
 A pairing moves through these states:
 
 ```text
-waiting for approval ──Pair──► waiting for code ──correct code──► finishing ──computer confirms──► paired
+waiting for approval ──Accept──► waiting for code ──correct code──► finishing ──computer confirms──► paired
         │                           │                                  │
         ├──Reject──► rejected       ├──5 wrong codes──► failed ◄───────┴──saving failed, or no confirmation within 5 minutes
         └──10 minutes──► expired ◄──┘ (10 minutes)
@@ -55,7 +58,7 @@ Four secrets are involved:
 
 | Secret | Who has it | What it allows |
 | --- | --- | --- |
-| Approval link | Whoever the terminal shows it to | See the request; click Pair or Reject |
+| Approval link | Whoever the terminal shows it to | See the request; click Accept or Reject |
 | Polling key | The worker, in memory, for this attempt only | Check the pairing's progress |
 | Pairing code | Shown only in the browser, typed into the terminal | Prove the approver is at the computer being paired |
 | Credential | The worker, saved in the OS secret store | Act as this paired computer from now on |
@@ -82,14 +85,14 @@ protections, Windows, and sign-in.
 **Approving**
 
 - R6. When someone opens the approval link, the server shall show the computer
-  name and OS, as reported by the worker, with Pair and Reject. Opening the
+  name and OS, as reported by the worker, with Accept and Reject. Opening the
   link shall not change the pairing.
-- R7. When Pair is clicked on a pairing that is waiting for approval, the server
+- R7. When Accept is clicked on a pairing that is waiting for approval, the server
   shall show a pairing code in the browser.
 - R8. The worker shall never show the pairing code. It appears only in the browser.
 - R9. When Reject is clicked, the browser shall show that the computer was not
   paired, and the worker shall report the rejection within a few seconds and stop.
-- R10. Once Pair or Reject has been clicked, later clicks on either button,
+- R10. Once Accept or Reject has been clicked, later clicks on either button,
   from any tab or device, shall not change the decision. The page shall show
   the current state instead.
 - R11. When the link is opened again, the page shall show the current state:
@@ -131,7 +134,7 @@ protections, Windows, and sign-in.
 - R27. Until the worker confirms, the computer shall not appear anywhere as
   paired.
 - R28. If the server's answer to the confirmation is lost, then the worker
-  shall retry the confirmation 3 times, showing each try. If every try fails,
+  shall try the confirmation up to 3 times in total, showing each try. If every try fails,
   the worker shall say that the credential is saved but not confirmed, and
   show the full command that finishes the pairing.
 - R29. When the command runs again after a pairing that was saved but not

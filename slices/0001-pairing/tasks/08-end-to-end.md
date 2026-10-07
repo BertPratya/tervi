@@ -27,7 +27,7 @@ API. These tests are the evidence that slice 1 is done.
   that finishes it, and the next run shall recover whatever was saved. A
   pairing that is not finished expires on its own.
 - R28. If the server's answer to the confirmation is lost, then the worker
-  shall retry the confirmation 3 times, showing each try. If every try fails,
+  shall try the confirmation up to 3 times in total, showing each try. If every try fails,
   the worker shall say that the credential is saved but not confirmed, and
   show the full command that finishes the pairing.
 
@@ -55,7 +55,7 @@ Proof: `Authorization: Bearer <approval key>`; the approval key is the part of
 | Call | Does |
 | --- | --- |
 | `GET /api/v1/approvals/current` | The state: `status`, details, `pairing_code` while `waiting_for_code`, `failure_reason` when `failed`, `display_name` when `paired` |
-| `POST /api/v1/approvals/current/accept` | The Pair button |
+| `POST /api/v1/approvals/current/accept` | The Accept button |
 | `POST /api/v1/approvals/current/reject` | The Reject button |
 
 ### How the tests run
@@ -89,7 +89,7 @@ do not skip these tests.
 
 | Test | Proves |
 | --- | --- |
-| `TestPairingHappyPath` — start → Pair → read the code from the approval API → type it → `✓ Paired successfully.`, exit `0`; the approval read answers `paired` with the display name and OS; `state.json` says `confirmed: true`; the store holds the server and a credential; no file under `StateDir` contains the credential | R18, R19 |
+| `TestPairingHappyPath` — start → Accept → read the code from the approval API → type it → `✓ Paired successfully.`, exit `0`; the approval read answers `paired` with the display name and OS; `state.json` says `confirmed: true`; the store holds the server and a credential; no file under `StateDir` contains the credential | R18, R19 |
 | `TestRejectEndToEnd` — Reject → the worker prints the rejection and exits `1`; the approval read answers `rejected` | R9 |
 | `TestFiveWrongCodesEndToEnd` — 5 wrong codes → the worker prints the failed message, exit `1`; the approval read answers `failed` with `wrong_codes` | R13 |
 | `TestCtrlCAfterSavingThenFinish` — cancel `ctx` right after the credential is saved → the not-confirmed message, exit `130`; a second `Run` with the same `--server` finishes the pairing, exit `0` | R23 |
