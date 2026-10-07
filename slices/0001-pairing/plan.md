@@ -172,6 +172,7 @@ contacted.
 | --- | --- | --- |
 | `SERVER_ADDR` (where the server listens) | `127.0.0.1:8080` by default | Only this computer can reach the server, which keeps R21's limitation safe. The current default `:8080` listens on every network interface and must change. **The server refuses to start if the host is not a loopback address** (`127.0.0.1`, `::1`, or `localhost`), with a message saying that sign-in must exist first. |
 | `TERVI_PUBLIC_URL` (the address in approval links) | `http://localhost:8080` | See step 1. A trailing `/` is removed, so links never contain `//pair/`. |
+| Allowed hosts | `localhost`, `127.0.0.1`, `::1`, and the host in `TERVI_PUBLIC_URL` | Listening on loopback is not enough: a website open in the user's browser can point its own name at `127.0.0.1` (DNS rebinding) and then talk to the server. Its requests still carry its own name in the `Host` header, so **the server refuses every request whose `Host` names another host**, with `403`. Only the host name counts, not the port, compared in lowercase. |
 
 ## Interfaces
 

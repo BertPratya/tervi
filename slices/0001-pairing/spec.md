@@ -160,7 +160,11 @@ protections, Windows, and sign-in.
   `tervi pair` sees the approval link and can approve it. This slice is
   therefore limited to a server reachable only from its own computer
   (`localhost`). Sign-in, so that only the server's owner can approve, shall
-  exist before the server is reachable from any other computer.
+  exist before the server is reachable from any other computer. Until then,
+  the server shall also refuse every request that names any host other than
+  `localhost`, `127.0.0.1`, `::1`, or the host in its public address, so that
+  a website open in the user's browser cannot reach it through a renamed
+  address (DNS rebinding).
 - R22. The server shall store only hashes of the approval key, the polling key,
   and the credential. The pairing code may be stored as it is, because it is
   useless without the polling key and lives at most 10 minutes.
