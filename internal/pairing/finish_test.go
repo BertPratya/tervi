@@ -317,24 +317,88 @@ func TestCodeOnlyForItsPairing(t *testing.T) {
 }
 
 func TestNoCodeWhenFinished(t *testing.T) {
-	for _, status := range []string{"expired", "rejected", "failed"} {
-		t.Run(status, func(t *testing.T) {
+	for _, test := range []struct {
+		status string
+		reason string
+	}{
+		{status: "expired"},
+		{status: "rejected"},
+		{status: "failed", reason: "wrong_codes"},
+	} {
+		t.Run(test.status, func(t *testing.T) {
 			api := newTestAPI(t)
 			started, _, code := createCodeReady(t, api)
 			if _, err := api.pool.Exec(context.Background(), `UPDATE pairing_requests SET status = $1,
-				failure_reason = CASE WHEN $1 = 'failed' THEN 'wrong_codes' ELSE NULL END WHERE polling_key_hash = $2`,
-				status, secret.Hash(secret.FromString(started.PollingKey))); err != nil {
+				failure_reason = CASE WHEN $1 = 'failed' THEN $2 ELSE NULL END WHERE polling_key_hash = $3`,
+				test.status, test.reason, secret.Hash(secret.FromString(started.PollingKey))); err != nil {
 				t.Fatalf("set terminal status: %v", err)
 			}
 			got := decodeResponse(t, submitCode(t, api, started.PollingKey, code))
-			if got.Result != "expired" && got.Result != "not_waiting_for_code" {
-				t.Errorf("terminal request returned result %q", got.Result)
+			if got.Result != "not_waiting_for_code" || got.Status != test.status {
+				t.Errorf("terminal request returned %q with status %q, want not_waiting_for_code with %q", got.Result, got.Status, test.status)
 			}
 			if machineCount(t, api) != 0 {
 				t.Error("terminal request created a machine")
 			}
 		})
 	}
+}
+
+func TestCodeExpiredWhileWaitingForCode(t *testing.T) {
+	api := newTestAPI(t)
+	started, _, code := createCodeReady(t, api)
+	if _, err := api.pool.Exec(context.Background(), `UPDATE pairing_requests
+		SET expires_at = now() - interval '1 second' WHERE polling_key_hash = $1`,
+		secret.Hash(secret.FromString(started.PollingKey))); err != nil {
+		t.Fatalf("expire waiting request: %v", err)
+	}
+	got := decodeResponse(t, submitCode(t, api, started.PollingKey, code))
+	if got.Result != "expired" {
+		t.Errorf("expired waiting request result = %q, want expired", got.Result)
+	}
+	if machineCount(t, api) != 0 {
+		t.Error("expired waiting request created a machine")
+	}
+	var status string
+	if err := api.pool.QueryRow(context.Background(), `SELECT status FROM pairing_requests WHERE polling_key_hash = $1`,
+		secret.Hash(secret.FromString(started.PollingKey))).Scan(&status); err != nil {
+		t.Fatalf("read expired waiting request: %v", err)
+	}
+	if status != "waiting_for_code" {
+		t.Errorf("expired request status = %q, want unchanged waiting_for_code", status)
+	}
+}
+
+func TestCodeUnavailableUsesPollStatusAfterExpiry(t *testing.T) {
+	t.Run("waiting for approval", func(t *testing.T) {
+		api := newTestAPI(t)
+		started, _ := api.startKnown(t)
+		if _, err := api.pool.Exec(context.Background(), `UPDATE pairing_requests
+			SET expires_at = now() - interval '1 second' WHERE polling_key_hash = $1`,
+			secret.Hash(secret.FromString(started.PollingKey))); err != nil {
+			t.Fatalf("expire waiting request: %v", err)
+		}
+		got := decodeResponse(t, submitCode(t, api, started.PollingKey, "4827-1934"))
+		poll := decodeResponse(t, api.request(t, http.MethodGet, "/api/v1/pairings/current", "", started.PollingKey))
+		if got.Result != "not_waiting_for_code" || got.Status != "expired" || poll.Status != got.Status {
+			t.Errorf("code response %q/%q and poll status %q; want not_waiting_for_code/expired", got.Result, got.Status, poll.Status)
+		}
+	})
+
+	t.Run("finishing machine expired", func(t *testing.T) {
+		api := newTestAPI(t)
+		started, _, code := createCodeReady(t, api)
+		credential := acceptedCredential(t, api, started.PollingKey, code)
+		if _, err := api.pool.Exec(context.Background(), `UPDATE machines
+			SET expires_at = now() - interval '1 second' WHERE machine_id = $1`, credential.MachineID); err != nil {
+			t.Fatalf("expire pending machine: %v", err)
+		}
+		got := decodeResponse(t, submitCode(t, api, started.PollingKey, code))
+		poll := decodeResponse(t, api.request(t, http.MethodGet, "/api/v1/pairings/current", "", started.PollingKey))
+		if got.Result != "not_waiting_for_code" || got.Status != "failed" || poll.Status != got.Status || poll.FailureReason != "not_confirmed" {
+			t.Errorf("code response %q/%q and poll status/reason %q/%q; want not_waiting_for_code/failed with not_confirmed", got.Result, got.Status, poll.Status, poll.FailureReason)
+		}
+	})
 }
 
 func TestOldRejectedAnswersNotWaiting(t *testing.T) {
@@ -384,6 +448,15 @@ func TestAcknowledgmentRepeatable(t *testing.T) {
 	}
 	if got := machineCount(t, api); got != 1 {
 		t.Errorf("machine count after repeat acknowledgment = %d, want 1", got)
+	}
+	var machineStatus, requestStatus string
+	if err := api.pool.QueryRow(context.Background(), `SELECT m.status, pr.status FROM machines m
+		JOIN pairing_requests pr ON pr.id = m.pairing_request_id WHERE m.machine_id = $1`, credential.MachineID).
+		Scan(&machineStatus, &requestStatus); err != nil {
+		t.Fatalf("read state after repeat acknowledgment: %v", err)
+	}
+	if machineStatus != "active" || requestStatus != "paired" {
+		t.Errorf("state after repeat acknowledgment = %s/%s, want active/paired", machineStatus, requestStatus)
 	}
 }
 

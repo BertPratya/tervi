@@ -60,7 +60,7 @@ func startCleanup(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, 
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := cleanupPass(ctx, pool); err != nil {
+				if err := cleanupPass(ctx, pool); err != nil && ctx.Err() == nil {
 					logger.Error("pairing cleanup failed", "error", err)
 				}
 			}
@@ -235,11 +235,21 @@ func (deps Deps) submitCode(w http.ResponseWriter, r *http.Request) {
 	}
 	pollingHash := secret.Hash(secret.FromString(proof))
 	var requestID, status, storedCode string
-	var expires bool
+	var codeExpired bool
 	var triesLeft int
-	err := deps.Pool.QueryRow(r.Context(), `SELECT id::text, status, coalesce(pairing_code, ''), expires_at > now(), tries_left
-		FROM pairing_requests WHERE polling_key_hash = $1`, pollingHash).
-		Scan(&requestID, &status, &storedCode, &expires, &triesLeft)
+	err := deps.Pool.QueryRow(r.Context(), `SELECT pr.id::text,
+		CASE
+			WHEN pr.status IN ('waiting_for_approval', 'waiting_for_code') AND pr.expires_at <= now() THEN 'expired'
+			WHEN pr.status = 'finishing' AND m.status = 'pending' AND m.expires_at <= now() THEN 'failed'
+			ELSE pr.status
+		END,
+		coalesce(pr.pairing_code, ''),
+		pr.status = 'waiting_for_code' AND pr.expires_at <= now(),
+		pr.tries_left
+		FROM pairing_requests AS pr
+		LEFT JOIN machines AS m ON m.pairing_request_id = pr.id
+		WHERE pr.polling_key_hash = $1`, pollingHash).
+		Scan(&requestID, &status, &storedCode, &codeExpired, &triesLeft)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusUnauthorized, "unknown_key")
 		return
@@ -248,7 +258,7 @@ func (deps Deps) submitCode(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w)
 		return
 	}
-	if status == "expired" || (status == "waiting_for_code" && !expires) {
+	if codeExpired {
 		writeJSON(w, http.StatusOK, map[string]string{"result": "expired"})
 		return
 	}
@@ -357,11 +367,17 @@ func (deps Deps) issueCredential(w http.ResponseWriter, r *http.Request, request
 
 func (deps Deps) writeCodeUnavailable(w http.ResponseWriter, r *http.Request, requestID string) {
 	var status string
-	var expires bool
+	var codeExpired bool
 	err := deps.Pool.QueryRow(r.Context(), `SELECT
-		CASE WHEN status = 'waiting_for_code' AND expires_at <= now() THEN 'expired' ELSE status END,
-		status = 'waiting_for_code' AND expires_at > now()
-		FROM pairing_requests WHERE id = $1`, requestID).Scan(&status, &expires)
+		CASE
+			WHEN pr.status IN ('waiting_for_approval', 'waiting_for_code') AND pr.expires_at <= now() THEN 'expired'
+			WHEN pr.status = 'finishing' AND m.status = 'pending' AND m.expires_at <= now() THEN 'failed'
+			ELSE pr.status
+		END,
+		pr.status = 'waiting_for_code' AND pr.expires_at <= now()
+		FROM pairing_requests AS pr
+		LEFT JOIN machines AS m ON m.pairing_request_id = pr.id
+		WHERE pr.id = $1`, requestID).Scan(&status, &codeExpired)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusUnauthorized, "unknown_key")
 		return
@@ -370,7 +386,7 @@ func (deps Deps) writeCodeUnavailable(w http.ResponseWriter, r *http.Request, re
 		writeInternalError(w)
 		return
 	}
-	if status == "expired" || (!expires && status == "waiting_for_code") {
+	if codeExpired {
 		writeJSON(w, http.StatusOK, map[string]string{"result": "expired"})
 		return
 	}
@@ -445,13 +461,19 @@ func (deps Deps) changeMachine(w http.ResponseWriter, r *http.Request, acknowled
 		writeInternalError(w)
 		return
 	}
-	result := status
-	if status == "expired" || status == "failed" {
-		// The stored result is already the response result.
-	} else if acknowledgment && status == "active" {
-		result = "ok"
-	} else if !acknowledgment && status == "active" {
-		result = "active"
+	result := ""
+	switch status {
+	case "active":
+		if acknowledgment {
+			result = "ok"
+		} else {
+			result = "active"
+		}
+	case "failed", "expired":
+		result = status
+	default:
+		writeInternalError(w)
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"result": result})
 }
