@@ -106,7 +106,7 @@ error and return exit code `2`, before anything is read or written:
 | Invalid server address | `Invalid server address: <value>` then the usage line |
 | Unknown flag, including a single-dash `-server` | `Unknown flag: <flag>` then the usage line |
 | An extra argument (`tervi pair --server x extra`) | `Unknown argument: <arg>` then the usage line |
-| Unknown command | `Unknown command: <command>` then the usage line |
+| Unknown command, including a flag given before the command (`tervi --server x pair` → `Unknown command: --server`) | `Unknown command: <command>` then the usage line |
 | No command, or `-h` / `--help` anywhere in the arguments (`tervi pair --help`, `tervi --help pair`) | The usage line only |
 | `--server` as the last argument, `--server=` with an empty value, or `--server` followed by an argument starting with `-` (`--server --foo`) | The usage line |
 
@@ -127,9 +127,12 @@ accepts single-dash flags.
 
 Valid: scheme `http` or `https`, a host, and an optional port. A single
 trailing `/` is allowed. A path, a query (`?`), a fragment (`#`), or a user
-name makes it invalid.
+name makes it invalid. A host containing `:` is valid only as a bracketed IPv6
+address (`http://[::1]:8080`); an IPv6 zone (`%`) is invalid. A port must be a
+number from 1 to 65535.
 
 Standard form, used for saving and comparing: scheme and host in lowercase,
+the port written as a plain number without leading zeros (`:08080` → `:8080`),
 the default port removed (`:80` for `http`, `:443` for `https`), no trailing
 `/`. So `HTTP://LOCALHOST:8080/` becomes `http://localhost:8080`.
 
@@ -277,8 +280,8 @@ comes with the Machines page in a later slice.
 | Test | Proves |
 | --- | --- |
 | `TestUsageErrors` — each input in the command table: exact message on standard error, exit `2`, nothing read or written; `--server=<url>` and `--server <url>` both accepted; also `tervi pair --help`, `tervi --help pair`, `tervi pair --server`, `tervi pair --server=`, `tervi pair --server --foo`, `tervi pair --bogus --server=banana` (→ `Unknown flag: --bogus`), and `tervi pair extra` (→ `Unknown argument: extra`) | R1 |
-| `TestAddressValid` — accepts `http://localhost:8080`, `https://example.com`, `http://localhost:8080/`; rejects `banana`, `ftp://x`, `http://`, `http://localhost:8080/foo`, `http://a?b`, `http://a#b`, `http://u@a` | R1 |
-| `TestAddressStandardForm` — `HTTP://LOCALHOST:8080/` → `http://localhost:8080`; `https://example.com:443` → `https://example.com`; `http://example.com:80` → `http://example.com` | R30 |
+| `TestAddressValid` — accepts `http://localhost:8080`, `https://example.com`, `http://localhost:8080/`; rejects `banana`, `ftp://x`, `http://`, `http://localhost:8080/foo`, `http://a?b`, `http://a#b`, `http://u@a`, `http://a:8080:9090`, `http://[fe80::1%25eth0]:80`, `http://a:0`, `http://a:70000`; accepts `http://[::1]:8080` | R1 |
+| `TestAddressStandardForm` — `HTTP://LOCALHOST:8080/` → `http://localhost:8080`; `https://example.com:443` → `https://example.com`; `http://example.com:80` → `http://example.com`; `http://example.com:08080` → `http://example.com:8080`; `http://[::1]:8080` stays as it is | R30 |
 | `TestStoreCheck` — a working backend passes and leaves no `worker-check` value; `FailGet`, `FailSet`, `FailDelete`, or `ChangeOnRead` make it unusable | R3 |
 | `TestStoreSaveVerified` — with `ChangeOnRead`, `Save` fails | R18 |
 | `TestEntryJSONHoldsRealCredential` — the backend's stored value contains the revealed credential, never `[hidden]` | R18 |
