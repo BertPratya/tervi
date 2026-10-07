@@ -107,7 +107,17 @@ error and return exit code `2`, before anything is read or written:
 | Unknown flag, including a single-dash `-server` | `Unknown flag: <flag>` then the usage line |
 | An extra argument (`tervi pair --server x extra`) | `Unknown argument: <arg>` then the usage line |
 | Unknown command | `Unknown command: <command>` then the usage line |
-| No command, `-h`, or `--help` | The usage line only |
+| No command, or `-h` / `--help` anywhere in the arguments (`tervi pair --help`, `tervi --help pair`) | The usage line only |
+| `--server` as the last argument, `--server=` with an empty value, or `--server` followed by an argument starting with `-` (`--server --foo`) | The usage line |
+
+When several of these apply:
+
+1. `-h` or `--help` anywhere wins over everything else.
+2. Otherwise the arguments are checked **left to right**, and the first error
+   found is reported. For example, `tervi pair --bogus --server=banana` gives
+   `Unknown flag: --bogus`.
+3. A missing `--server` is reported only when no earlier error was found. For
+   example, `tervi pair extra` gives `Unknown argument: extra`.
 
 Both `--server <url>` and `--server=<url>` are accepted. Parse the arguments by
 hand rather than with Go's `flag` package, which prints its own messages and
@@ -266,7 +276,7 @@ comes with the Machines page in a later slice.
 
 | Test | Proves |
 | --- | --- |
-| `TestUsageErrors` — each input in the command table: exact message on standard error, exit `2`, nothing read or written; `--server=<url>` and `--server <url>` both accepted | R1 |
+| `TestUsageErrors` — each input in the command table: exact message on standard error, exit `2`, nothing read or written; `--server=<url>` and `--server <url>` both accepted; also `tervi pair --help`, `tervi --help pair`, `tervi pair --server`, `tervi pair --server=`, `tervi pair --server --foo`, `tervi pair --bogus --server=banana` (→ `Unknown flag: --bogus`), and `tervi pair extra` (→ `Unknown argument: extra`) | R1 |
 | `TestAddressValid` — accepts `http://localhost:8080`, `https://example.com`, `http://localhost:8080/`; rejects `banana`, `ftp://x`, `http://`, `http://localhost:8080/foo`, `http://a?b`, `http://a#b`, `http://u@a` | R1 |
 | `TestAddressStandardForm` — `HTTP://LOCALHOST:8080/` → `http://localhost:8080`; `https://example.com:443` → `https://example.com`; `http://example.com:80` → `http://example.com` | R30 |
 | `TestStoreCheck` — a working backend passes and leaves no `worker-check` value; `FailGet`, `FailSet`, `FailDelete`, or `ChangeOnRead` make it unusable | R3 |
