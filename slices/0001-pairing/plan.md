@@ -1,6 +1,6 @@
 # 0001 Pairing — plan
 
-Status: draft
+Status: approved
 Spec: [spec.md](spec.md)
 
 ## Overview
