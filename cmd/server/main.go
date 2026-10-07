@@ -2,31 +2,27 @@
 package main
 
 import (
-	"log"
-	"net/http"
+	"context"
+	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/bertpratya/tervi/internal/server"
 )
 
 func main() {
-	addr := os.Getenv("SERVER_ADDR")
-	if addr == "" {
-		addr = ":8080"
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	cfg, err := server.LoadConfig()
+	if err != nil {
+		logger.Error("load server config", "error", err)
+		os.Exit(1)
 	}
 
-	log.Printf("listening on %s", addr)
-	if err := http.ListenAndServe(addr, newMux()); err != nil {
-		log.Fatal(err)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := server.Run(ctx, cfg, logger); err != nil {
+		logger.Error("server stopped", "error", err)
+		os.Exit(1)
 	}
-}
-
-// newMux returns the server's routes.
-func newMux() *http.ServeMux {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", handleHealth)
-	return mux
-}
-
-// handleHealth reports that the server is running.
-func handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("ok"))
 }

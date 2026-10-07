@@ -23,7 +23,11 @@ accident.
   `tervi pair` sees the approval link and can approve it. This slice is
   therefore limited to a server reachable only from its own computer
   (`localhost`). Sign-in, so that only the server's owner can approve, shall
-  exist before the server is reachable from any other computer.
+  exist before the server is reachable from any other computer. Until then,
+  the server shall also refuse every request that names any host other than
+  `localhost`, `127.0.0.1`, `::1`, or the host in its public address, so that
+  a website open in the user's browser cannot reach it through a renamed
+  address (DNS rebinding).
 - R22. The server shall store only hashes of the approval key, the polling key,
   and the credential. The pairing code may be stored as it is, because it is
   useless without the polling key and lives at most 10 minutes.
@@ -75,6 +79,18 @@ fill in, so each later task changes only its own package:
 
 **Never log request paths.** No request logging middleware: a path under
 `/pair/` contains an approval key.
+
+**Allowed hosts.** `New` wraps the whole mux, `/health` included, in a check
+of the request's `Host` header:
+
+- Allowed host names: `localhost`, `127.0.0.1`, `::1`, and the host name in
+  `cfg.PublicURL`. Only the name counts, not the port (`localhost:9999` is
+  allowed). Compare in lowercase; `[::1]:8080` has the name `::1`.
+- Any other name, or an empty `Host`: answer `403` with
+  `{"error": "unknown_host"}` (`Content-Type: application/json`), and do not
+  call the mux. Log nothing about it.
+- Tests that send requests through `New` must set a Host:
+  `httptest.NewRequest` uses `example.com` by default, which is refused.
 
 ### Package `internal/db`
 
@@ -186,6 +202,7 @@ If the database cannot be reached from your environment, stop and report it.
 | `TestListenAddressMustBeLoopback` — `:8080`, `0.0.0.0:8080`, and `192.168.1.5:8080` are refused with the message above; `127.0.0.1:9000`, `[::1]:8080`, and `localhost:8080` are accepted | R21 |
 | `TestPublicURL` — `banana` and `ftp://x` are refused; `http://localhost:8080/` becomes `http://localhost:8080` | Links never contain `//pair/` |
 | `TestHealth` — `GET /health` through `server.New` still answers `200 ok` | Existing behavior kept |
+| `TestHostCheck` — through `server.New` with `PublicURL` `http://tervi.test:8080`: Hosts `localhost:8080`, `LOCALHOST:8080`, `127.0.0.1:9000`, `[::1]:8080`, and `tervi.test` reach the route; `evil.example:8080`, `example.com`, `127.0.0.1.evil.example`, and an empty Host get `403 {"error": "unknown_host"}` without reaching it | R21 |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md` changes
 to `done`.

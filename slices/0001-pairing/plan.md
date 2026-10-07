@@ -1,6 +1,6 @@
 # 0001 Pairing — plan
 
-Status: draft
+Status: approved
 Spec: [spec.md](spec.md)
 
 ## Overview
@@ -172,6 +172,7 @@ contacted.
 | --- | --- | --- |
 | `SERVER_ADDR` (where the server listens) | `127.0.0.1:8080` by default | Only this computer can reach the server, which keeps R21's limitation safe. The current default `:8080` listens on every network interface and must change. **The server refuses to start if the host is not a loopback address** (`127.0.0.1`, `::1`, or `localhost`), with a message saying that sign-in must exist first. |
 | `TERVI_PUBLIC_URL` (the address in approval links) | `http://localhost:8080` | See step 1. A trailing `/` is removed, so links never contain `//pair/`. |
+| Allowed hosts | `localhost`, `127.0.0.1`, `::1`, and the host in `TERVI_PUBLIC_URL` | Listening on loopback is not enough: a website open in the user's browser can point its own name at `127.0.0.1` (DNS rebinding) and then talk to the server. Its requests still carry its own name in the `Host` header, so **the server refuses every request whose `Host` names another host**, with `403`. Only the host name counts, not the port, compared in lowercase. |
 
 ## Interfaces
 
@@ -678,9 +679,11 @@ The worker saves the standard form in its secret store entry.
   usual Go approach; the schema travels with the program.
 - The approval page is plain HTML and JavaScript embedded in the server — it
   is one small page; the React and Theia setup comes with later features.
-- The server listens on `127.0.0.1` only — without sign-in, anyone who can
-  reach the server can pair (R21); listening only on this computer makes that
-  limitation safe instead of just written down.
+- The server listens on `127.0.0.1` only and refuses unknown `Host` headers —
+  without sign-in, anyone who can reach the server can pair (R21). Together
+  they make that limitation safe instead of just written down: other
+  computers cannot connect, and websites in the user's browser cannot reach
+  it through DNS rebinding.
 - One command, `tervi pair --server <url>`; anything else is wrong usage —
   slice 1 needs nothing more, and a clear "Unknown flag" beats a silent default.
 - Exit codes `0` paired, `1` failure, `2` wrong usage, `130` cancelled with
@@ -829,7 +832,7 @@ The worker saves the standard form in its secret store entry.
 
 | # | Task | Depends on | Risk | Status |
 | --- | --- | --- | --- | --- |
-| 01 | [Server foundation](tasks/01-server-foundation.md) | — | core | todo |
+| 01 | [Server foundation](tasks/01-server-foundation.md) | — | core | done |
 | 02 | [Server: start, poll, and approval API](tasks/02-start-poll-approval.md) | 01 | core | todo |
 | 03 | [Approval web page](tasks/03-approval-page.md) | 02 | low | todo |
 | 04 | [Server: code, credential, finishing](tasks/04-code-and-credential.md) | 02 | core | todo |
