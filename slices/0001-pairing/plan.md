@@ -126,8 +126,11 @@ The only command in this slice is `tervi pair --server <url>`. Covers R1.
 | Ctrl+C at any point | See "Cancelling with Ctrl+C" | `130` |
 
 **A valid server address** starts with `http://` or `https://` and has a host,
-with an optional port: `http://localhost:8080`. An invalid address stops the
-command before anything is contacted.
+with an optional port: `http://localhost:8080`. Nothing else is allowed except
+a single trailing `/`: a path, a query (`?`), a fragment (`#`), or a user name
+makes the address invalid, because the worker always calls the API at the
+server's root. An invalid address stops the command before anything is
+contacted.
 
 ## Server setup
 
@@ -319,6 +322,9 @@ R19.
 
 | Status | The page shows |
 | --- | --- |
+| `waiting_for_approval` | The computer's details with **Accept** and **Reject** (keeps polling) |
+| `waiting_for_code` | The pairing code, and "Type this code into the terminal of bert-desktop" (keeps polling) |
+| `finishing` | Code accepted. Finishing on bert-desktop… (keeps polling) |
 | `paired` | ✓ **bert-desktop is paired.** Ubuntu 26.04. You can close this tab. |
 | `rejected` | Rejected. This computer was not paired. |
 | `expired` | ✗ **This link has expired.** Run `tervi pair` on the computer again to get a new link. |
