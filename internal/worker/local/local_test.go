@@ -156,6 +156,7 @@ func TestAddressStandardForm(t *testing.T) {
 		"https://example.com:443":   "https://example.com",
 		"http://example.com:80":     "http://example.com",
 		"HTTP://EXAMPLE.COM:08080/": "http://example.com:8080",
+		"http://[::1]:8080":         "http://[::1]:8080",
 	} {
 		got, err := StandardAddress(input)
 		if err != nil || got != want {
