@@ -18,6 +18,7 @@ One record per pairing attempt. Table `pairing_requests`.
 | `approval_key_hash` | Hash of the approval key |
 | `pairing_code` | Created when the user accepts. How it is stored is parked (R11 vs R22). |
 | `tries_left` | Wrong codes still allowed. Starts at 5. |
+| `failure_reason` | Set whenever the status becomes `failed`: `wrong_codes`, `not_saved`, or `not_confirmed`. Empty otherwise. |
 | `expires_at` | 10 minutes after creation |
 
 ### Pairing request lifecycle
@@ -226,6 +227,26 @@ Sign-in before this step comes in a later slice.
 | Reject | Status becomes `rejected`. The worker learns it at its next poll. |
 | Accept | Status becomes `waiting_for_code`. The server creates the pairing code, saves it, and the page shows it and asks the user to type it into the terminal. |
 
+### The approval page stays up to date
+
+The page cannot learn about changes by itself, so while it shows the buttons
+or the pairing code, it **polls**: it repeats step 3's `GET` 2 seconds after
+the previous poll ended. It stops polling once it shows a result. Covers R13,
+R19.
+
+| Status | The page shows |
+| --- | --- |
+| `paired` | ✓ **bert-desktop is paired.** Ubuntu 26.04. You can close this tab. |
+| `rejected` | Rejected. This computer was not paired. |
+| `expired` | ✗ **This link has expired.** Run `tervi pair` on the computer again to get a new link. |
+| `failed`, `wrong_codes` | ✗ **Pairing failed: the wrong code was typed 5 times.** Run `tervi pair` on the computer again to start over. |
+| `failed`, `not_saved` | ✗ **Pairing failed: the computer couldn't save its credential.** Check the terminal on bert-desktop for details. |
+| `failed`, `not_confirmed` | ✗ **Pairing failed: the computer didn't confirm in time.** Run `tervi pair` on the computer again. |
+
+Every failure uses the same red error style, with a sentence that names the
+cause and the next action. The `paired` result shows the machine's display
+name, OS name, and OS version.
+
 ### Step 5 — The worker submits the pairing code
 
 | Question | Answer |
@@ -368,11 +389,11 @@ Where it is used:
 | Step | Change | Only if |
 | --- | --- | --- |
 | 4 | Accept → `waiting_for_code`; Reject → `rejected` | status is `waiting_for_approval` |
-| 5 | Wrong code: `tries_left` − 1, and `failed` when it reaches 0 | status is `waiting_for_code` and `tries_left` > 0 |
+| 5 | Wrong code: `tries_left` − 1, and `failed` with `wrong_codes` when it reaches 0 | status is `waiting_for_code` and `tries_left` > 0 |
 | 6 | Correct code → `finishing`, and the machine is created | status is `waiting_for_code` |
-| 7a | Machine → `failed` | machine is `pending` |
+| 7a | Machine → `failed`; pairing request → `failed` with `not_saved` | machine is `pending` |
 | 7b | Machine → `active`, pairing request → `paired` | machine is `pending` |
-| Expiry clean-up | Machine → `expired` | machine is `pending` |
+| Expiry clean-up | Machine → `expired`; pairing request → `failed` with `not_confirmed` | machine is `pending` |
 
 Step 6's condition is why the server can never issue a second credential: once
 one correct code moved the request to `finishing`, another submission finds
@@ -500,6 +521,11 @@ The worker saves the standard form in its secret store entry.
 - The database's clock decides every expiry — the server and the database run
   in different processes, and two clocks can disagree by a few milliseconds
   exactly at the deadline.
+- The approval page polls every 2 seconds, like the worker — simple, and it
+  reuses step 3's request; push connections can come with the live chat
+  features, where instant updates matter.
+- Each failure cause has its own sentence, recorded as `failure_reason` — the
+  user needs to know what went wrong to know what to do next.
 - Success is shown on the approval page itself — the frontend is the easiest
   part to change, so a separate Machines page can come later.
 
