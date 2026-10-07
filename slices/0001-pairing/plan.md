@@ -16,7 +16,7 @@ One record per pairing attempt. Table `pairing_requests`.
 | `status` | Lifecycle state (below) |
 | `polling_key_hash` | Hash of the polling key |
 | `approval_key_hash` | Hash of the approval key |
-| `pairing_code` | Created when the user accepts. How it is stored is parked (R11 vs R22). |
+| `pairing_code` | Created when the user accepts. Stored as it is, so the page can show the same code again (R11, R22). |
 | `tries_left` | Wrong codes still allowed. Starts at 5. |
 | `failure_reason` | Set whenever the status becomes `failed`: `wrong_codes`, `not_saved`, or `not_confirmed`. Empty otherwise. |
 | `expires_at` | 10 minutes after creation |
@@ -483,6 +483,10 @@ The worker saves the standard form in its secret store entry.
 - The record is a *pairing request* — it is temporary; a successful pairing
   will later create a separate, permanent record for the computer.
 - Opening the approval page is a `GET` — reading must never change anything (R6).
+- The pairing code is stored as it is, while the keys and the credential are
+  hashed — the code is useless without the polling key, which is only stored
+  hashed, and it lives at most 10 minutes; storing it lets the page show the
+  same code again after a reload (R11).
 - Only the server counts tries — a single count cannot disagree with itself.
 - Every status change is one conditional `UPDATE`, and the record is read only
   when nothing changed — reading first and writing afterwards lets two
@@ -561,7 +565,6 @@ To add later in this plan:
   code again? (The server already cannot issue a second credential; see Status
   changes. What remains is what the worker does and shows.)
 - R21: anyone with the approval link can approve.
-- R11 vs R22: showing the pairing code again.
 
 For a later slice (move to `slices/backlog.md` when this plan is done):
 

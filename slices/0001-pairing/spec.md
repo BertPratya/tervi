@@ -152,7 +152,9 @@ protections, Windows, and sign-in.
 **Secrets**
 
 - R21. Having only the approval link shall not be enough to get the credential.
-- R22. The server shall store only hashes of the secrets, never the secrets themselves.
+- R22. The server shall store only hashes of the approval key, the polling key,
+  and the credential. The pairing code may be stored as it is, because it is
+  useless without the polling key and lives at most 10 minutes.
 
 **Cancelling**
 
