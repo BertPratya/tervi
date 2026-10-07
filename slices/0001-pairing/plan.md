@@ -3,6 +3,20 @@
 Status: draft
 Spec: [spec.md](spec.md)
 
+## Overview
+
+| Part | Location | Notes |
+| --- | --- | --- |
+| Server program | `cmd/server` | Reads settings, connects to PostgreSQL, runs migrations, registers routes, starts the expiry clean-up |
+| Database | `internal/db` | Connection and migrations: embedded `.sql` files run with `github.com/pressly/goose/v3` at server start |
+| Secrets | `internal/secret` | The `[hidden]` secret types; generating keys, credentials, and pairing codes; hashing |
+| Pairing on the server | `internal/pairing` | Pairing requests, machines, the status changes, and their HTTP handlers |
+| Approval page | `internal/web` | One HTML page with plain JavaScript, embedded in the server with `go:embed`; no build step |
+| Worker program | `cmd/tervi` | Reads the command line, runs the flow, sets the exit code |
+| Worker command and local state | `internal/worker/local` | The command, the address standard form, `state.json`, and the secret store entry |
+| Worker pairing flow | `internal/worker/flow` | Steps 1–7b as seen from the worker, Ctrl+C, every terminal message |
+| End-to-end test | `test/e2e` | Runs a real server and worker together |
+
 ## Data
 
 ### Pairing request
@@ -121,6 +135,61 @@ command before anything is contacted.
 | --- | --- | --- |
 | `SERVER_ADDR` (where the server listens) | `127.0.0.1:8080` by default | Only this computer can reach the server, which keeps R21's limitation safe. The current default `:8080` listens on every network interface and must change. |
 | `TERVI_PUBLIC_URL` (the address in approval links) | `http://localhost:8080` | See step 1 |
+
+## Interfaces
+
+Every proof (polling key, approval key, credential) is sent in the
+`Authorization: Bearer <proof>` header, never in a URL or a body. The only
+exception is the approval page's own address, `/pair/<approval key>`, which
+the page reads from the address bar and then sends as a header. Every API
+answer is JSON, and every error answer is `{"error": "<code>"}`.
+
+| # | Method and path | Called by | Proof | Purpose |
+| --- | --- | --- | --- | --- |
+| 1 | `POST /api/v1/pairings` | Worker | None | Start a pairing (step 1) |
+| 2 | `GET /api/v1/pairings/current` | Worker | Polling key | Poll (step 2) |
+| 3 | `POST /api/v1/pairings/current/code` | Worker | Polling key | Submit the code; receive the credential (steps 5–6) |
+| 4 | `POST /api/v1/machines/current/acknowledgment` | Worker | Credential | Confirm the credential was saved (step 7b) |
+| 5 | `POST /api/v1/machines/current/save-failure` | Worker | Credential | Report that saving failed (step 7a) |
+| 6 | `GET /pair/{approval_key}` | Browser | Approval key in the path | The approval page itself (HTML) |
+| 7 | `GET /api/v1/approvals/current` | Browser | Approval key | The page's data, also used for polling (step 3) |
+| 8 | `POST /api/v1/approvals/current/accept` | Browser | Approval key | Accept (step 4) |
+| 9 | `POST /api/v1/approvals/current/reject` | Browser | Approval key | Reject (step 4) |
+
+**1 — Start.** Request: `{"hostname": "...", "os_name": "...", "os_version": "..."}`,
+each field optional. Answer `201`:
+`{"polling_key": "...", "approval_url": "http://localhost:8080/pair/...", "expires_in_seconds": 600}`.
+A value over its limit: `400 {"error": "invalid_input"}`.
+
+**2 — Poll.** Answer `200`: `{"status": "...", "expires_in_seconds": 412}`, plus
+`"tries_left": 5` when the status is `waiting_for_code`. The status is the
+current one after expiry is applied (see Mechanisms): `waiting_for_approval`,
+`waiting_for_code`, `finishing`, `paired`, `rejected`, `failed`, or `expired`.
+An unknown polling key: `401 {"error": "unknown_key"}`.
+
+**3 — Code.** Request: `{"code": "4827-1934"}`. Answer `200` with one `result`:
+
+| `result` | Other fields | Meaning |
+| --- | --- | --- |
+| `accepted` | `credential`, `machine_id` | Correct code; step 6 done |
+| `wrong_code` | `tries_left` | Wrong code, tries remain |
+| `failed` | — | Wrong code, no tries left |
+| `expired` | — | The pairing expired |
+| `not_waiting_for_code` | `status` | The pairing is in another state, for example `finishing` after an earlier correct code |
+
+An unknown polling key: `401 {"error": "unknown_key"}`.
+
+**4 — Acknowledgment** and **5 — Save failure.** No body. Answer `200` with
+`{"result": "ok"}`, or `{"result": "expired"}` / `{"result": "failed"}` when the
+machine is no longer `pending` (or, for 4, `active`). An unknown credential:
+`401 {"error": "unknown_credential"}`.
+
+**7, 8, 9 — Approval data.** Answer `200`:
+`{"status": "...", "hostname": "...", "os_name": "...", "os_version": "...", "already_decided": false}`,
+plus `"pairing_code"` while `waiting_for_code`, `"failure_reason"` when `failed`,
+and `"display_name"` when `paired`. For 8 and 9, `"already_decided": true` means
+another click decided first; the rest of the answer is the real state. An
+unknown approval key: `404 {"error": "invalid_link"}`.
 
 ## Flow
 
@@ -459,6 +528,24 @@ failed, adds a hint, and stops with exit code `1`:
 **A save counts as successful only if reading it back returns exactly what
 was saved.**
 
+### Secret values
+
+Applies to: the approval key, the polling key, the credential, and the pairing
+code. Covers: R14, R22.
+
+| Secret | Made of | Stored on the server as |
+| --- | --- | --- |
+| Approval key, polling key, credential | 32 random bytes from Go's `crypto/rand`, written as base64url without padding (43 characters) | SHA-256 hash (`bytea`, unique) |
+| Pairing code | 8 random digits from `crypto/rand`, shown as `4827-1934` | As it is (R22) |
+
+SHA-256 is the right hash here, not bcrypt: bcrypt is slow on purpose to
+protect weak human passwords, while these values are random and impossible to
+guess. Hashes are compared in constant time.
+
+When a code is checked, `-` and spaces are ignored, so `48271934` and
+`4827 1934` match `4827-1934`. A code is only ever checked against the pairing
+request found by the polling key (R14).
+
 ### Secrets never printed
 
 Applies to: the approval key, the polling key, the pairing code, and the
@@ -489,6 +576,16 @@ The worker saves the standard form in its secret store entry.
 
 ## Technical decisions
 
+- Proofs travel in the `Authorization: Bearer` header — URLs and bodies end
+  up in logs and browser history far more often than headers.
+- Secrets are 32 random bytes, hashed with SHA-256 — impossible to guess, so
+  a fast hash is safe; a slow password hash would only slow down every poll.
+- The pairing code is 8 digits, and `-` and spaces are ignored — easy to read
+  and type; with 5 tries out of 100 million codes, guessing is hopeless.
+- Migrations are embedded `.sql` files run by `goose` at server start — the
+  usual Go approach; the schema travels with the program.
+- The approval page is plain HTML and JavaScript embedded in the server — it
+  is one small page; the React and Theia setup comes with later features.
 - The server listens on `127.0.0.1` only — without sign-in, anyone who can
   reach the server can pair (R21); listening only on this computer makes that
   limitation safe instead of just written down.
@@ -598,6 +695,69 @@ The worker saves the standard form in its secret store entry.
   user needs to know what went wrong to know what to do next.
 - Success is shown on the approval page itself — the frontend is the easiest
   part to change, so a separate Machines page can come later.
+
+## Requirement coverage
+
+| Requirement | Tasks |
+| --- | --- |
+| R1 (usage) | 06 |
+| R2 (already paired) | 06 |
+| R3 (secret store usable) | 06 |
+| R4 (server unreachable) | 07 |
+| R5 (show details, link, expiry) | 02, 07 |
+| R6 (page shows details; opening changes nothing) | 03, 04 |
+| R7 (accept shows the code) | 03, 04 |
+| R8 (worker never shows the code) | 07 |
+| R9 (rejection reported within seconds) | 02, 03, 04, 07 |
+| R10 (first decision stays) | 03 |
+| R11 (reopening shows the current state) | 03, 04 |
+| R12 (code asked only after approval; expiry shown again) | 07 |
+| R13 (wrong codes, 5 tries, both sides say it failed) | 04, 05, 07 |
+| R14 (a code works only for its pairing) | 05 |
+| R15 (10-minute expiry) | 01, 02, 03, 05, 07 |
+| R16 (finished pairings accept no code) | 03, 04, 05 |
+| R17 (correct code gives the credential) | 05, 07 |
+| R18 (credential only in the secret store; never printed) | 01, 06, 07, 08 |
+| R19 (success shown in terminal and browser) | 04, 05, 07 |
+| R20 (saving fails → not completed) | 07 |
+| R21 (localhost only until sign-in) | 01 |
+| R22 (only hashes, except the pairing code) | 01, 02, 03, 05 |
+| R23 (Ctrl+C) | 07 |
+| R24 (retry polling until the deadline) | 07 |
+| R25 (saving failure reported) | 05, 07 |
+| R26 (no confirmation in 5 minutes → fail) | 05 |
+| R27 (not shown as paired until confirmed) | 04, 05 |
+| R28 (confirmation retried, then the finish command) | 07 |
+| R29 (next run finishes or restarts) | 06, 07 |
+| R30 (credential only to its saved server) | 06, 07 |
+| R31 (incomplete local data) | 06 |
+
+Task 08 checks the main path end to end, plus R13, R23, R28, and that no
+secret is ever printed.
+
+## Tasks
+
+| # | Task | Depends on | Risk | Status |
+| --- | --- | --- | --- | --- |
+| 01 | [Server foundation](tasks/01-server-foundation.md) | — | core | todo |
+| 02 | [Server: start and poll](tasks/02-start-and-poll.md) | 01 | core | todo |
+| 03 | [Server: approval API](tasks/03-approval-api.md) | 02 | core | todo |
+| 04 | [Approval web page](tasks/04-approval-page.md) | 03 | low | todo |
+| 05 | [Server: code, credential, finishing](tasks/05-code-and-credential.md) | 03 | core | todo |
+| 06 | [Worker: command and local state](tasks/06-worker-local.md) | 01 | core | todo |
+| 07 | [Worker: pairing flow](tasks/07-worker-flow.md) | 02, 05, 06 | core | todo |
+| 08 | [End-to-end test](tasks/08-end-to-end.md) | 04, 07 | normal | todo |
+
+```text
+01 ──► 02 ──► 03 ──► 04 ─────────────┐
+ │             └───► 05 ──┐          ├──► 08
+ └──► 06 ─────────────────┴──► 07 ───┘
+```
+
+Tasks 02–05 and task 06 can be built at the same time; so can 04 and 05.
+Tasks 05 and 07 are the largest. If either is too big to review in 40
+minutes, the slice is split in two (server, then worker) rather than going
+past 8 tasks.
 
 ## Parked
 
