@@ -1,6 +1,8 @@
-package main
+package server_test
 
 import (
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,7 +14,7 @@ func TestHealth(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
-	server.New(server.Config{}, nil, nil).ServeHTTP(rec, req)
+	server.New(server.Config{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil))).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
