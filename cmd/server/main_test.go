@@ -10,6 +10,7 @@ import (
 
 func TestHealth(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.Host = "localhost"
 	rec := httptest.NewRecorder()
 
 	server.New(server.Config{}, nil, nil).ServeHTTP(rec, req)
