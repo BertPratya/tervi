@@ -86,8 +86,10 @@ func TestUsageErrors(t *testing.T) {
 		{"server repeated", []string{"pair", "--server", "http://a", "--server", "http://b"}, usage},
 		{"invalid server", []string{"pair", "--server", "banana"}, "Invalid server address: banana\n" + usage},
 		{"unknown flag", []string{"pair", "-server", "http://a"}, "Unknown flag: -server\n" + usage},
+		{"flag before command", []string{"--server", "x", "pair"}, "Unknown command: --server\n" + usage},
 		{"unknown argument", []string{"pair", "extra"}, "Unknown argument: extra\n" + usage},
 		{"unknown command", []string{"other"}, "Unknown command: other\n" + usage},
+		{"short help after pair", []string{"pair", "-h"}, usage},
 		{"help after pair", []string{"pair", "--help"}, usage},
 		{"help before pair", []string{"--help", "pair"}, usage},
 		{"help wins", []string{"pair", "--bogus", "--help", "--server=banana"}, usage},
@@ -136,12 +138,12 @@ func TestUsageErrors(t *testing.T) {
 }
 
 func TestAddressValid(t *testing.T) {
-	for _, address := range []string{"http://localhost:8080", "https://example.com", "http://localhost:8080/"} {
+	for _, address := range []string{"http://localhost:8080", "https://example.com", "http://localhost:8080/", "http://a:65535", "http://[::1]:8080"} {
 		if _, err := StandardAddress(address); err != nil {
 			t.Errorf("StandardAddress(%q) error = %v", address, err)
 		}
 	}
-	for _, address := range []string{"banana", "ftp://x", "http://", "http://localhost:8080/foo", "http://a?b", "http://a#b", "http://u@a"} {
+	for _, address := range []string{"banana", "ftp://x", "http://", "http://localhost:8080/foo", "http://a?b", "http://a#b", "http://u@a", "http://a:8080:9090", "http://[fe80::1%25eth0]:80", "http://a:0", "http://a:70000"} {
 		if _, err := StandardAddress(address); err == nil {
 			t.Errorf("StandardAddress(%q) succeeded, want invalid address", address)
 		}
@@ -153,7 +155,7 @@ func TestAddressStandardForm(t *testing.T) {
 		"HTTP://LOCALHOST:8080/":    "http://localhost:8080",
 		"https://example.com:443":   "https://example.com",
 		"http://example.com:80":     "http://example.com",
-		"HTTP://EXAMPLE.COM:00080/": "http://example.com",
+		"HTTP://EXAMPLE.COM:08080/": "http://example.com:8080",
 	} {
 		got, err := StandardAddress(input)
 		if err != nil || got != want {
@@ -305,23 +307,27 @@ func TestStepZero(t *testing.T) {
 	}
 	baseMessage := "  Removed the leftover pairing data. Starting a new pairing.\n"
 	cases := []struct {
-		name       string
-		state      *State
-		entry      string
-		wantOut    string
-		wantCode   int
-		start      int
-		finish     int
-		wantSaved  bool
-		wantExists bool
+		name            string
+		state           *State
+		entry           string
+		wantOut         string
+		wantCode        int
+		start           int
+		finish          int
+		wantState       *State
+		wantStateExists bool
+		wantStateSame   bool
+		wantEntry       string
+		wantEntryExists bool
 	}{
 		{name: "missing both", wantCode: 0, start: 1},
 		{name: "missing state", entry: entryRaw(server), wantOut: "Found incomplete pairing data: the secret store entry exists, but state.json is missing.\n" + baseMessage, wantCode: 0, start: 1},
 		{name: "saved false but entry missing", state: &State{MachineID: "m"}, wantOut: "The earlier pairing was interrupted before the credential was saved.\n" + baseMessage, wantCode: 0, start: 1},
-		{name: "saved false and entry exists", state: &State{MachineID: "m"}, entry: entryRaw(server), wantCode: 0, finish: 1, wantSaved: true, wantExists: true},
-		{name: "saved true and entry exists", state: &State{MachineID: "m", CredentialSaved: true}, entry: entryRaw(server), wantCode: 0, finish: 1, wantSaved: true, wantExists: true},
+		{name: "saved false and entry exists", state: &State{MachineID: "m"}, entry: entryRaw(server), wantCode: 0, finish: 1, wantState: &State{MachineID: "m", CredentialSaved: true}, wantStateExists: true, wantEntry: entryRaw(server), wantEntryExists: true},
+		{name: "saved true and entry exists", state: &State{MachineID: "m", CredentialSaved: true}, entry: entryRaw(server), wantCode: 0, finish: 1, wantState: &State{MachineID: "m", CredentialSaved: true}, wantStateExists: true, wantEntry: entryRaw(server), wantEntryExists: true},
 		{name: "saved true but entry missing", state: &State{MachineID: "m", CredentialSaved: true}, wantOut: "Found incomplete pairing data: state.json exists, but the secret store entry is missing.\n" + baseMessage, wantCode: 0, start: 1},
-		{name: "confirmed", state: &State{MachineID: "m", CredentialSaved: true, Confirmed: true}, entry: entryRaw(server), wantOut: "This computer is already paired with http://localhost. Nothing was changed.\n", wantCode: 1, wantSaved: true, wantExists: true},
+		{name: "confirmed", state: &State{MachineID: "m", CredentialSaved: true, Confirmed: true}, entry: entryRaw(server), wantOut: "This computer is already paired with http://localhost. Nothing was changed.\n", wantCode: 1, wantState: &State{MachineID: "m", CredentialSaved: true, Confirmed: true}, wantStateExists: true, wantStateSame: true, wantEntry: entryRaw(server), wantEntryExists: true},
+		{name: "damaged entry", state: &State{MachineID: "m"}, entry: "damaged json", wantOut: "Found a damaged secret store entry for tervi.\n" + baseMessage, wantCode: 0, start: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -334,6 +340,14 @@ func TestStepZero(t *testing.T) {
 			}
 			if tc.entry != "" {
 				if err := backend.Set("worker", tc.entry); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var stateBefore []byte
+			if tc.state != nil {
+				var err error
+				stateBefore, err = os.ReadFile(StatePath(dir))
+				if err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -359,15 +373,27 @@ func TestStepZero(t *testing.T) {
 			if stateErr != nil {
 				t.Fatalf("ReadState() error = %v", stateErr)
 			}
-			_, entryExists := backend.Value("worker")
-			if tc.wantExists != entryExists {
-				t.Errorf("entry exists = %v, want %v", entryExists, tc.wantExists)
+			if stateExists != tc.wantStateExists {
+				t.Errorf("state exists = %v, want %v", stateExists, tc.wantStateExists)
 			}
-			if tc.wantSaved && (!stateExists || !state.CredentialSaved) {
-				t.Errorf("state after run = %+v, exists=%v; want credential_saved=true", state, stateExists)
+			if tc.wantStateExists && tc.wantState != nil && state != *tc.wantState {
+				t.Errorf("state after run = %+v, want %+v", state, *tc.wantState)
 			}
-			if tc.state == nil && tc.name == "missing both" && stateExists {
-				t.Error("new pairing should not create state during step 0")
+			if tc.wantStateSame {
+				stateAfter, err := os.ReadFile(StatePath(dir))
+				if err != nil {
+					t.Fatalf("reading unchanged state: %v", err)
+				}
+				if !bytes.Equal(stateBefore, stateAfter) {
+					t.Errorf("state changed: before=%q after=%q", stateBefore, stateAfter)
+				}
+			}
+			entryAfter, entryExists := backend.Value("worker")
+			if tc.wantEntryExists != entryExists {
+				t.Errorf("entry exists = %v, want %v", entryExists, tc.wantEntryExists)
+			}
+			if tc.wantEntryExists && entryAfter != tc.wantEntry {
+				t.Errorf("entry after run = %q, want %q", entryAfter, tc.wantEntry)
 			}
 			assertNoCredential(t, stdout.String(), stderr.String())
 		})
@@ -426,6 +452,9 @@ func TestUnusableStoreStopsBeforeFlow(t *testing.T) {
 }
 
 func TestStateWriteFailsInStepZero(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission checks are bypassed for the root user")
+	}
 	backend := NewMemoryBackend()
 	if err := backend.Set("worker", `{"server":"http://localhost","credential":"`+testCredential+`"}`); err != nil {
 		t.Fatal(err)
@@ -444,9 +473,6 @@ func TestStateWriteFailsInStepZero(t *testing.T) {
 	env, stdout, stderr := runEnv(t, dir, backend)
 	flow := &flowRecorder{}
 	code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow)
-	if os.Geteuid() == 0 {
-		t.Skip("permission checks are bypassed for the root user")
-	}
 	if code != 1 || stdout.String() != fmt.Sprintf("✗ Can't write %s.\n", StatePath(dir)) || stderr.Len() != 0 || flow.finishCalls != 0 {
 		t.Errorf("code=%d stdout=%q stderr=%q flow=%+v", code, stdout.String(), stderr.String(), flow)
 	}

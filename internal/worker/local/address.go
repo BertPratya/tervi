@@ -32,6 +32,14 @@ func StandardAddress(address string) (string, error) {
 	if host == "" {
 		return "", fmt.Errorf("invalid server address")
 	}
+	bracketedHost := strings.HasPrefix(u.Host, "[")
+	if bracketedHost {
+		if !strings.Contains(host, ":") || strings.Contains(host, "%") || net.ParseIP(host) == nil {
+			return "", fmt.Errorf("invalid server address")
+		}
+	} else if strings.Count(u.Host, ":") > 1 {
+		return "", fmt.Errorf("invalid server address")
+	}
 	port := u.Port()
 	portNumber := 0
 	if strings.HasSuffix(u.Host, ":") {
@@ -43,6 +51,7 @@ func StandardAddress(address string) (string, error) {
 			return "", fmt.Errorf("invalid server address")
 		}
 		portNumber = n
+		port = strconv.Itoa(n)
 	}
 
 	if (scheme == "http" && portNumber == 80) || (scheme == "https" && portNumber == 443) {
