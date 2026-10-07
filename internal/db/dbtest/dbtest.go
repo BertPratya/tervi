@@ -42,11 +42,11 @@ func New(t *testing.T) *pgxpool.Pool {
 
 	adminPool, err := pgxpool.NewWithConfig(ctx, adminConfig)
 	if err != nil {
-		t.Fatalf("cannot connect to PostgreSQL host %q from DATABASE_URL", host)
+		t.Fatalf("cannot connect to PostgreSQL host %q from DATABASE_URL: %v", host, err)
 	}
 	if err := adminPool.Ping(ctx); err != nil {
 		adminPool.Close()
-		t.Fatalf("cannot reach PostgreSQL host %q from DATABASE_URL", host)
+		t.Fatalf("cannot reach PostgreSQL host %q from DATABASE_URL: %v", host, err)
 	}
 
 	name, err := randomDatabaseName()
@@ -78,7 +78,7 @@ func New(t *testing.T) *pgxpool.Pool {
 	})
 
 	if err := pool.Ping(ctx); err != nil {
-		t.Fatalf("cannot reach PostgreSQL host %q for test database", host)
+		t.Fatalf("cannot reach PostgreSQL host %q for test database: %v", host, err)
 	}
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatalf("migrate test database: %v", err)
@@ -130,9 +130,13 @@ func findDatabaseURL(moduleRoot string, lookupEnv func(string) (string, bool)) (
 		return value, nil
 	}
 	for _, filename := range []string{".env", ".env.example"} {
-		values, err := godotenv.Read(filepath.Join(moduleRoot, filename))
+		path := filepath.Join(moduleRoot, filename)
+		values, err := godotenv.Read(path)
 		if err != nil {
-			continue
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", fmt.Errorf("read %s: %w", path, err)
 		}
 		if value := strings.TrimSpace(values["DATABASE_URL"]); value != "" {
 			return value, nil
