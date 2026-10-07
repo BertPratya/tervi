@@ -97,6 +97,8 @@ program itself.
 
 - Hostname: `os.Hostname()`. OS: `NAME` and `VERSION_ID` from `/etc/os-release`.
 - A value that cannot be read is left out of the request and shown as `unknown`.
+  When neither `NAME` nor `VERSION_ID` can be read, the OS line shows a single
+  `unknown`, not `unknown unknown`.
 - Truncate before sending: `hostname` and `os_name` to 64 characters,
   `os_version` to 32, counted in characters (runes). A value that fits stays
   whole; a longer one keeps its first (limit − 1) characters and ends with `…`.
