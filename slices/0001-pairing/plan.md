@@ -187,7 +187,7 @@ worker never sends one; the check protects against other callers.
 | Who → who | Worker → Server, repeated |
 | Sends | The polling key |
 | Server does | Finds the pairing request by the polling key's hash and answers with its status |
-| Worker then | `waiting_for_approval`: poll again. `rejected` or `expired`: say so and stop. `waiting_for_code`: stop polling and ask for the code (step 5); the answer includes `tries_left`. |
+| Worker then | `waiting_for_approval`: poll again. `rejected` or `expired`: say so and stop. `waiting_for_code`: stop polling and ask for the code (step 5); the answer includes `tries_left` and `expires_in_seconds`, and the worker resets its deadline from it. |
 | Covers | R9, R24 |
 
 **When to poll.** The next poll starts 2 seconds after the previous one ended.
@@ -234,6 +234,15 @@ Sign-in before this step comes in a later slice.
 | Sends | The pairing code the user typed, and the polling key |
 | Code matches | Step 6 |
 | Code does not match | `tries_left` goes down by 1. The server answers with the new `tries_left`, and the worker shows it. At 0 the status becomes `failed` and the worker stops. |
+| Server answers `expired` | `✗ The code expired. Run the command again.` Stop, exit code `1`. |
+| Worker's own deadline passes while the prompt is open | The same message. The worker stops waiting for input and stops, exit code `1`. |
+| Covers | R12, R13, R15 |
+
+**The worker keeps its own deadline while it waits for the code.** It no
+longer polls, so it cannot hear "expired" from the server until the user
+submits a code. The deadline comes from `expires_in_seconds` in the approval
+answer (step 2), so it is fresh and does not depend on the worker's clock
+being right.
 
 **Only the server counts tries.** The worker shows the number the server sends
 and never counts by itself, so the two can never disagree, for example after
