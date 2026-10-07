@@ -158,9 +158,11 @@ protections, Windows, and sign-in.
 
 **Cancelling**
 
-- R23. When the user presses Ctrl+C, the worker shall show
-  `Pairing cancelled. Nothing was saved.` and stop. The pairing then expires on
-  its own.
+- R23. When the user presses Ctrl+C, the worker shall stop at once. If nothing
+  was saved yet, it shall say `Pairing cancelled. Nothing was saved.` If saving
+  had begun, it shall say the pairing was not confirmed and show the command
+  that finishes it, and the next run shall recover whatever was saved. A
+  pairing that is not finished expires on its own.
 
 **Network**
 

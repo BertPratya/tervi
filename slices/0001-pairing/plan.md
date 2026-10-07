@@ -82,7 +82,11 @@ credential.
 | Field | Meaning |
 | --- | --- |
 | `machine_id` | The machine this computer became |
-| `confirmed` | `false` from just before the acknowledgment is sent; `true` once the server answered OK |
+| `credential_saved` | `false` from just before the secret store entry is saved; `true` once it was saved and read back |
+| `confirmed` | `true` once the server answered OK to the acknowledgment |
+
+`state.json` is always written **before** the step it describes, so a stop at
+any moment leaves a note saying what was about to happen (step 0 reads it).
 
 ### Names
 
@@ -105,6 +109,7 @@ The only command in this slice is `tervi pair --server <url>`. Covers R1.
 | Invalid server address | `Invalid server address: <value>` + usage | `2` |
 | Unknown flag | `Unknown flag: <flag>` + usage | `2` |
 | Unknown command, or no command | `Unknown command: <command>` + usage | `2` |
+| Ctrl+C at any point | See "Cancelling with Ctrl+C" | `130` |
 
 **A valid server address** starts with `http://` or `https://` and has a host,
 with an optional port: `http://localhost:8080`. An invalid address stops the
@@ -118,14 +123,15 @@ Before contacting the server, the worker reads `state.json` and its secret
 store entry. "Saved server" below always means the server in the secret store
 entry, compared with `--server` in standard form (see Mechanisms).
 
-| `state.json` | Worker does |
-| --- | --- |
-| Missing, and no secret store entry | Checks that the secret store is usable (see Mechanisms), then starts a new pairing (step 1) |
-| `confirmed: true` | Already paired (R2): `This computer is already paired with <saved server>. Nothing was changed.` Exit code `1`. |
-| Present, but no secret store entry | Incomplete data: stop, change nothing (R31) |
-| Missing, but a secret store entry exists | Incomplete data: stop, change nothing (R31) |
-| `confirmed: false`, `--server` equals the saved server | Finishes the earlier pairing: sends the acknowledgment again, as in step 7b, instead of starting a new pairing |
-| `confirmed: false`, `--server` differs from the saved server | Refuses and changes nothing: `✗ A pairing with <saved server> isn't finished yet.` followed by `To finish it, run:  tervi pair --server <saved server>` |
+| `state.json` | Secret store entry | Worker does |
+| --- | --- | --- |
+| Missing | Missing | Checks that the secret store is usable (see Mechanisms), then starts a new pairing (step 1) |
+| Missing | Exists | Incomplete data: stop, change nothing (R31). Since `state.json` is always written first, only something outside tervi can cause this. |
+| `credential_saved: false` | Missing | The save never happened, so the credential is lost. Deletes `state.json` and shows `✗ The earlier pairing was interrupted before the credential was saved. Run the same command again to start a new one.` The server's machine expires by itself. |
+| `credential_saved: false` | Exists | The save happened but was not recorded. Reads the entry back to verify it, sets `credential_saved: true`, then continues as in the next row. |
+| `credential_saved: true`, `confirmed: false` | Exists | `--server` equals the saved server: finishes the earlier pairing by sending the acknowledgment again (step 7b). `--server` differs: refuses and changes nothing: `✗ A pairing with <saved server> isn't finished yet.` followed by `To finish it, run:  tervi pair --server <saved server>` |
+| `credential_saved: true` | Missing | Incomplete data: stop, change nothing (R31) |
+| `confirmed: true` | Exists | Already paired (R2): `This computer is already paired with <saved server>. Nothing was changed.` Exit code `1`. |
 
 **Incomplete data** gets a message naming what is missing, and a hint for
 cleaning up by hand until `tervi unpair` exists:
@@ -276,8 +282,16 @@ a lost response or a restarted terminal.
 | --- | --- |
 | When | Step 5's code matches |
 | Server does | Creates a credential and a machine with status `pending` and `expires_at` 5 minutes later, storing only the credential's hash. The pairing request's status becomes `finishing`. |
-| Server answers | The credential |
-| Worker then | Saves the credential together with the server address in its secret store entry (R18), then step 7a or 7b |
+| Server answers | The credential and the `machine_id` |
+| Worker then | Saves them in this order (R18), then step 7a or 7b |
+
+**The order of the worker's writes**, each one done before the next starts:
+
+1. `state.json` ← `machine_id`, `credential_saved: false`, `confirmed: false`
+2. Secret store entry ← the credential and the server address; then read it back
+3. `state.json` ← `credential_saved: true`
+
+A stop between any two of them is recovered by the next run (step 0).
 
 **The server never keeps the credential in plain form, not even to send it
 again.** If the answer is lost, the worker never has the credential, the
@@ -298,10 +312,10 @@ worker crashed. The machine's 5-minute expiry covers that case.
 
 | Question | Answer |
 | --- | --- |
-| Worker first | Writes `state.json` with `confirmed: false` |
 | Worker sends | The acknowledgment, with the credential as proof |
 | Server does | The machine's status becomes `active`; the pairing request's status becomes `paired`. The server answers OK. |
 | Worker then | Updates `state.json` to `confirmed: true` and shows `✓ Paired successfully.` |
+| Browser shows | The approval page changes to the result, with the display name, OS name, and OS version: `✓ Paired: bert-desktop · Ubuntu 26.04` (R19) |
 
 **The acknowledgment is safe to repeat.** If it arrives again for a machine
 that is already `active`, with the same credential, the server answers OK
@@ -325,7 +339,20 @@ the user can copy it.
 
 `state.json` then still says `confirmed: false`, and the next run finishes
 the pairing (step 0).
-| Browser shows | The approval page changes to the result, with the display name, OS name, and OS version: `✓ Paired: bert-desktop · Ubuntu 26.04` (R19) |
+
+### Cancelling with Ctrl+C
+
+Covers R23. The worker stops at once; it does not tell the server, and an
+unfinished pairing expires on its own. What it says depends on what was
+already written:
+
+| Ctrl+C during | Message | Exit code |
+| --- | --- | --- |
+| Step 0 to step 5: starting, polling, the code prompt | `Pairing cancelled. Nothing was saved.` | `130` |
+| From step 6's first write onward | `Pairing cancelled before it was confirmed.` followed by `To finish, run:  tervi pair --server <saved server>` | `130` |
+
+Ctrl+C never needs to wait: whatever was written, the next run knows what to
+do (step 0).
 
 ## Mechanisms
 
@@ -456,8 +483,8 @@ The worker saves the standard form in its secret store entry.
 
 - One command, `tervi pair --server <url>`; anything else is wrong usage —
   slice 1 needs nothing more, and a clear "Unknown flag" beats a silent default.
-- Exit codes `0` paired, `1` failure, `2` wrong usage — scripts can tell the
-  three apart; finer codes can come later.
+- Exit codes `0` paired, `1` failure, `2` wrong usage, `130` cancelled with
+  Ctrl+C — scripts can tell them apart; finer codes can come later.
 - The approval link uses the server's configured public address, never the
   worker's `--server` value or the request's `Host` header — the worker and a
   phone often need different addresses for the same server, and a request's
@@ -508,10 +535,14 @@ The worker saves the standard form in its secret store entry.
   2 seconds apart, showing each try — a lost answer must not leave the worker
   unsure whether it is paired, and a repeated acknowledgment cannot create
   anything.
-- The worker writes `state.json` with `confirmed: false` before acknowledging,
-  and `true` after the OK — whatever goes wrong in between, the next run knows
-  whether to start, finish, or refuse. Without it, a lost answer could lead to
-  a second pairing that replaces a working credential.
+- The worker writes `state.json` before each step it describes
+  (`credential_saved: false` before saving, `confirmed` only after the OK) —
+  a stop at any moment leaves a note saying what was about to happen, so the
+  next run always knows whether to start, finish, recover, or refuse. Without
+  it, a lost answer could lead to a second pairing that replaces a working
+  credential.
+- Ctrl+C stops at once and exits with `130` — the usual code for "stopped by
+  the user"; it needs no delay because every stopping point is recoverable.
 - An unconfirmed pairing is finished, not restarted — the server may already
   consider the machine active.
 - Finishing uses the same `tervi pair --server <url>` command, printed in full
