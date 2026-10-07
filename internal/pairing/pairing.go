@@ -235,7 +235,6 @@ func (deps Deps) submitCode(w http.ResponseWriter, r *http.Request) {
 	}
 	pollingHash := secret.Hash(secret.FromString(proof))
 	var requestID, status, storedCode string
-	var codeExpired bool
 	var triesLeft int
 	err := deps.Pool.QueryRow(r.Context(), `SELECT pr.id::text,
 		CASE
@@ -244,12 +243,11 @@ func (deps Deps) submitCode(w http.ResponseWriter, r *http.Request) {
 			ELSE pr.status
 		END,
 		coalesce(pr.pairing_code, ''),
-		pr.status = 'waiting_for_code' AND pr.expires_at <= now(),
 		pr.tries_left
 		FROM pairing_requests AS pr
 		LEFT JOIN machines AS m ON m.pairing_request_id = pr.id
 		WHERE pr.polling_key_hash = $1`, pollingHash).
-		Scan(&requestID, &status, &storedCode, &codeExpired, &triesLeft)
+		Scan(&requestID, &status, &storedCode, &triesLeft)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusUnauthorized, "unknown_key")
 		return
@@ -258,7 +256,7 @@ func (deps Deps) submitCode(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w)
 		return
 	}
-	if codeExpired {
+	if status == "expired" {
 		writeJSON(w, http.StatusOK, map[string]string{"result": "expired"})
 		return
 	}
@@ -367,17 +365,15 @@ func (deps Deps) issueCredential(w http.ResponseWriter, r *http.Request, request
 
 func (deps Deps) writeCodeUnavailable(w http.ResponseWriter, r *http.Request, requestID string) {
 	var status string
-	var codeExpired bool
 	err := deps.Pool.QueryRow(r.Context(), `SELECT
 		CASE
 			WHEN pr.status IN ('waiting_for_approval', 'waiting_for_code') AND pr.expires_at <= now() THEN 'expired'
 			WHEN pr.status = 'finishing' AND m.status = 'pending' AND m.expires_at <= now() THEN 'failed'
 			ELSE pr.status
-		END,
-		pr.status = 'waiting_for_code' AND pr.expires_at <= now()
+		END
 		FROM pairing_requests AS pr
 		LEFT JOIN machines AS m ON m.pairing_request_id = pr.id
-		WHERE pr.id = $1`, requestID).Scan(&status, &codeExpired)
+		WHERE pr.id = $1`, requestID).Scan(&status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusUnauthorized, "unknown_key")
 		return
@@ -386,7 +382,7 @@ func (deps Deps) writeCodeUnavailable(w http.ResponseWriter, r *http.Request, re
 		writeInternalError(w)
 		return
 	}
-	if codeExpired {
+	if status == "expired" {
 		writeJSON(w, http.StatusOK, map[string]string{"result": "expired"})
 		return
 	}

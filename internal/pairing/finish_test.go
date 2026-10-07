@@ -318,12 +318,13 @@ func TestCodeOnlyForItsPairing(t *testing.T) {
 
 func TestNoCodeWhenFinished(t *testing.T) {
 	for _, test := range []struct {
-		status string
-		reason string
+		status     string
+		reason     string
+		wantResult string
 	}{
-		{status: "expired"},
-		{status: "rejected"},
-		{status: "failed", reason: "wrong_codes"},
+		{status: "expired", wantResult: "expired"},
+		{status: "rejected", wantResult: "not_waiting_for_code"},
+		{status: "failed", reason: "wrong_codes", wantResult: "not_waiting_for_code"},
 	} {
 		t.Run(test.status, func(t *testing.T) {
 			api := newTestAPI(t)
@@ -334,8 +335,8 @@ func TestNoCodeWhenFinished(t *testing.T) {
 				t.Fatalf("set terminal status: %v", err)
 			}
 			got := decodeResponse(t, submitCode(t, api, started.PollingKey, code))
-			if got.Result != "not_waiting_for_code" || got.Status != test.status {
-				t.Errorf("terminal request returned %q with status %q, want not_waiting_for_code with %q", got.Result, got.Status, test.status)
+			if got.Result != test.wantResult || (test.wantResult != "expired" && got.Status != test.status) {
+				t.Errorf("terminal request returned %q with status %q, want %q with status %q", got.Result, got.Status, test.wantResult, test.status)
 			}
 			if machineCount(t, api) != 0 {
 				t.Error("terminal request created a machine")
@@ -369,6 +370,34 @@ func TestCodeExpiredWhileWaitingForCode(t *testing.T) {
 	}
 }
 
+func TestCodeExpiredAfterCleanupPass(t *testing.T) {
+	api := newTestAPI(t)
+	started, _, code := createCodeReady(t, api)
+	if _, err := api.pool.Exec(context.Background(), `UPDATE pairing_requests
+		SET expires_at = now() - interval '1 second' WHERE polling_key_hash = $1`,
+		secret.Hash(secret.FromString(started.PollingKey))); err != nil {
+		t.Fatalf("expire waiting request: %v", err)
+	}
+	if err := cleanupPass(context.Background(), api.pool); err != nil {
+		t.Fatalf("run cleanup pass: %v", err)
+	}
+	var status string
+	if err := api.pool.QueryRow(context.Background(), `SELECT status FROM pairing_requests WHERE polling_key_hash = $1`,
+		secret.Hash(secret.FromString(started.PollingKey))).Scan(&status); err != nil {
+		t.Fatalf("read cleaned up request: %v", err)
+	}
+	if status != "expired" {
+		t.Fatalf("cleanup status = %q, want expired", status)
+	}
+	got := decodeResponse(t, submitCode(t, api, started.PollingKey, code))
+	if got.Result != "expired" {
+		t.Errorf("code after cleanup result = %q, want expired", got.Result)
+	}
+	if machineCount(t, api) != 0 {
+		t.Error("expired request created a machine")
+	}
+}
+
 func TestCodeUnavailableUsesPollStatusAfterExpiry(t *testing.T) {
 	t.Run("waiting for approval", func(t *testing.T) {
 		api := newTestAPI(t)
@@ -380,8 +409,8 @@ func TestCodeUnavailableUsesPollStatusAfterExpiry(t *testing.T) {
 		}
 		got := decodeResponse(t, submitCode(t, api, started.PollingKey, "4827-1934"))
 		poll := decodeResponse(t, api.request(t, http.MethodGet, "/api/v1/pairings/current", "", started.PollingKey))
-		if got.Result != "not_waiting_for_code" || got.Status != "expired" || poll.Status != got.Status {
-			t.Errorf("code response %q/%q and poll status %q; want not_waiting_for_code/expired", got.Result, got.Status, poll.Status)
+		if got.Result != "expired" || got.Status != "" || poll.Status != "expired" {
+			t.Errorf("code response %q/%q and poll status %q; want expired and poll status expired", got.Result, got.Status, poll.Status)
 		}
 	})
 
