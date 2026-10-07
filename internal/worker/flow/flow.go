@@ -57,13 +57,18 @@ func newFlow(opts Options) *pairingFlow {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DisableKeepAlives = true
 	f := &pairingFlow{
 		requestTimeout: opts.RequestTimeout,
 		pollInterval:   opts.PollInterval,
 		now:            opts.Now,
-		client: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		}},
+		client: &http.Client{
+			Transport: transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 	f.codePhase = func(_ context.Context, env local.Env, _ string, _ secret.Value, _ int, _ time.Time, _ time.Time) int {
 		fmt.Fprintln(output(env), "Code entry is not available yet.")
@@ -83,7 +88,7 @@ func (f *pairingFlow) StartNew(ctx context.Context, env local.Env, server string
 	details := computerDetails()
 	body, err := json.Marshal(details.request)
 	if err != nil {
-		fmt.Fprintln(output(env), "✗ The server sent an answer that could not be read. Run the command again.")
+		fmt.Fprintln(output(env), "✗ The pairing request could not be prepared. Run the command again.")
 		return 1
 	}
 	if ctx.Err() != nil {
@@ -140,7 +145,7 @@ func (f *pairingFlow) FinishEarlier(ctx context.Context, env local.Env, _ local.
 func (f *pairingFlow) printStartScreen(env local.Env, server string, details computerInfo, approvalURL string, shownExpiry time.Time) {
 	fmt.Fprintf(output(env), "Pairing this computer with %s\n", server)
 	fmt.Fprintf(output(env), "  Computer: %s\n", displayOrUnknown(details.hostname))
-	fmt.Fprintf(output(env), "  OS:       %s %s\n\n", displayOrUnknown(details.osName), displayOrUnknown(details.osVersion))
+	fmt.Fprintf(output(env), "  OS:       %s\n\n", displayOS(details.osName, details.osVersion))
 	fmt.Fprintln(output(env), "Open this link (on any device) and approve this computer:")
 	fmt.Fprintf(output(env), "  %s\n\n", approvalURL)
 	fmt.Fprintf(output(env), "Waiting for approval... (expires at %s)\n", shownExpiry.Local().Format("15:04"))
@@ -168,7 +173,7 @@ func (f *pairingFlow) poll(ctx context.Context, env local.Env, server string, po
 			return 1
 		}
 
-		result := f.request(ctx, http.MethodGet, server+pollPath, pollingKey.Reveal(), nil)
+		result := f.requestUntil(ctx, http.MethodGet, server+pollPath, pollingKey.Reveal(), nil, deadline)
 		if ctx.Err() != nil {
 			return cancelPairing(env)
 		}
@@ -290,7 +295,19 @@ type requestResult struct {
 }
 
 func (f *pairingFlow) request(ctx context.Context, method, url, bearer string, body []byte) requestResult {
-	requestCtx, cancel := context.WithTimeout(ctx, f.requestTimeout)
+	return f.requestWithTimeout(ctx, method, url, bearer, body, f.requestTimeout)
+}
+
+func (f *pairingFlow) requestUntil(ctx context.Context, method, url, bearer string, body []byte, deadline time.Time) requestResult {
+	timeout := deadline.Sub(f.now())
+	if timeout > f.requestTimeout {
+		timeout = f.requestTimeout
+	}
+	return f.requestWithTimeout(ctx, method, url, bearer, body, timeout)
+}
+
+func (f *pairingFlow) requestWithTimeout(ctx context.Context, method, url, bearer string, body []byte, timeout time.Duration) requestResult {
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(requestCtx, method, url, bytesReader(body))
 	if err != nil {
@@ -303,7 +320,11 @@ func (f *pairingFlow) request(ctx context.Context, method, url, bearer string, b
 		request.Header.Set("Authorization", "Bearer "+bearer)
 	}
 	var wrote atomic.Bool
-	trace := &httptrace.ClientTrace{WroteRequest: func(httptrace.WroteRequestInfo) { wrote.Store(true) }}
+	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
+		if info.Err == nil {
+			wrote.Store(true)
+		}
+	}}
 	request = request.WithContext(httptrace.WithClientTrace(request.Context(), trace))
 	response, err := f.client.Do(request)
 	if err != nil {
@@ -457,4 +478,11 @@ func displayOrUnknown(value string) string {
 		return "unknown"
 	}
 	return value
+}
+
+func displayOS(name, version string) string {
+	if name == "" && version == "" {
+		return "unknown"
+	}
+	return displayOrUnknown(name) + " " + displayOrUnknown(version)
 }

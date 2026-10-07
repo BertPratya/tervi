@@ -90,14 +90,14 @@ func TestUnknownAndTruncatedDetails(t *testing.T) {
 		if len(gotBody) != 0 {
 			t.Errorf("unreadable start details = %#v, want omitted", gotBody)
 		}
-		if !strings.Contains(stdout.String(), "  Computer: unknown\n  OS:       unknown unknown\n") {
+		if !strings.Contains(stdout.String(), "  Computer: unknown\n  OS:       unknown\n") {
 			t.Errorf("unknown details were not displayed: %q", safeOutput(stdout.String()))
 		}
 	})
 
 	t.Run("hostname is truncated by runes", func(t *testing.T) {
-		longHostname := strings.Repeat("a", 64) + "b"
-		wantHostname := strings.Repeat("a", 63) + "…"
+		longHostname := strings.Repeat("é", 65)
+		wantHostname := strings.Repeat("é", 63) + "…"
 		withComputerReaders(t, func() (string, error) { return longHostname, nil }, func() ([]byte, error) {
 			return []byte("NAME=TestOS\nVERSION_ID=1\n"), nil
 		})
@@ -183,25 +183,51 @@ func TestStartNoAnswerNotRetried(t *testing.T) {
 }
 
 func TestRejected(t *testing.T) {
-	pollAnswered := make(chan time.Time, 1)
+	const pollInterval = 240 * time.Millisecond
+	firstWaiting := make(chan struct{}, 1)
+	var polls atomic.Int32
+	var rejected atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/pairings" {
 			writeStart(w, testPollingKey, serverURL(r)+"/pair/"+testApprovalKey, 600)
 			return
 		}
-		writePoll(w, "rejected", 500, nil)
-		pollAnswered <- time.Now()
+		if polls.Add(1) == 1 {
+			writePoll(w, "waiting_for_approval", 500, nil)
+			firstWaiting <- struct{}{}
+			return
+		}
+		if rejected.Load() {
+			writePoll(w, "rejected", 500, nil)
+			return
+		}
+		writePoll(w, "waiting_for_approval", 500, nil)
 	}))
 	defer server.Close()
 	var stdout bytes.Buffer
-	const pollInterval = 250 * time.Millisecond
-	code := newFlow(Options{RequestTimeout: time.Second, PollInterval: pollInterval}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
-	if code != 1 {
-		t.Fatalf("StartNew() = %d, want 1", code)
+	done := make(chan int, 1)
+	go func() {
+		done <- newFlow(Options{RequestTimeout: time.Second, PollInterval: pollInterval}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
+	}()
+	select {
+	case <-firstWaiting:
+	case <-time.After(time.Second):
+		t.Fatal("first poll did not answer waiting_for_approval")
 	}
-	answeredAt := <-pollAnswered
-	if elapsed := time.Since(answeredAt); elapsed >= pollInterval {
-		t.Errorf("rejection reported %s after the poll answer, want under one poll interval (%s)", elapsed, pollInterval)
+	// Change the server state partway through the interval, away from a poll.
+	time.Sleep(pollInterval / 3)
+	rejectedAt := time.Now()
+	rejected.Store(true)
+	select {
+	case code := <-done:
+		if code != 1 {
+			t.Fatalf("StartNew() = %d, want 1", code)
+		}
+	case <-time.After(pollInterval + 100*time.Millisecond):
+		t.Fatal("rejection was not reported within one poll interval plus margin")
+	}
+	if elapsed := time.Since(rejectedAt); elapsed > pollInterval+100*time.Millisecond {
+		t.Errorf("rejection reported %s after the server switched to rejected, want within %s", elapsed, pollInterval+100*time.Millisecond)
 	}
 	if !strings.Contains(stdout.String(), "✗ Pairing was rejected in the browser.\n") {
 		t.Errorf("rejection not reported: %q", safeOutput(stdout.String()))
@@ -221,18 +247,23 @@ func TestConnectionLostAndRestored(t *testing.T) {
 		}
 		switch polls.Add(1) {
 		case 1:
+			select {
+			case <-r.Context().Done():
+			case <-time.After(time.Second):
+			}
+		case 2:
 			conn, _, err := w.(http.Hijacker).Hijack()
 			if err != nil {
 				t.Errorf("hijack connection: %v", err)
 				return
 			}
 			_ = conn.Close()
-		case 2:
+		case 3:
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = io.WriteString(w, "temporarily down")
-		case 3:
-			_, _ = io.WriteString(w, `{"status":`)
 		case 4:
+			_, _ = io.WriteString(w, `{"status":`)
+		case 5:
 			writePoll(w, "waiting_for_approval", 500, nil)
 		default:
 			writePoll(w, "rejected", 400, nil)
@@ -252,8 +283,8 @@ func TestConnectionLostAndRestored(t *testing.T) {
 	if count := strings.Count(got, "Connection restored.\n"); count != 1 {
 		t.Errorf("connection-restored messages = %d, want 1; output %q", count, got)
 	}
-	if polls.Load() != 5 || !strings.Contains(got, "✗ Pairing was rejected in the browser.") {
-		t.Errorf("polling did not continue after recovery: polls=%d output=%q", polls.Load(), got)
+	if polls.Load() != 6 || !strings.Contains(got, "✗ Pairing was rejected in the browser.") {
+		t.Errorf("polling did not continue after recovery: polls=%d, want 6 calls including no-answer poll; output=%q", polls.Load(), got)
 	}
 }
 
@@ -287,6 +318,48 @@ func TestDeadlineDuringOutage(t *testing.T) {
 	}
 	if polls.Load() != 1 {
 		t.Errorf("polls = %d, want one before deadline check", polls.Load())
+	}
+	if !strings.Contains(stdout.String(), "✗ The link expired. Run the command again.\n") {
+		t.Errorf("deadline message missing: %q", safeOutput(stdout.String()))
+	}
+}
+
+func TestPollTimeoutCappedAtDeadline(t *testing.T) {
+	base := time.Date(2026, time.January, 2, 14, 22, 0, 0, time.Local)
+	var clockMu sync.Mutex
+	clockNow := base
+	now := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return clockNow
+	}
+	pollDuration := make(chan time.Duration, 1)
+	var polls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/pairings" {
+			writeStart(w, testPollingKey, serverURL(r)+"/pair/"+testApprovalKey, 1)
+			return
+		}
+		polls.Add(1)
+		started := time.Now()
+		<-r.Context().Done()
+		pollDuration <- time.Since(started)
+		clockMu.Lock()
+		clockNow = base.Add(2 * time.Second)
+		clockMu.Unlock()
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	code := newFlow(Options{RequestTimeout: 2 * time.Second, PollInterval: time.Millisecond, Now: now}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
+	if code != 1 {
+		t.Fatalf("StartNew() = %d, want 1", code)
+	}
+	if got := polls.Load(); got != 1 {
+		t.Fatalf("poll requests = %d, want 1", got)
+	}
+	if elapsed := <-pollDuration; elapsed > 1500*time.Millisecond {
+		t.Errorf("poll request lasted %s, want it capped by the 1-second pairing deadline", elapsed)
 	}
 	if !strings.Contains(stdout.String(), "✗ The link expired. Run the command again.\n") {
 		t.Errorf("deadline message missing: %q", safeOutput(stdout.String()))
@@ -437,38 +510,43 @@ func TestApprovedHandsOver(t *testing.T) {
 
 func TestCtrlCBeforeSaving(t *testing.T) {
 	t.Run("while starting", func(t *testing.T) {
-		requested := make(chan struct{})
+		requested := make(chan struct{}, 4)
+		var requests atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			close(requested)
+			requests.Add(1)
+			select {
+			case requested <- struct{}{}:
+			default:
+			}
 			select {
 			case <-r.Context().Done():
 			case <-time.After(100 * time.Millisecond):
 			}
 		}))
 		defer server.Close()
-		runCancelledFlow(t, server, requested, true)
+		runCancelledFlow(t, server, requested, &requests, true)
 	})
 
 	t.Run("while polling", func(t *testing.T) {
-		requested := make(chan struct{})
-		var pollCount atomic.Int32
+		requested := make(chan struct{}, 4)
+		var requests atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+			select {
+			case requested <- struct{}{}:
+			default:
+			}
 			if r.URL.Path == "/api/v1/pairings" {
 				writeStart(w, testPollingKey, serverURL(r)+"/pair/"+testApprovalKey, 600)
 				return
 			}
-			pollCount.Add(1)
-			close(requested)
 			select {
 			case <-r.Context().Done():
 			case <-time.After(100 * time.Millisecond):
 			}
 		}))
 		defer server.Close()
-		runCancelledFlow(t, server, requested, false)
-		if got := pollCount.Load(); got != 1 {
-			t.Errorf("poll requests after cancellation = %d, want 1", got)
-		}
+		runCancelledFlow(t, server, requested, &requests, false)
 	})
 }
 
@@ -489,7 +567,7 @@ func TestNoSecretInOutput(t *testing.T) {
 	}
 }
 
-func runCancelledFlow(t *testing.T, server *httptest.Server, requested <-chan struct{}, starting bool) {
+func runCancelledFlow(t *testing.T, server *httptest.Server, requested <-chan struct{}, requests *atomic.Int32, starting bool) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -501,10 +579,16 @@ func runCancelledFlow(t *testing.T, server *httptest.Server, requested <-chan st
 	go func() {
 		done <- newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond}).StartNew(ctx, env, server.URL)
 	}()
-	select {
-	case <-requested:
-	case <-time.After(time.Second):
-		t.Fatal("request did not start")
+	wantRequests := 1
+	if !starting {
+		wantRequests = 2 // the start request and the poll request
+	}
+	for i := 0; i < wantRequests; i++ {
+		select {
+		case <-requested:
+		case <-time.After(time.Second):
+			t.Fatalf("request %d of %d did not start", i+1, wantRequests)
+		}
 	}
 	cancel()
 	select {
@@ -528,6 +612,9 @@ func runCancelledFlow(t *testing.T, server *httptest.Server, requested <-chan st
 	}
 	if _, exists := backend.Value("worker"); exists {
 		t.Error("secret store entry exists after cancellation")
+	}
+	if got := requests.Load(); got != int32(wantRequests) {
+		t.Errorf("server received %d requests, want exactly %d", got, wantRequests)
 	}
 }
 

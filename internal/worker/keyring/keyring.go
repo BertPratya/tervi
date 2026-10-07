@@ -28,5 +28,9 @@ func (backend) Set(user, value string) error {
 }
 
 func (backend) Delete(user string) error {
-	return keyring.Delete(service, user)
+	err := keyring.Delete(service, user)
+	if errors.Is(err, keyring.ErrNotFound) {
+		return nil
+	}
+	return err
 }
