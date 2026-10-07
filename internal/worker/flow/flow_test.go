@@ -341,12 +341,12 @@ func TestPollTimeoutCappedAtDeadline(t *testing.T) {
 			return
 		}
 		polls.Add(1)
-		started := time.Now()
-		<-r.Context().Done()
-		pollDuration <- time.Since(started)
 		clockMu.Lock()
 		clockNow = base.Add(2 * time.Second)
 		clockMu.Unlock()
+		started := time.Now()
+		<-r.Context().Done()
+		pollDuration <- time.Since(started)
 	}))
 	defer server.Close()
 
