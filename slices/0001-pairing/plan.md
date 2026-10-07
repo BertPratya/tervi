@@ -7,17 +7,23 @@ Spec: [spec.md](spec.md)
 
 | Part | Location | Notes |
 | --- | --- | --- |
-| Server program | `cmd/server` | Reads settings, connects to PostgreSQL, runs migrations, registers routes, starts the expiry clean-up |
+| Server program | `cmd/server` | A thin wrapper around `internal/server` |
+| Server assembly | `internal/server` | Settings, connecting, migrating, starting the clean-up, and `New(...)`, which returns the server's `http.Handler` with every route. Importable, so the end-to-end test runs the real server. |
 | Database | `internal/db` | Connection and migrations: embedded `.sql` files run with `github.com/pressly/goose/v3` at server start |
-| Secrets | `internal/secret` | The `[hidden]` secret types; generating keys, credentials, and pairing codes; hashing |
-| Pairing on the server | `internal/pairing` | Pairing requests, machines, the status changes, and their HTTP handlers |
-| Approval page | `internal/web` | One HTML page with plain JavaScript, embedded in the server with `go:embed`; no build step |
-| Worker program | `cmd/tervi` | Reads the command line, runs the flow, sets the exit code |
-| Worker command and local state | `internal/worker/local` | The command, the address standard form, `state.json`, and the secret store entry |
+| Secrets | `internal/secret` | The `[hidden]` secret type; generating keys, credentials, and pairing codes; hashing |
+| Pairing on the server | `internal/pairing` | Pairing requests, machines, the status changes, their HTTP handlers, and `Register(mux, ...)` for its routes |
+| Approval page | `internal/web` | `index.html`, `app.js`, and `view.js`, embedded with `go:embed`; no build step; `Register(mux)` for its routes |
+| Worker program | `cmd/tervi` | A thin wrapper around `local.Run` |
+| Worker command and local state | `internal/worker/local` | The command line, the address standard form, `state.json`, the secret store entry, step 0, and `Run(ctx, args, stdin, stdout, stderr, store, stateDir, flow)`, importable so the end-to-end test runs the real worker |
 | Worker pairing flow | `internal/worker/flow` | Steps 1–7b as seen from the worker, Ctrl+C, every terminal message |
-| End-to-end test | `test/e2e` | Runs a real server and worker together |
+| End-to-end test | `test/e2e` | Runs the real server and worker together |
+
+Each server package registers its own routes, so tasks that add routes do not
+edit the same file.
 
 ## Data
+
+Column types and constraints are in task 01, which creates both tables.
 
 ### Pairing request
 
@@ -38,7 +44,7 @@ One record per pairing attempt. Table `pairing_requests`.
 ### Pairing request lifecycle
 
 ```text
-waiting_for_approval ──Accept──► waiting_for_code ──correct code──► finishing ──acknowledged──► paired
+waiting_for_approval ───Pair───► waiting_for_code ──correct code──► finishing ──acknowledged──► paired
         │                              │                               │
         ├──Reject──► rejected          ├──tries_left reaches 0──► failed ◄──saving failed, or machine expired
         └──expires_at passes──► expired ◄──────────── expires_at passes
@@ -122,7 +128,8 @@ The only command in this slice is `tervi pair --server <url>`. Covers R1.
 | `--server` missing | `Usage: tervi pair --server <url>` | `2` |
 | Invalid server address | `Invalid server address: <value>` + usage | `2` |
 | Unknown flag | `Unknown flag: <flag>` + usage | `2` |
-| Unknown command, or no command | `Unknown command: <command>` + usage | `2` |
+| Unknown command | `Unknown command: <command>` + usage | `2` |
+| No command | Usage only | `2` |
 | Ctrl+C at any point | See "Cancelling with Ctrl+C" | `130` |
 
 **A valid server address** starts with `http://` or `https://` and has a host,
@@ -136,8 +143,8 @@ contacted.
 
 | Setting | Value in this slice | Why |
 | --- | --- | --- |
-| `SERVER_ADDR` (where the server listens) | `127.0.0.1:8080` by default | Only this computer can reach the server, which keeps R21's limitation safe. The current default `:8080` listens on every network interface and must change. |
-| `TERVI_PUBLIC_URL` (the address in approval links) | `http://localhost:8080` | See step 1 |
+| `SERVER_ADDR` (where the server listens) | `127.0.0.1:8080` by default | Only this computer can reach the server, which keeps R21's limitation safe. The current default `:8080` listens on every network interface and must change. **The server refuses to start if the host is not a loopback address** (`127.0.0.1`, `::1`, or `localhost`), with a message saying that sign-in must exist first. |
+| `TERVI_PUBLIC_URL` (the address in approval links) | `http://localhost:8080` | See step 1. A trailing `/` is removed, so links never contain `//pair/`. |
 
 ## Interfaces
 
@@ -156,7 +163,7 @@ answer is JSON, and every error answer is `{"error": "<code>"}`.
 | 5 | `POST /api/v1/machines/current/save-failure` | Worker | Credential | Report that saving failed (step 7a) |
 | 6 | `GET /pair/{approval_key}` | Browser | Approval key in the path | The approval page itself (HTML) |
 | 7 | `GET /api/v1/approvals/current` | Browser | Approval key | The page's data, also used for polling (step 3) |
-| 8 | `POST /api/v1/approvals/current/accept` | Browser | Approval key | Accept (step 4) |
+| 8 | `POST /api/v1/approvals/current/accept` | Browser | Approval key | The **Pair** button (step 4) |
 | 9 | `POST /api/v1/approvals/current/reject` | Browser | Approval key | Reject (step 4) |
 
 **1 — Start.** Request: `{"hostname": "...", "os_name": "...", "os_version": "..."}`,
@@ -180,19 +187,30 @@ An unknown polling key: `401 {"error": "unknown_key"}`.
 | `expired` | — | The pairing expired |
 | `not_waiting_for_code` | `status` | The pairing is in another state, for example `finishing` after an earlier correct code |
 
-An unknown polling key: `401 {"error": "unknown_key"}`.
+An unknown polling key: `401 {"error": "unknown_key"}`. A body over 4 KB:
+`400 {"error": "invalid_input"}`. Expiry applies only to waiting statuses: a
+`rejected` or `failed` request answers `not_waiting_for_code` with its status,
+however old it is.
 
-**4 — Acknowledgment** and **5 — Save failure.** No body. Answer `200` with
-`{"result": "ok"}`, or `{"result": "expired"}` / `{"result": "failed"}` when the
-machine is no longer `pending` (or, for 4, `active`). An unknown credential:
-`401 {"error": "unknown_credential"}`.
+**4 — Acknowledgment** and **5 — Save failure.** No body. Answer `200` with one
+`result`:
+
+| Machine | 4 — Acknowledgment | 5 — Save failure |
+| --- | --- | --- |
+| `pending`, not expired | `ok` (now `active`) | `ok` (now `failed`) |
+| `active` | `ok`, nothing changes (safe to repeat) | `active`, nothing changes |
+| `failed` | `failed` | `failed` |
+| `expired`, or `pending` past `expires_at` | `expired` | `expired` |
+
+An unknown credential: `401 {"error": "unknown_credential"}`.
 
 **7, 8, 9 — Approval data.** Answer `200`:
 `{"status": "...", "hostname": "...", "os_name": "...", "os_version": "...", "already_decided": false}`,
 plus `"pairing_code"` while `waiting_for_code`, `"failure_reason"` when `failed`,
 and `"display_name"` when `paired`. For 8 and 9, `"already_decided": true` means
 another click decided first; the rest of the answer is the real state. An
-unknown approval key: `404 {"error": "invalid_link"}`.
+expired request answers `expired` with `"already_decided": false`, since no
+click decided it. An unknown approval key: `404 {"error": "invalid_link"}`.
 
 ## Flow
 
@@ -207,7 +225,7 @@ entry, compared with `--server` in standard form (see Mechanisms).
 | Missing | Missing | Checks that the secret store is usable (see Mechanisms), then starts a new pairing (step 1) |
 | Missing | Exists | Incomplete data: stop, change nothing (R31). Since `state.json` is always written first, only something outside tervi can cause this. |
 | `credential_saved: false` | Missing | The save never happened, so the credential is lost. Deletes `state.json` and shows `✗ The earlier pairing was interrupted before the credential was saved. Run the same command again to start a new one.` The server's machine expires by itself. |
-| `credential_saved: false` | Exists | The save happened but was not recorded. Reads the entry back to verify it, sets `credential_saved: true`, then continues as in the next row. |
+| `credential_saved: false` | Exists | The save happened but was not recorded. Checks the entry is well formed (below), sets `credential_saved: true`, then continues as in the next row. |
 | `credential_saved: true`, `confirmed: false` | Exists | `--server` equals the saved server: finishes the earlier pairing by sending the acknowledgment again (step 7b). `--server` differs: refuses and changes nothing: `✗ A pairing with <saved server> isn't finished yet.` followed by `To finish it, run:  tervi pair --server <saved server>` |
 | `credential_saved: true` | Missing | Incomplete data: stop, change nothing (R31) |
 | `confirmed: true` | Exists | Already paired (R2): `This computer is already paired with <saved server>. Nothing was changed.` Exit code `1`. |
@@ -221,6 +239,15 @@ cleaning up by hand until `tervi unpair` exists:
   To start over, delete ~/.config/tervi/state.json and the "tervi" entry in Passwords and Keys.
 ```
 
+**A well-formed entry** is valid JSON with a `server` in standard form and a
+non-empty `credential`. Whenever step 0 finds an entry that is not well
+formed, it stops, changes nothing, and exits with `1`:
+
+```text
+✗ The secret store entry for tervi is damaged. Nothing was changed.
+  To start over, delete ~/.config/tervi/state.json and the "tervi" entry in Passwords and Keys.
+```
+
 **A credential only ever goes to the server that issued it.** That is why a
 different `--server` is refused instead of used. Once `tervi unpair` exists
 (a later slice), this message will also offer unpairing.
@@ -228,9 +255,18 @@ different `--server` is refused instead of used. Once `tervi unpair` exists
 **When finishing an earlier pairing**, the server's answer decides:
 
 - OK → `confirmed: true`, and `✓ Paired successfully.`
-- The machine expired or failed → the credential will never work, so the
-  worker deletes `state.json` and its secret store entry, and
-  shows: `✗ The earlier pairing didn't finish in time. Run the same command again to start a new one.`
+- The machine expired, failed, or is unknown (`401`) → the credential will
+  never work, so the worker deletes `state.json` and its secret store entry,
+  and shows one of these, then exits with `1`:
+
+| Answer | Message |
+| --- | --- |
+| `expired` | `✗ The earlier pairing didn't finish in time. Run the same command again to start a new one.` |
+| `failed` | `✗ The earlier pairing failed. Run the same command again to start a new one.` |
+| `401` | `✗ The server doesn't recognize the earlier pairing. Run the same command again to start a new one.` |
+
+During a first run (step 7b), the same three cases use the same messages
+without the word "earlier".
 
 ### Step 1 — The worker starts a pairing
 
@@ -274,7 +310,7 @@ worker never sends one; the check protects against other callers.
 | Who → who | Worker → Server, repeated |
 | Sends | The polling key |
 | Server does | Finds the pairing request by the polling key's hash and answers with its status |
-| Worker then | `waiting_for_approval`: poll again. `rejected` or `expired`: say so and stop. `waiting_for_code`: stop polling and ask for the code (step 5); the answer includes `tries_left` and `expires_in_seconds`, and the worker resets its deadline from it. |
+| Worker then | `waiting_for_approval`: poll again. `rejected` or `expired`: say so and stop. `waiting_for_code`: stop polling and ask for the code (step 5); the answer includes `tries_left` and `expires_in_seconds`, and the worker resets its internal deadline from it. The **expiry time shown** to the user stays the one computed at step 1, so the prompt shows exactly the same time again (R12). |
 | Covers | R9, R24 |
 
 **When to poll.** The next poll starts 2 seconds after the previous one ended.
@@ -288,11 +324,13 @@ it is always safe.
 | Moment | Terminal | Then |
 | --- | --- | --- |
 | Polling starts | `Waiting for approval... (expires at 14:32)` | Poll |
-| First failed poll | `Connection lost, retrying...` (once, not on every failure) | Keep polling |
+| First failed poll: no answer, connection error, `5xx`, or an answer that is not valid JSON | `Connection lost, retrying...` (once, not on every failure) | Keep polling |
 | First successful poll after failures | `Connection restored.` | Keep polling |
 | `rejected` | `✗ Pairing was rejected in the browser.` | Stop, exit code `1` |
 | `expired`, or the worker's deadline passes while the server cannot be reached | `✗ The link expired. Run the command again.` | Stop, exit code `1` |
 | `waiting_for_code` | `✓ Approved in the browser.` then `Type the code shown in the browser (expires at 14:32, 5 tries left):` | Step 5 |
+| `401 unknown_key` | `✗ The server no longer knows this pairing. Run the command again.` | Stop, exit code `1` |
+| Any other status or answer (`finishing`, `paired`, `failed`, another `4xx`) | `✗ Unexpected answer from the server. Run the command again.` | Stop, exit code `1` |
 
 ### Step 3 — The user opens the approval link
 
@@ -301,7 +339,7 @@ it is always safe.
 | Who → who | Browser → Server |
 | Request | `GET`, with the approval key. Opening the page changes nothing (R6). |
 | Server answers | `hostname`, `os_name`, `os_version`, and the status |
-| Browser then | Shows the computer's details with **Accept** and **Reject** |
+| Browser then | Shows the computer's details with **Pair** and **Reject** |
 
 Sign-in before this step comes in a later slice.
 
@@ -311,7 +349,7 @@ Sign-in before this step comes in a later slice.
 | --- | --- |
 | Who → who | Browser → Server, with the approval key |
 | Reject | Status becomes `rejected`. The worker learns it at its next poll. |
-| Accept | Status becomes `waiting_for_code`. The server creates the pairing code, saves it, and the page shows it and asks the user to type it into the terminal. |
+| Pair (the accept action) | Status becomes `waiting_for_code`. The server creates the pairing code, saves it, and the page shows it and asks the user to type it into the terminal. |
 
 ### The approval page stays up to date
 
@@ -322,7 +360,7 @@ R19.
 
 | Status | The page shows |
 | --- | --- |
-| `waiting_for_approval` | The computer's details with **Accept** and **Reject** (keeps polling) |
+| `waiting_for_approval` | The computer's details with **Pair** and **Reject** (keeps polling) |
 | `waiting_for_code` | The pairing code, and "Type this code into the terminal of bert-desktop" (keeps polling) |
 | `finishing` | Code accepted. Finishing on bert-desktop… (keeps polling) |
 | `paired` | ✓ **bert-desktop is paired.** Ubuntu 26.04. You can close this tab. |
@@ -346,6 +384,10 @@ name, OS name, and OS version.
 | Code does not match | `tries_left` goes down by 1. The server answers with the new `tries_left`, and the worker shows it. At 0 the status becomes `failed` and the worker stops. |
 | Server answers `expired` | `✗ The code expired. Run the command again.` Stop, exit code `1`. |
 | Worker's own deadline passes while the prompt is open | The same message. The worker stops waiting for input and stops, exit code `1`. |
+| Server answers `not_waiting_for_code` | `✗ The pairing is no longer waiting for a code. Run the command again.` Stop, exit code `1`. |
+| Server answers `401 unknown_key` | `✗ The server no longer knows this pairing. Run the command again.` Stop, exit code `1`. |
+| Server answers `5xx`, or an answer that is not valid JSON | Treated as "no answer" (next row): the code may have been accepted. |
+| Any other answer | `✗ Unexpected answer from the server. Run the command again.` Stop, exit code `1`. |
 | No answer after sending the code (10 seconds, or the connection fails) | The worker does not send the code again: if the code was correct, the credential is lost, and the server never issues a second one. It shows `✗ No answer from the server after sending the code. Run the same command again to start over.` and stops, exit code `1`. Nothing was saved, so the next run starts a new pairing; a pending machine expires on the server. |
 | Covers | R12, R13, R15 |
 
@@ -385,7 +427,8 @@ machine expires, and the user pairs again.
 | Question | Answer |
 | --- | --- |
 | Worker shows | `✗ Couldn't save the credential. Pairing was not completed.` (R20) |
-| Worker sends | "Saving failed", with the credential as proof |
+| Worker sends | "Saving failed", with the credential as proof (once; its answer changes nothing) |
+| Worker cleans up | Deletes the secret store entry if one was written (a save can write the entry and still fail its read-back), then deletes `state.json`. If the entry cannot be deleted, it also shows `✗ Couldn't remove the partly saved secret store entry.` and the manual clean-up hint, and keeps `state.json`. Exit code `1`. |
 | Server does | The machine's status becomes `failed`; the pairing request's status becomes `failed`, and the browser shows that pairing failed |
 
 This report may never arrive, for example when the network is down or the
@@ -398,7 +441,7 @@ worker crashed. The machine's 5-minute expiry covers that case.
 | Worker sends | The acknowledgment, with the credential as proof |
 | Server does | The machine's status becomes `active`; the pairing request's status becomes `paired`. The server answers OK. |
 | Worker then | Updates `state.json` to `confirmed: true` and shows `✓ Paired successfully.` |
-| Browser shows | The approval page changes to the result, with the display name, OS name, and OS version: `✓ Paired: bert-desktop · Ubuntu 26.04` (R19) |
+| Browser shows | The approval page changes to the `paired` result: `✓ bert-desktop is paired. Ubuntu 26.04. You can close this tab.` (R19) |
 
 **The acknowledgment is safe to repeat.** If it arrives again for a machine
 that is already `active`, with the same credential, the server answers OK
@@ -432,7 +475,7 @@ already written:
 | Ctrl+C during | Message | Exit code |
 | --- | --- | --- |
 | Step 0 to step 5: starting, polling, the code prompt | `Pairing cancelled. Nothing was saved.` | `130` |
-| From step 6's first write onward | `Pairing cancelled before it was confirmed.` followed by `To finish, run:  tervi pair --server <saved server>` | `130` |
+| From step 6's first write onward | `Pairing cancelled before it was confirmed.` followed by `To finish, run:  tervi pair --server <server>`, where `<server>` is `--server` in standard form (the same address the entry holds or will hold) | `130` |
 
 Ctrl+C never needs to wait: whatever was written, the next run knows what to
 do (step 0).
@@ -448,19 +491,23 @@ Covers: R15, R16, R26.
 
 Two separate jobs:
 
-1. **Enforcing (at every request).** Before it reads or changes a pairing
-   request or a machine, the server compares `expires_at` with the current
-   time. Anything past its `expires_at` is treated as expired, even if its
-   stored status still says otherwise: a read answers `expired`, and a change
-   is refused. This alone keeps R26 true at every moment.
-2. **Cleaning up (every minute).** A background job updates the stored status
-   of everything past its `expires_at`:
-   - pairing requests in `waiting_for_approval` or `waiting_for_code` become `expired`;
-   - pending machines become `expired`, and their pairing requests, in
-     `finishing`, become `failed`.
+1. **Enforcing (at every request).** Before it reads or changes a record, the
+   server compares `expires_at` with the current time. Only these count as
+   expired, even if the stored status has not caught up yet:
+   - a pairing request in `waiting_for_approval` or `waiting_for_code` past its
+     `expires_at` reads as `expired`;
+   - a machine in `pending` past its `expires_at` reads as `expired`, and its
+     pairing request, in `finishing`, reads as `failed` with `not_confirmed`.
+
+   Changes are refused in the same cases. Records in any other status
+   (`paired`, `rejected`, `failed`, `active`, …) never expire. This check
+   alone keeps R26 true at every moment.
+2. **Cleaning up (every minute).** A background job writes those same results
+   into the stored statuses, using conditional updates.
 
 The clean-up only makes the stored status truthful. If it runs late or stops,
-nothing unsafe happens, because step 1 already refuses expired records.
+nothing unsafe happens, because the check at every request (point 1) already
+refuses expired records.
 
 All times come from the database's clock, both when `expires_at` is set and
 when it is compared, so one clock decides.
@@ -499,7 +546,7 @@ Where it is used:
 
 | Step | Change | Only if |
 | --- | --- | --- |
-| 4 | Accept → `waiting_for_code`; Reject → `rejected` | status is `waiting_for_approval` |
+| 4 | Pair → `waiting_for_code`; Reject → `rejected` | status is `waiting_for_approval` |
 | 5 | Wrong code: `tries_left` − 1, and `failed` with `wrong_codes` when it reaches 0 | status is `waiting_for_code` and `tries_left` > 0 |
 | 6 | Correct code → `finishing`, and the machine is created | status is `waiting_for_code` |
 | 7a | Machine → `failed`; pairing request → `failed` with `not_saved` | machine is `pending` |
@@ -558,13 +605,22 @@ Applies to: the approval key, the polling key, the pairing code, and the
 credential, in both the worker and the server. Covers: R18, R22.
 
 Each secret is held in its own small Go type, whose printed form is always
-`[hidden]`, never its value. So printing a value, logging an error, or
-dumping a whole answer can never reveal a secret by accident. The value is
-read only where it is really needed: sending it, hashing it, or saving it in
-the secret store.
+`[hidden]`, never its value. The value is stored **behind a pointer** inside
+the type: Go's printing reaches into a struct's fields without asking the
+type, so a plain string field would leak when the secret sits inside another
+struct; behind a pointer it prints only an address. So printing a value,
+logging an error, or dumping a whole answer can never reveal a secret by
+accident. The value is read only where it is really needed: sending it,
+hashing it, or saving it in the secret store.
+
+**One deliberate exception:** the worker prints the approval link, which
+contains the approval key (R5). That is its purpose. The approval key appears
+nowhere else in the worker's output, and nowhere in the server's logs. The
+server never logs a request path under `/pair/`.
 
 A test runs the full pairing flow, captures everything printed and logged by
-the worker and the server, and fails if any secret's value appears in it.
+the worker and the server, and fails if any secret's value appears in it,
+apart from the approval key inside the printed link.
 
 ### Server address comparison
 
@@ -706,64 +762,64 @@ The worker saves the standard form in its secret store entry.
 
 | Requirement | Tasks |
 | --- | --- |
-| R1 (usage) | 06 |
-| R2 (already paired) | 06 |
-| R3 (secret store usable) | 06 |
-| R4 (server unreachable) | 07 |
-| R5 (show details, link, expiry) | 02, 07 |
-| R6 (page shows details; opening changes nothing) | 03, 04 |
-| R7 (accept shows the code) | 03, 04 |
+| R1 (usage) | 05 |
+| R2 (already paired) | 05 |
+| R3 (secret store usable) | 05 |
+| R4 (server unreachable) | 06 |
+| R5 (show details, link, expiry) | 02, 06 |
+| R6 (page shows details; opening changes nothing) | 02, 03 |
+| R7 (Pair shows the code) | 02, 03 |
 | R8 (worker never shows the code) | 07 |
-| R9 (rejection reported within seconds) | 02, 03, 04, 07 |
-| R10 (first decision stays) | 03 |
-| R11 (reopening shows the current state) | 03, 04 |
-| R12 (code asked only after approval; expiry shown again) | 07 |
-| R13 (wrong codes, 5 tries, both sides say it failed) | 04, 05, 07 |
-| R14 (a code works only for its pairing) | 05 |
-| R15 (10-minute expiry) | 01, 02, 03, 05, 07 |
-| R16 (finished pairings accept no code) | 03, 04, 05 |
-| R17 (correct code gives the credential) | 05, 07 |
-| R18 (credential only in the secret store; never printed) | 01, 06, 07, 08 |
-| R19 (success shown in terminal and browser) | 04, 05, 07 |
+| R9 (rejection reported within seconds) | 02, 03, 06, 08 |
+| R10 (first decision stays) | 02 |
+| R11 (reopening shows the current state) | 02, 03 |
+| R12 (code asked only after approval; same expiry shown again) | 06, 07 |
+| R13 (wrong codes, 5 tries, both sides say it failed) | 03, 04, 07, 08 |
+| R14 (a code works only for its pairing) | 04 |
+| R15 (10-minute expiry) | 01, 02, 04, 06, 07 |
+| R16 (finished pairings accept no code) | 02, 03, 04 |
+| R17 (correct code gives the credential) | 04, 07 |
+| R18 (credential only in the secret store; never printed) | 01, 05, 07, 08 |
+| R19 (success shown in terminal and browser) | 03, 04, 07, 08 |
 | R20 (saving fails → not completed) | 07 |
 | R21 (localhost only until sign-in) | 01 |
-| R22 (only hashes, except the pairing code) | 01, 02, 03, 05 |
-| R23 (Ctrl+C) | 07 |
-| R24 (retry polling until the deadline) | 07 |
-| R25 (saving failure reported) | 05, 07 |
-| R26 (no confirmation in 5 minutes → fail) | 05 |
-| R27 (not shown as paired until confirmed) | 04, 05 |
-| R28 (confirmation retried, then the finish command) | 07 |
-| R29 (next run finishes or restarts) | 06, 07 |
-| R30 (credential only to its saved server) | 06, 07 |
-| R31 (incomplete local data) | 06 |
-
-Task 08 checks the main path end to end, plus R13, R23, R28, and that no
-secret is ever printed.
+| R22 (only hashes, except the pairing code) | 01, 02, 04 |
+| R23 (Ctrl+C) | 06, 07, 08 |
+| R24 (retry polling until the deadline) | 06 |
+| R25 (saving failure reported) | 04, 07 |
+| R26 (no confirmation in 5 minutes → fail) | 04 |
+| R27 (not shown as paired until confirmed) | 03, 04 |
+| R28 (confirmation retried, then the finish command) | 07, 08 |
+| R29 (next run finishes or restarts) | 05, 07 |
+| R30 (credential only to its saved server) | 05, 07 |
+| R31 (incomplete local data) | 05 |
 
 ## Tasks
 
 | # | Task | Depends on | Risk | Status |
 | --- | --- | --- | --- | --- |
 | 01 | [Server foundation](tasks/01-server-foundation.md) | — | core | todo |
-| 02 | [Server: start and poll](tasks/02-start-and-poll.md) | 01 | core | todo |
-| 03 | [Server: approval API](tasks/03-approval-api.md) | 02 | core | todo |
-| 04 | [Approval web page](tasks/04-approval-page.md) | 03 | low | todo |
-| 05 | [Server: code, credential, finishing](tasks/05-code-and-credential.md) | 03 | core | todo |
-| 06 | [Worker: command and local state](tasks/06-worker-local.md) | 01 | core | todo |
-| 07 | [Worker: pairing flow](tasks/07-worker-flow.md) | 02, 05, 06 | core | todo |
-| 08 | [End-to-end test](tasks/08-end-to-end.md) | 04, 07 | normal | todo |
+| 02 | [Server: start, poll, and approval API](tasks/02-start-poll-approval.md) | 01 | core | todo |
+| 03 | [Approval web page](tasks/03-approval-page.md) | 02 | low | todo |
+| 04 | [Server: code, credential, finishing](tasks/04-code-and-credential.md) | 02 | core | todo |
+| 05 | [Worker: command and local state](tasks/05-worker-local.md) | 01 | core | todo |
+| 06 | [Worker: start and polling](tasks/06-worker-start-and-poll.md) | 02, 05 | core | todo |
+| 07 | [Worker: code, saving, and confirmation](tasks/07-worker-code-and-confirm.md) | 04, 06 | core | todo |
+| 08 | [End-to-end test](tasks/08-end-to-end.md) | 03, 07 | normal | todo |
 
 ```text
-01 ──► 02 ──► 03 ──► 04 ─────────────┐
- │             └───► 05 ──┐          ├──► 08
- └──► 06 ─────────────────┴──► 07 ───┘
+01 ──► 02 ──► 03 ───────────────────┐
+ │      ├───► 04 ──────┐            │
+ │      └───────┐      ▼            ▼
+ └──► 05 ─────► 06 ──► 07 ───────► 08
 ```
 
-Tasks 02–05 and task 06 can be built at the same time; so can 04 and 05.
-Tasks 05 and 07 are the largest. If either is too big to review in 40
-minutes, the slice is split in two (server, then worker) rather than going
-past 8 tasks.
+06 needs 02 and 05; 07 needs 04 and 06; 08 needs 03 and 07.
+
+Task 05 can be built at the same time as 02–04; tasks 03 and 04 can be built
+at the same time, since they change different packages. Each task changes its
+own row in this table; when two parallel tasks' rows conflict, the architect
+resolves it while rebasing.
 
 ## Parked
 
