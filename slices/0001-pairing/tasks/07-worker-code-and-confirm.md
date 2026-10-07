@@ -55,15 +55,21 @@ earlier unconfirmed pairing, and handle Ctrl+C after saving has begun.
 ### What exists (tasks 01, 05, 06)
 
 - `internal/secret`: `secret.Value` prints `[hidden]`; `Reveal()`; `FromString(s)`.
-- `internal/worker/local`: `Env{Stdin, Stdout, Stderr, Store, StateDir}`,
-  `Entry{Server, Credential}`, `Store` (`Get`, `Save` = save + read back +
-  compare, `Delete`, `Check`), `state.json` with `machine_id`,
-  `credential_saved`, `confirmed` and safe writes, and step 0, which calls
-  `Flow.FinishEarlier` for a saved, unconfirmed pairing whose server matches.
-- `internal/worker/flow` (task 06): `New(opts)`, starting and polling, the
-  10-second request limit, Ctrl+C before saving, and two placeholders this
-  task replaces: `codePhase(ctx, env, server, pollingKey, triesLeft, deadline, shownExpiry) int`
+- `internal/worker/local`: `Env{Stdin, Stdout, Stderr, Store *Store, StateDir}`,
+  `Entry{Server, Credential}`, the store logic (`Store.Get`, `Store.Save` =
+  set + read back + compare, `Store.Delete`), the exported read and write
+  functions for `state.json` (`machine_id`, `credential_saved`, `confirmed`;
+  safe writes), and step 0, which calls `Flow.FinishEarlier` for a saved,
+  unconfirmed pairing whose server matches `--server`.
+- The exported test backend `local.NewMemoryBackend()`: set `FailGet`,
+  `FailSet`, `FailDelete`, or `ChangeOnRead` to make an operation fail;
+  `Value(user)` shows what is stored. Use it as `local.NewStore(backend)`.
+- `internal/worker/flow` (task 06): `New(opts)` with `Options{RequestTimeout,
+  PollInterval, Now}`, starting and polling, Ctrl+C while starting and
+  polling, and two placeholders this task replaces: the unexported function
+  field `codePhase(ctx, env, server, pollingKey, triesLeft, deadline, shownExpiry) int`
   and `FinishEarlier`.
+- Every message other than usage errors goes to **standard output**.
 
 ### The server's API (task 04)
 
@@ -92,6 +98,7 @@ asks again without sending. Never print the code itself (R8).
 | No answer within 10 seconds, a connection failure, `5xx`, or a body that is not valid JSON | `✗ No answer from the server after sending the code. Run the same command again to start over.` **Never send the code again.** | Exit `1` |
 | Any other answer | `✗ Unexpected answer from the server. Run the command again.` | Exit `1` |
 | `accepted` | `✓ Code accepted.` | Saving |
+| Ctrl+C while waiting for input, or while the code request is running | `Pairing cancelled. Nothing was saved.` Do not tell the server. | Exit `130` |
 
 ### Saving (after `accepted`)
 
@@ -111,6 +118,18 @@ Each write finishes before the next starts:
    and the hint `To start over, delete <state.json path> and the "tervi" entry in Passwords and Keys.`,
    and keep `state.json`.
 5. Exit `1`.
+
+**If a `state.json` write fails** (`<path>` is the real path; the next run
+recovers from what was written):
+
+| Write | Output | Then |
+| --- | --- | --- |
+| Write 1 | `✗ Can't write <path>. Pairing was not completed.`; send the save-failure report once | Exit `1` |
+| Write 3 | `✗ Can't write <path>.` then the finish command (below) | Exit `1` |
+| `confirmed: true` after the server answered `ok` | `✗ The server confirmed the pairing, but this computer couldn't record it: can't write <path>.` then the finish command | Exit `1` |
+
+The finish command is `  To finish, run:  tervi pair --server <server>`. In
+the last two cases the next run sends the acknowledgment again, which is safe.
 
 On success, show `✓ Credential saved.` and confirm.
 
@@ -152,7 +171,7 @@ Pairing cancelled before it was confirmed.
 
 where `<server>` is the server in standard form (the address the entry holds,
 or is about to hold). Return `130`; do not tell the server. Before write 1,
-task 06's message applies.
+the code phase's own Ctrl+C row applies (`Pairing cancelled. Nothing was saved.`).
 
 ### Secrets
 
@@ -166,9 +185,10 @@ credential, or the code the user typed.
 
 ### Tests
 
-Use a fake server built with `net/http/httptest`, the in-memory store from task
-05 (which can be told to fail any operation), a temporary `StateDir`, short
-durations, and a fake standard input.
+Use a fake server built with `net/http/httptest`,
+`local.NewStore(local.NewMemoryBackend())` (set its `Fail…` fields to make
+operations fail), a temporary `StateDir` (made read-only to make a write
+fail), short durations, a fixed `Now`, and a fake standard input.
 
 ## Boundaries
 
@@ -188,14 +208,15 @@ durations, and a fake standard input.
 | `TestCodeAnswers` — `expired`, `not_waiting_for_code`, `401`, and an unexpected answer each give their message, exit `1` | Every answer defined |
 | `TestCodeNeverResent` — no answer, `503`, and invalid JSON: the code was sent once only, the message, exit `1` | Never two credentials |
 | `TestCodeNeverPrinted` — no output contains the typed code | R8 |
-| `TestHappyPath` — order: `state.json` (false) → entry saved and read back → `state.json` (true) → acknowledgment → `confirmed: true`; `✓ Paired successfully.`, exit `0` | R17, R18, R19 |
+| `TestHappyPath` — order: `state.json` (false) → entry saved and read back → `state.json` (true) → acknowledgment → `confirmed: true`; `✓ Paired successfully.`, exit `0`; no file under `StateDir` contains the credential | R17, R18, R19 |
+| `TestStateWriteFails` — each of the three `state.json` writes failing: its message, exit `1`, and the save-failure report only for write 1 | Defined failure |
 | `TestSaveFails` — `Save` fails: the R20 message, one save-failure report, the entry deleted, `state.json` deleted, exit `1` | R20, R25 |
 | `TestSaveFailsAndDeleteFails` — `Save` and `Delete` both fail: both messages and the hint, `state.json` kept, exit `1` | No stuck partial state |
 | `TestAckRetries` — answers lost: 3 tries 2 intervals apart, each shown, the finish command, exit `1`, `state.json` still `confirmed: false` | R28 |
 | `TestAckResults` — `expired`, `failed`, and `401` each delete the entry and `state.json` and show their own message | R29 |
 | `TestFinishEarlierPairing` — `FinishEarlier` with an entry: acknowledgment to the entry's server, `confirmed: true`, exit `0` | R29 |
 | `TestFinishEarlierExpired` — `FinishEarlier` answered `expired`: the "earlier" message, entry and `state.json` deleted, exit `1` | R29 |
-| `TestCredentialOnlyToSavedServer` — the fake server records every request's host: the credential only ever reaches the entry's server | R30 |
+| `TestCtrlCDuringCodePhase` — cancelling while waiting for input and while the code request is running: `Pairing cancelled. Nothing was saved.`, exit `130`, nothing written | R23 |
 | `TestCtrlCAfterSaving` — cancelling after write 1 and during `FinishEarlier`: the not-confirmed message with the finish command, exit `130`, no further request | R23 |
 | `TestNoSecretInOutput` — no output contains the polling key or the credential | R18 |
 

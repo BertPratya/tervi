@@ -14,7 +14,8 @@ Spec: [spec.md](spec.md)
 | Pairing on the server | `internal/pairing` | Pairing requests, machines, the status changes, their HTTP handlers, and `Register(mux, ...)` for its routes |
 | Approval page | `internal/web` | `index.html`, `app.js`, and `view.js`, embedded with `go:embed`; no build step; `Register(mux)` for its routes |
 | Worker program | `cmd/tervi` | A thin wrapper around `local.Run` |
-| Worker command and local state | `internal/worker/local` | The command line, the address standard form, `state.json`, the secret store entry, step 0, and `Run(ctx, args, stdin, stdout, stderr, store, stateDir, flow)`, importable so the end-to-end test runs the real worker |
+| Worker command and local state | `internal/worker/local` | The command line, the address standard form, `state.json`, the secret store logic and an in-memory backend for tests, step 0, and `Run(ctx, args, env, flow)`, importable so the end-to-end test runs the real worker |
+| Worker keyring backend | `internal/worker/keyring` | The real secret store backend, GNOME Keyring through `github.com/zalando/go-keyring` |
 | Worker pairing flow | `internal/worker/flow` | Steps 1–7b as seen from the worker, Ctrl+C, every terminal message |
 | End-to-end test | `test/e2e` | Runs the real server and worker together |
 
@@ -764,7 +765,7 @@ The worker saves the standard form in its secret store entry.
 | --- | --- |
 | R1 (usage) | 05 |
 | R2 (already paired) | 05 |
-| R3 (secret store usable) | 05 |
+| R3 (secret store usable) | 05, 06 |
 | R4 (server unreachable) | 06 |
 | R5 (show details, link, expiry) | 02, 06 |
 | R6 (page shows details; opening changes nothing) | 02, 03 |
@@ -784,7 +785,7 @@ The worker saves the standard form in its secret store entry.
 | R20 (saving fails → not completed) | 07 |
 | R21 (localhost only until sign-in) | 01 |
 | R22 (only hashes, except the pairing code) | 01, 02, 04 |
-| R23 (Ctrl+C) | 06, 07, 08 |
+| R23 (Ctrl+C) | 05, 06, 07, 08 |
 | R24 (retry polling until the deadline) | 06 |
 | R25 (saving failure reported) | 04, 07 |
 | R26 (no confirmation in 5 minutes → fail) | 04 |
@@ -829,6 +830,8 @@ For a later slice (move to `slices/backlog.md` when this plan is done):
   the server is reachable from any other computer (R21).**
 - Custom computer names chosen by the user.
 - A Machines page listing every active machine.
+- Ctrl+C during a GNOME Keyring unlock prompt only takes effect once the
+  prompt returns; the keyring library cannot be interrupted.
 - `tervi unpair`: remove a pairing. Then the "isn't finished yet" message also
   offers unpairing, and incomplete local data can be cleaned up by the command
   instead of by hand.

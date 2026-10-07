@@ -135,11 +135,20 @@ credential, or a pairing code.
 - `NormalizeCode(s)` removes `-` and spaces, so `4827 1934` and `48271934`
   both become `48271934`.
 
-### Tests and the database
+### Tests and the database — `internal/db/dbtest`
 
-Tests that need PostgreSQL read `DATABASE_URL` (start it with
-`docker compose up -d`; the URL is in `.env.example`). If the database cannot
-be reached from your environment, stop and report it; do not skip those tests.
+`go test ./...` runs packages at the same time, so tests must never share
+tables. Add a helper every database test in the project uses:
+
+- `dbtest.New(t *testing.T) *pgxpool.Pool` connects to the server in
+  `DATABASE_URL`, creates a new database with a random name
+  (`tervi_test_<random>`), runs `Migrate` on it, and returns a pool to it.
+  `t.Cleanup` closes the pool and drops the database.
+- If `DATABASE_URL` is not set or the server cannot be reached, the helper
+  fails the test with a clear message. It never skips.
+
+Start PostgreSQL with `docker compose up -d`; the URL is in `.env.example`.
+If the database cannot be reached from your environment, stop and report it.
 
 ## Boundaries
 
@@ -153,6 +162,7 @@ be reached from your environment, stop and report it; do not skip those tests.
 
 | Test | Proves |
 | --- | --- |
+| `TestDBTestIsolated` — two `dbtest.New` pools in one test point at different databases; a row inserted in one is not visible in the other; after cleanup, both databases are gone | Tests never share tables |
 | `TestMigrateCreatesTables` — after `Migrate`, both tables exist with every column above | R15, R22 |
 | `TestMigrateIsRepeatable` — running `Migrate` twice succeeds and changes nothing the second time | Migrations run at every start |
 | `TestHashColumnsAreUnique` — two rows with the same `polling_key_hash` cannot both be inserted | R22 |

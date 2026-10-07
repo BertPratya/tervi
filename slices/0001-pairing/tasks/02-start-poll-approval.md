@@ -158,8 +158,9 @@ their values.
 
 ### Tests and the database
 
-Tests that need PostgreSQL read `DATABASE_URL` (start it with
-`docker compose up -d`). If the database cannot be reached from your
+Every database test gets its own database from `dbtest.New(t)` (task 01,
+package `internal/db/dbtest`), so tests never share tables. Start PostgreSQL
+with `docker compose up -d`. If the database cannot be reached from your
 environment, stop and report it; do not skip those tests.
 
 ## Boundaries

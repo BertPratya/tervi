@@ -7,7 +7,8 @@ Slice: 0001-pairing    Risk: core    Depends on: 02, 05
 The first half of the worker's pairing flow: read this computer's details,
 start the pairing, show the start screen, and poll until the pairing is
 approved, rejected, or expired, surviving network outages. Ctrl+C at any of
-these moments stops cleanly.
+these moments stops cleanly. Also the real keyring backend and the `tervi`
+program itself.
 
 ## Requirements (copied from the spec)
 
@@ -28,8 +29,8 @@ these moments stops cleanly.
   was saved yet, it shall say `Pairing cancelled. Nothing was saved.` If saving
   had begun, it shall say the pairing was not confirmed and show the command
   that finishes it, and the next run shall recover whatever was saved. A
-  pairing that is not finished expires on its own. *This task covers the
-  moments before anything is saved.*
+  pairing that is not finished expires on its own. *This task covers starting
+  and polling.*
 - R24. If the connection to the server is lost while waiting for approval, then
   the worker shall show `Connection lost, retrying...`, keep trying until the
   deadline, and continue normally when the connection returns.
@@ -39,19 +40,21 @@ these moments stops cleanly.
 ### What exists (tasks 01, 05)
 
 - `internal/secret`: `secret.Value` prints `[hidden]`; `Reveal()`; `FromString(s)`.
-- `internal/worker/local`: `Run(ctx, args, env, flow) int`, `Env{Stdin,
-  Stdout, Stderr, Store, StateDir}`, `Entry{Server, Credential}`, and the
-  interface:
-
-  ```go
-  type Flow interface {
-      StartNew(ctx context.Context, env Env, server string) int
-      FinishEarlier(ctx context.Context, env Env, entry Entry) int
-  }
-  ```
-
-  `cmd/tervi/main.go` passes a placeholder flow and a `ctx` that is cancelled
-  by Ctrl+C.
+- `internal/worker/local`:
+  - `Run(ctx, args, env, flow) int`, which parses the command line, runs step
+    0 (including Ctrl+C during step 0), and calls the flow.
+  - `Env{Stdin, Stdout, Stderr, Store *Store, StateDir}` and the interface
+    ```go
+    type Flow interface {
+        StartNew(ctx context.Context, env Env, server string) int
+        FinishEarlier(ctx context.Context, env Env, entry Entry) int
+    }
+    ```
+  - The secret store: `Backend` (`Get(user)`, `Set(user, value)`,
+    `Delete(user)`, `ErrNotFound`), `NewStore(b Backend) *Store`, and the
+    exported test backend `NewMemoryBackend()`.
+  - No `cmd/tervi` yet.
+- Messages other than usage errors go to standard output.
 
 ### The server's API (task 02)
 
@@ -62,22 +65,31 @@ these moments stops cleanly.
 
 ### What to build
 
-Package `internal/worker/flow`, with `func New(opts Options) local.Flow`.
-`Options` holds the durations below, so tests run fast.
+1. **Package `internal/worker/keyring`**: `New() local.Backend` using
+   `github.com/zalando/go-keyring` (new dependency) under the service `tervi`;
+   a missing value returns `local.ErrNotFound`. No test uses the real keyring
+   (there is no Secret Service in a sandbox or CI); it only has to compile.
+2. **Package `internal/worker/flow`**: `func New(opts Options) local.Flow`.
 
-| Rule | Value |
-| --- | --- |
-| Every request waits at most | 10 seconds |
-| Next poll starts after the previous one ended (answer, error, or timeout) | 2 seconds |
+   ```go
+   type Options struct {
+       RequestTimeout time.Duration    // 10 seconds
+       PollInterval   time.Duration    // 2 seconds
+       Now            func() time.Time // time.Now
+   }
+   ```
 
-`StartNew` runs this task's half; when the pairing is approved, it calls an
-internal `codePhase(ctx, env, server, pollingKey, triesLeft, deadline, shownExpiry) int`.
-**In this task, `codePhase` prints `Code entry is not available yet.` and
-returns `1`;** task 07 fills it in. `FinishEarlier` likewise prints
-`Finishing is not available yet.` and returns `1` until task 07.
-
-`cmd/tervi/main.go`: replace the placeholder flow with `flow.New(...)` using
-the real durations.
+   `StartNew` runs this task's half. When the pairing is approved, it calls
+   the flow's **unexported function field**
+   `codePhase(ctx, env, server, pollingKey, triesLeft, deadline, shownExpiry) int`.
+   `New` sets it to a placeholder that prints `Code entry is not available yet.`
+   and returns `1`; task 07 replaces the placeholder. Tests in package `flow`
+   replace the field to observe the hand-over. `FinishEarlier` likewise prints
+   `Finishing is not available yet.` and returns `1` until task 07.
+3. **`cmd/tervi/main.go`**: `ctx` from
+   `signal.NotifyContext(context.Background(), os.Interrupt)`,
+   `Env{os.Stdin, os.Stdout, os.Stderr, local.NewStore(keyring.New()), <os.UserConfigDir()>/tervi}`,
+   `flow.New` with the real values, then `os.Exit(local.Run(ctx, os.Args[1:], env, f))`.
 
 ### Reading this computer's details
 
@@ -94,8 +106,8 @@ All messages go to standard output.
 | Result | Output | Exit |
 | --- | --- | --- |
 | `201` | The start screen below, then polling | — |
-| No connection within 10 seconds | `✗ Can't reach <server>. Check that the server is running, then run the command again.` | `1` |
-| Sent, but no answer within 10 seconds | `✗ The server didn't answer, so the pairing could not be started. Run the command again.` **Never retried.** | `1` |
+| No connection within the request timeout | `✗ Can't reach <server>. Check that the server is running, then run the command again.` | `1` |
+| Sent, but no answer within the request timeout | `✗ The server didn't answer, so the pairing could not be started. Run the command again.` **Never retried.** | `1` |
 | Any other answer | `✗ The server refused to start a pairing (HTTP <code>).` | `1` |
 
 Start screen (`<server>` is the standard form; the link exactly as received):
@@ -111,11 +123,11 @@ Open this link (on any device) and approve this computer:
 Waiting for approval... (expires at 14:32)
 ```
 
-**Two times are kept:**
+**Two times are kept**, both from `opts.Now`:
 
-- the **shown expiry**: the worker's clock when the start answer arrived +
-  `expires_in_seconds`, as local `HH:MM`. It never changes afterwards, so the
-  code prompt shows exactly the same time (R12).
+- the **shown expiry**: `Now()` when the start answer arrived +
+  `expires_in_seconds`, shown as local `HH:MM`. It never changes afterwards,
+  so the code prompt shows exactly the same time (R12).
 - the **deadline**: starts equal to the shown expiry; reset from
   `expires_in_seconds` in the poll answer that says `waiting_for_code`.
 
@@ -132,13 +144,14 @@ Waiting for approval... (expires at 14:32)
 | Any other status (`finishing`, `paired`, `failed`) or other `4xx` | `✗ Unexpected answer from the server. Run the command again.` | Exit `1` |
 | `waiting_for_code` | `✓ Approved in the browser.` | Stop polling; reset the deadline; call `codePhase` |
 
-Polls never overlap: the next starts 2 seconds after the previous ended.
+Polls never overlap: the next starts one poll interval after the previous one
+ended (answer, error, or timeout).
 
 ### Ctrl+C
 
-`ctx` is cancelled by Ctrl+C. At any moment in this task's half (starting or
-polling), print `Pairing cancelled. Nothing was saved.` and return `130`. Do
-not tell the server.
+`ctx` is cancelled by Ctrl+C. At any moment while starting or polling, print
+`Pairing cancelled. Nothing was saved.` and return `130`. Do not tell the
+server.
 
 ### Secrets
 
@@ -148,22 +161,23 @@ or test failure message may contain the polling key.
 
 ### Tests
 
-Use a fake server built with `net/http/httptest`, a temporary `StateDir`, the
-in-memory store from task 05, and short durations.
+Use a fake server built with `net/http/httptest`, a temporary `StateDir`,
+`local.NewStore(local.NewMemoryBackend())`, short durations, and a fixed
+`Now`.
 
 ## Boundaries
 
-- May create or change: `internal/worker/flow/`, `cmd/tervi/main.go`.
+- May create or change: `internal/worker/flow/`, `internal/worker/keyring/`,
+  `cmd/tervi/`, `go.mod`, `go.sum`.
 - Must not change: `internal/worker/local/` (except small exported additions
   the flow needs, listed in your report), everything else except this task's
   row in `slices/0001-pairing/plan.md`.
-- Do not add dependencies.
 
 ## Definition of done
 
 | Test | Proves |
 | --- | --- |
-| `TestStartScreen` — server, computer, OS, the link as received, and the expiry computed from `expires_in_seconds` | R5 |
+| `TestStartScreen` — with a fixed `Now`: server, computer, OS, the link as received, and the exact expiry `HH:MM` | R5 |
 | `TestUnknownAndTruncatedDetails` — unreadable values are omitted and shown as `unknown`; a 65-character hostname is sent as 63 characters + `…` | R5 |
 | `TestCannotReach` — no server: the R4 message, exit `1`, nothing written | R4 |
 | `TestStartNoAnswerNotRetried` — the server takes the request but never answers: one request only, the message, exit `1` | A start is never retried |
@@ -172,9 +186,10 @@ in-memory store from task 05, and short durations.
 | `TestDeadlineDuringOutage` — the server stays down past the deadline: the link-expired message, exit `1` | R15, R24 |
 | `TestPollsNeverOverlap` — the fake server never sees two polls at once, and they are at least one interval apart | Polling rule |
 | `TestUnexpectedAnswers` — `finishing`, `paired`, `failed`, and `404` while polling: the unexpected-answer message, exit `1`; `401`: its own message | Every answer defined |
-| `TestApprovedHandsOver` — `waiting_for_code`: `✓ Approved in the browser.`, `codePhase` is called with the polling key, `tries_left`, a reset deadline, and the unchanged shown expiry | R12 |
+| `TestApprovedHandsOver` — with `codePhase` replaced: `✓ Approved in the browser.`, and `codePhase` receives the polling key, `tries_left`, a deadline reset from the poll answer, and the unchanged shown expiry | R12 |
 | `TestCtrlCBeforeSaving` — cancelling `ctx` while starting and while polling: `Pairing cancelled. Nothing was saved.`, exit `130`, nothing written, no further request | R23 |
 | `TestNoSecretInOutput` — no output contains the polling key; the approval key appears only inside the printed link | Secrets never printed |
+| `TestProgramBuilds` — `go build ./cmd/tervi` succeeds | The program is wired |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md` changes
 to `done`.
@@ -182,7 +197,7 @@ to `done`.
 ## Out of scope
 
 The code prompt, saving, the acknowledgment, finishing an earlier pairing,
-and Ctrl+C after saving (task 07). The server (01–04). Step 0 (05).
+and Ctrl+C from the code prompt on (task 07). The server (01–04). Step 0 (05).
 
 ## If anything is unclear
 

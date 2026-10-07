@@ -41,9 +41,11 @@ API. These tests are the evidence that slice 1 is done.
   `DATABASE_URL`.
 - **The real worker, importable** (`internal/worker/local`, task 05):
   `Run(ctx, args, env, flow) int` with
-  `Env{Stdin, Stdout, Stderr, Store, StateDir}`; an in-memory `Store` that can
-  be told to fail any operation; `internal/worker/flow.New(opts)` (tasks 06,
-  07) with short durations as options. Ctrl+C is a cancelled `ctx`.
+  `Env{Stdin, Stdout, Stderr, Store *Store, StateDir}`; the store as
+  `local.NewStore(local.NewMemoryBackend())`, where the backend's `Value("worker")`
+  shows what is stored; `internal/worker/flow.New(opts)` (tasks 06, 07) with
+  `Options{RequestTimeout, PollInterval, Now}`. Ctrl+C is a cancelled `ctx`.
+  Usage errors go to standard error; every other message to standard output.
 
 ### The approval API (the browser's part)
 
@@ -58,14 +60,15 @@ Proof: `Authorization: Bearer <approval key>`; the approval key is the part of
 
 ### How the tests run
 
-- Serve `server.New(...)` with `net/http/httptest` on `127.0.0.1`, against the
-  PostgreSQL in `DATABASE_URL` (start it with `docker compose up -d`), with
+- Serve `server.New(...)` with `net/http/httptest` on `127.0.0.1`, against a
+  fresh database from `dbtest.New(t)` (task 01; start PostgreSQL with
+  `docker compose up -d`), with
   `PublicURL` set to the test server's address. Give it a logger writing into
   a buffer, so the test can read everything the server logged.
 - Run `local.Run(ctx, []string{"pair", "--server", <address>}, env, flow.New(...))`
   in a goroutine, with the in-memory store, a temporary `StateDir`, short
-  durations, standard output into a buffer, and a fake standard input the test
-  writes to.
+  durations, **standard output and standard error each into a buffer**, and a
+  fake standard input the test writes to.
 - Read the approval link from the worker's output, take the approval key, and
   drive the approval API as the page would.
 - To lose an answer on purpose, put a small HTTP proxy between the worker and
@@ -86,12 +89,12 @@ do not skip these tests.
 
 | Test | Proves |
 | --- | --- |
-| `TestPairingHappyPath` — start → Pair → read the code from the approval API → type it → `✓ Paired successfully.`, exit `0`; the approval read answers `paired` with the display name and OS; `state.json` says `confirmed: true`; the store holds the server and a credential | R19 |
+| `TestPairingHappyPath` — start → Pair → read the code from the approval API → type it → `✓ Paired successfully.`, exit `0`; the approval read answers `paired` with the display name and OS; `state.json` says `confirmed: true`; the store holds the server and a credential; no file under `StateDir` contains the credential | R18, R19 |
 | `TestRejectEndToEnd` — Reject → the worker prints the rejection and exits `1`; the approval read answers `rejected` | R9 |
 | `TestFiveWrongCodesEndToEnd` — 5 wrong codes → the worker prints the failed message, exit `1`; the approval read answers `failed` with `wrong_codes` | R13 |
 | `TestCtrlCAfterSavingThenFinish` — cancel `ctx` right after the credential is saved → the not-confirmed message, exit `130`; a second `Run` with the same `--server` finishes the pairing, exit `0` | R23 |
 | `TestLostAcknowledgmentThenFinish` — the proxy drops the acknowledgment's answers → 3 tries shown, the finish command printed, exit `1`; a second `Run` finishes, exit `0` | R28 |
-| `TestNoSecretEverPrinted` — across all tests above: the server's log contains no approval key, polling key, pairing code, or credential; the worker's output contains no polling key, pairing code, or credential, and the approval key only inside the printed link | R18 |
+| `TestNoSecretEverPrinted` — across all tests above: the server's log contains no approval key, polling key, pairing code, or credential; neither of the worker's two output streams contains a polling key, pairing code, or credential, and the approval key appears only inside the printed link | R18 |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md` changes
 to `done`.

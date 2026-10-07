@@ -61,7 +61,9 @@ Each answers `200` with
 | `view.js` | One pure function, `view(state)`: from an API answer (or `invalid_link`) to what to show. No browser objects, so it can be tested with Node. |
 | `view.test.js` | Tests for `view()`, run with `node --test`. |
 
-Embed the folder with `go:embed`. In `web.Register` add:
+Embed exactly the three page files with
+`//go:embed static/index.html static/app.js static/view.js`, so the test file
+is not served. In `web.Register` add:
 
 - `GET /pair/{approval_key}` → `index.html`, for any key; the page itself
   finds out whether the key is valid.
@@ -82,6 +84,7 @@ below is the hostname (`display_name` when paired).
 
 | Status | The page shows | Polls? |
 | --- | --- | --- |
+| Before the first answer arrives, or while the first request keeps failing | Loading… | Yes |
 | `waiting_for_approval` | "Pair a computer?", the name, OS name and version, and **Pair** and **Reject** buttons | Yes |
 | `waiting_for_code` | "Type this code into the terminal of `<name>`:", the code in large type, and "Never give this code to anyone." | Yes |
 | `finishing` | Code accepted. Finishing on `<name>`… | Yes |
@@ -125,7 +128,7 @@ the hostname and OS come from the worker and may contain anything. Do not use
 | Test | Proves |
 | --- | --- |
 | `TestPageServed` (Go) — `GET /pair/anything` answers `200` with the HTML, `Cache-Control: no-store`, and `Referrer-Policy: no-referrer` | R6 |
-| `TestStaticFilesServed` (Go) — `/static/app.js` and `/static/view.js` answer `200` with a JavaScript content type and the same two headers | The page can load its scripts |
+| `TestStaticFilesServed` (Go) — `/static/app.js` and `/static/view.js` answer `200` with a JavaScript content type and the same two headers; `/static/view.test.js` answers `404` | The page can load its scripts |
 | `TestPageLoadsNothingExternal` (Go) — no embedded file contains `http://` or `https://` | No third-party requests |
 | `TestNoHTMLInsertion` (Go) — no embedded file contains `innerHTML`, `outerHTML`, `insertAdjacentHTML`, or `document.write` | The hostname cannot become code |
 | `view.test.js` — for every status and failure reason in the table: the right message, buttons only for `waiting_for_approval`, the code only for `waiting_for_code`, and "poll again" only for the three polling statuses | R7, R9, R11, R13, R16, R19, R27 |
