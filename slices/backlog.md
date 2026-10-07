@@ -13,3 +13,4 @@ proposes items to include. The format is in [README.md](README.md#backlogmd).
 | B6 | `TestInvalidLink`: start a real pairing first, send accept and reject with wrong keys, and check the real row is unchanged | The current 0-rows check cannot fail | PR #8, review round 2 | open |
 | B7 | `TestLeftoverThenStartNew`: also prove that `Check` runs after removing leftover data (for example, a `FailSet` case) | The code does it; only the test does not prove it | PR #11, review round 3 | open |
 | B8 | Server addresses: write IPv6 in canonical form (`[0:0::1]` → `[::1]`), and reject or convert non-ASCII hosts | Rare; today it only errs toward refusing a server, never toward sending a credential elsewhere | PR #11, review round 2 | open |
+| B9 | Remove terminal control characters from values the worker prints as received (approval link, hostname, OS) | Needs a hostile server or odd `/etc/os-release`; the server is local-only for now | PR #12, review round 1 | open |
