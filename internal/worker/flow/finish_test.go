@@ -100,7 +100,7 @@ func TestCodeInputEOF(t *testing.T) {
 
 func TestPartialCodeWrongAnswerStopsAtNextPrompt(t *testing.T) {
 	var codeRequests atomic.Int32
-	server := codeServer(t, func(w http.ResponseWriter, r *http.Request) {
+	server := codeServerWithExpiry(t, 2, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/pairings/current/code" {
 			codeRequests.Add(1)
 			writeResult(w, map[string]any{"result": "wrong_code", "tries_left": 4})
@@ -504,6 +504,7 @@ func TestAckRetries(t *testing.T) {
 		if got != 1 {
 			t.Fatalf("StartNew() = %d; want 1", got)
 		}
+		server.Close()
 		mu.Lock()
 		gotStarts := append([]time.Time(nil), starts...)
 		gotEnds := append([]time.Time(nil), ends...)
