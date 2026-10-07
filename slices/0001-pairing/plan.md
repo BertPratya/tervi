@@ -593,9 +593,6 @@ The worker saves the standard form in its secret store entry.
 
 To add later in this plan:
 
-- Rename "worker's own secret" to "polling key" in `spec.md`.
-- Update `spec.md` for the machine expiry and the "saving failed" report
-  (it currently leaves this cleanup to slice 2).
 - R21: anyone with the approval link can approve.
 
 For a later slice (move to `slices/backlog.md` when this plan is done):
