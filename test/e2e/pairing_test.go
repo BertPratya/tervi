@@ -199,7 +199,6 @@ func (p *testProxy) recordSecrets(path string, body []byte) {
 
 type fixture struct {
 	serverURL string
-	backend   *local.MemoryBackend
 	store     *local.Store
 	stateDir  string
 	proxy     *testProxy
@@ -216,11 +215,9 @@ func newFixture(t *testing.T) *fixture {
 	origin := httptest.NewServer(server.New(server.Config{PublicURL: proxyServer.URL}, pool, logger))
 	t.Cleanup(origin.Close)
 	proxy.setTarget(origin.URL)
-	backend := local.NewMemoryBackend()
 	return &fixture{
 		serverURL: proxyServer.URL,
-		backend:   backend,
-		store:     local.NewStore(backend),
+		store:     local.NewStore(local.NewMemoryBackend()),
 		stateDir:  filepath.Join(t.TempDir(), "state"),
 		proxy:     proxy,
 		logs:      logs,
@@ -235,15 +232,11 @@ type workerRun struct {
 }
 
 func (f *fixture) startWorker(parent context.Context) *workerRun {
-	ctx := parent
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	stdin, input := io.Pipe()
 	stdout, stderr := &safeBuffer{}, &safeBuffer{}
 	run := &workerRun{input: input, stdout: stdout, stderr: stderr, done: make(chan int, 1)}
 	go func() {
-		run.done <- local.Run(ctx, []string{"pair", "--server", f.serverURL}, local.Env{
+		run.done <- local.Run(parent, []string{"pair", "--server", f.serverURL}, local.Env{
 			Stdin: stdin, Stdout: stdout, Stderr: stderr, Store: f.store, StateDir: f.stateDir,
 		}, flow.New(flow.Options{RequestTimeout: 300 * time.Millisecond, PollInterval: 10 * time.Millisecond}))
 		_ = stdin.Close()
@@ -306,6 +299,14 @@ func runHappyPath(t *testing.T) secretAudit {
 	f := newFixture(t)
 	run := f.startWorker(context.Background())
 	approvalKey := waitForApprovalKey(t, run.stdout)
+	pageResponse, err := http.Get(f.serverURL + "/pair/" + approvalKey)
+	if err != nil {
+		t.Fatalf("GET approval page: %v", err)
+	}
+	_ = pageResponse.Body.Close()
+	if pageResponse.StatusCode != http.StatusOK {
+		t.Fatalf("approval page status = %d, want %d", pageResponse.StatusCode, http.StatusOK)
+	}
 	approval := approvalRequest(t, f.serverURL, approvalKey, http.MethodGet, "")
 	if approval.Status != "waiting_for_approval" {
 		t.Fatalf("initial approval status = %q, want waiting_for_approval", approval.Status)
@@ -382,9 +383,6 @@ func runFiveWrongCodes(t *testing.T) secretAudit {
 	for triesLeft := 4; triesLeft > 0; triesLeft-- {
 		writeCode(t, run, wrongCode)
 		waitFor(t, run.stdout, fmt.Sprintf("Wrong code. %d tries left.", triesLeft))
-		if triesLeft > 1 {
-			waitFor(t, run.stdout, "Code: ")
-		}
 	}
 	writeCode(t, run, wrongCode)
 	approval = waitForApprovalStatus(t, f.serverURL, approvalKey, "failed")
@@ -571,8 +569,19 @@ func waitFor(t *testing.T, output *safeBuffer, text string) {
 
 func writeCode(t *testing.T, run *workerRun, code string) {
 	t.Helper()
-	if _, err := io.WriteString(run.input, code+"\n"); err != nil {
-		t.Fatalf("write code to worker: %v", err)
+	written := make(chan error, 1)
+	go func() {
+		_, err := io.WriteString(run.input, code+"\n")
+		written <- err
+	}()
+	select {
+	case err := <-written:
+		if err != nil {
+			t.Fatalf("write code to worker: %v", err)
+		}
+	case <-time.After(quickWait):
+		_ = run.input.Close()
+		t.Fatalf("worker did not read code within %s", quickWait)
 	}
 }
 
@@ -609,6 +618,10 @@ func (f *fixture) audit(approvalKey, pairingCode string, runs ...*workerRun) sec
 
 func assertNoSecretLeaks(t *testing.T, audit secretAudit) {
 	t.Helper()
+	if audit.pollingKey == "" {
+		t.Error("test did not capture polling key for leak audit")
+		return
+	}
 	secrets := map[string]string{
 		"polling key":  audit.pollingKey,
 		"pairing code": audit.pairingCode,
