@@ -61,7 +61,8 @@ nothing except acknowledging or reporting a failure while `pending`.
 ### Worker secret store entry
 
 One entry in the OS secret store (GNOME Keyring on Linux), named
-service `tervi`, user `worker`. Its value holds the credential together with
+service `tervi`, user `worker`, accessed with the Go library
+`github.com/zalando/go-keyring`. Its value holds the credential together with
 the server it belongs to:
 
 ```json
@@ -423,6 +424,20 @@ failed, adds a hint, and stops with exit code `1`:
 **A save counts as successful only if reading it back returns exactly what
 was saved.**
 
+### Secrets never printed
+
+Applies to: the approval key, the polling key, the pairing code, and the
+credential, in both the worker and the server. Covers: R18, R22.
+
+Each secret is held in its own small Go type, whose printed form is always
+`[hidden]`, never its value. So printing a value, logging an error, or
+dumping a whole answer can never reveal a secret by accident. The value is
+read only where it is really needed: sending it, hashing it, or saving it in
+the secret store.
+
+A test runs the full pairing flow, captures everything printed and logged by
+the worker and the server, and fails if any secret's value appears in it.
+
 ### Server address comparison
 
 Applies to: comparing `--server` with the saved server (step 0). Covers: R30.
@@ -503,6 +518,12 @@ The worker saves the standard form in its secret store entry.
 - The server address is saved only in the secret store entry, next to the
   credential, not in `state.json` — a plain file is easy to edit or copy by
   mistake, and a credential sent to the wrong server cannot be taken back.
+- `github.com/zalando/go-keyring` for the secret store — widely used, small,
+  and covers Linux, Windows, and macOS. It does not always say whether the
+  store is locked or missing, which slice 1's single message does not need.
+- Secrets live in their own Go types that print as `[hidden]` — "never in
+  logs" is easy to break by accident; a type makes the safe behavior the
+  default, and a test checks the full flow's output.
 - Every secret store failure is shown to the user — a silent failure would
   look like success, or leave the user guessing.
 - The secret store is checked before step 1 with a test value — finding a
