@@ -264,6 +264,7 @@ name, OS name, and OS version.
 | Code does not match | `tries_left` goes down by 1. The server answers with the new `tries_left`, and the worker shows it. At 0 the status becomes `failed` and the worker stops. |
 | Server answers `expired` | `✗ The code expired. Run the command again.` Stop, exit code `1`. |
 | Worker's own deadline passes while the prompt is open | The same message. The worker stops waiting for input and stops, exit code `1`. |
+| No answer after sending the code (10 seconds, or the connection fails) | The worker does not send the code again: if the code was correct, the credential is lost, and the server never issues a second one. It shows `✗ No answer from the server after sending the code. Run the same command again to start over.` and stops, exit code `1`. Nothing was saved, so the next run starts a new pairing; a pending machine expires on the server. |
 | Covers | R12, R13, R15 |
 
 **The worker keeps its own deadline while it waits for the code.** It no
@@ -529,6 +530,9 @@ The worker saves the standard form in its secret store entry.
 - A pending machine expires after 5 minutes — saving and acknowledging take
   seconds; 5 minutes leaves room for a slow network, and an unconfirmed
   credential does not linger.
+- The worker never sends a code again after a lost answer — a correct code's
+  credential cannot be issued twice, so resending cannot help; the user pairs
+  again.
 - The credential is never stored in plain form, even for resending — nothing
   secret waits on the server; a lost credential means pairing again.
 - The acknowledgment is safe to repeat, and the worker retries it 3 times,
@@ -592,9 +596,6 @@ To add later in this plan:
 - Rename "worker's own secret" to "polling key" in `spec.md`.
 - Update `spec.md` for the machine expiry and the "saving failed" report
   (it currently leaves this cleanup to slice 2).
-- If step 5's answer is lost after the code matched, may the worker send the
-  code again? (The server already cannot issue a second credential; see Status
-  changes. What remains is what the worker does and shows.)
 - R21: anyone with the approval link can approve.
 
 For a later slice (move to `slices/backlog.md` when this plan is done):
