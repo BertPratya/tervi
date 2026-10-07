@@ -239,15 +239,21 @@ func TestStartLimits(t *testing.T) {
 	initialCount := pairingCount(t, api.pool)
 
 	for _, field := range []struct {
-		name  string
-		value string
+		name     string
+		jsonName string
+		value    string
 	}{
 		{name: "hostname", value: strings.Repeat("ก", 65)},
 		{name: "os_name", value: strings.Repeat("ข", 65)},
 		{name: "os_version", value: strings.Repeat("ค", 33)},
+		{name: "hostname_nul", jsonName: "hostname", value: "bert\x00desktop"},
 	} {
 		t.Run(field.name, func(t *testing.T) {
-			body, err := json.Marshal(map[string]string{field.name: field.value})
+			name := field.jsonName
+			if name == "" {
+				name = field.name
+			}
+			body, err := json.Marshal(map[string]string{name: field.value})
 			if err != nil {
 				t.Fatal("marshal over-limit value")
 			}
@@ -329,9 +335,8 @@ func TestPollAfterExpiry(t *testing.T) {
 func TestReadShowsDetailsAndChangesNothing(t *testing.T) {
 	api := newTestAPI(t)
 	_, key := api.startKnown(t)
-	var beforeStatus string
-	var beforeCode *string
-	if err := api.pool.QueryRow(context.Background(), `SELECT status, pairing_code FROM pairing_requests WHERE approval_key_hash = $1`, secret.Hash(secret.FromString(key))).Scan(&beforeStatus, &beforeCode); err != nil {
+	var beforeRow string
+	if err := api.pool.QueryRow(context.Background(), `SELECT row_to_json(p)::text FROM pairing_requests p WHERE approval_key_hash = $1`, secret.Hash(secret.FromString(key))).Scan(&beforeRow); err != nil {
 		t.Fatalf("read pairing before GET: %v", err)
 	}
 	rec := api.request(t, http.MethodGet, "/api/v1/approvals/current", "", key)
@@ -342,12 +347,11 @@ func TestReadShowsDetailsAndChangesNothing(t *testing.T) {
 	if got.Status != "waiting_for_approval" || got.Hostname != "bert-desktop" || got.OSName != "Ubuntu" || got.OSVersion != "26.04" {
 		t.Error("approval read did not return stored details and waiting state")
 	}
-	var afterStatus string
-	var afterCode *string
-	if err := api.pool.QueryRow(context.Background(), `SELECT status, pairing_code FROM pairing_requests WHERE approval_key_hash = $1`, secret.Hash(secret.FromString(key))).Scan(&afterStatus, &afterCode); err != nil {
+	var afterRow string
+	if err := api.pool.QueryRow(context.Background(), `SELECT row_to_json(p)::text FROM pairing_requests p WHERE approval_key_hash = $1`, secret.Hash(secret.FromString(key))).Scan(&afterRow); err != nil {
 		t.Fatalf("read pairing after GET: %v", err)
 	}
-	if beforeStatus != afterStatus || beforeCode != afterCode {
+	if beforeRow != afterRow {
 		t.Error("approval GET changed the pairing row")
 	}
 }
@@ -518,10 +522,26 @@ func TestExpiredCannotBeDecided(t *testing.T) {
 
 func TestInvalidLink(t *testing.T) {
 	api := newTestAPI(t)
-	for _, authorization := range []string{"Bearer not-a-key", "", "Basic not-a-key", "Bearer", "Bearer one two"} {
-		t.Run(fmt.Sprintf("header_%d", len(authorization)), func(t *testing.T) {
-			assertError(t, api.requestWithHeader(http.MethodGet, "/api/v1/approvals/current", "", authorization, ""), http.StatusNotFound, "invalid_link")
+	paths := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "read", method: http.MethodGet, path: "/api/v1/approvals/current"},
+		{name: "accept", method: http.MethodPost, path: "/api/v1/approvals/current/accept"},
+		{name: "reject", method: http.MethodPost, path: "/api/v1/approvals/current/reject"},
+	}
+	for _, route := range paths {
+		t.Run(route.name, func(t *testing.T) {
+			for _, authorization := range []string{"Bearer not-a-key", "", "Basic not-a-key", "Bearer", "Bearer one two"} {
+				t.Run(fmt.Sprintf("header_%d", len(authorization)), func(t *testing.T) {
+					assertError(t, api.requestWithHeader(route.method, route.path, "", authorization, ""), http.StatusNotFound, "invalid_link")
+				})
+			}
 		})
+	}
+	if got := pairingCount(t, api.pool); got != 0 {
+		t.Errorf("pairing request count = %d after invalid approval requests, want 0", got)
 	}
 }
 

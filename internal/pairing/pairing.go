@@ -55,7 +55,8 @@ func (deps Deps) start(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
-	if utf8.RuneCountInString(input.Hostname) > 64 || utf8.RuneCountInString(input.OSName) > 64 || utf8.RuneCountInString(input.OSVersion) > 32 {
+	if utf8.RuneCountInString(input.Hostname) > 64 || utf8.RuneCountInString(input.OSName) > 64 || utf8.RuneCountInString(input.OSVersion) > 32 ||
+		strings.ContainsRune(input.Hostname, '\x00') || strings.ContainsRune(input.OSName, '\x00') || strings.ContainsRune(input.OSVersion, '\x00') {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
