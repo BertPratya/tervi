@@ -250,29 +250,33 @@ entry, compared with `--server` in standard form (see Mechanisms).
 | `state.json` | Secret store entry | Worker does |
 | --- | --- | --- |
 | Missing | Missing | Checks that the secret store is usable (see Mechanisms), then starts a new pairing (step 1) |
-| Missing | Exists | Incomplete data: stop, change nothing (R31). Since `state.json` is always written first, only something outside tervi can cause this. |
-| `credential_saved: false` | Missing | The save never happened, so the credential is lost. Deletes `state.json` and shows `✗ The earlier pairing was interrupted before the credential was saved. Run the same command again to start a new one.` The server's machine expires by itself. |
+| Missing | Exists | Leftover data (R31): removes it, says so, starts a new pairing. Since `state.json` is always written first, only something outside tervi can cause this. |
+| `credential_saved: false` | Missing | The save never happened, so the credential is lost. Leftover data: removes `state.json`, says the earlier pairing was interrupted, starts a new pairing. The server's machine expires by itself. |
 | `credential_saved: false` or `true`, `confirmed: false` | Exists, well formed (below) | Compares `--server` with the saved server **first**. Different → refuses and changes nothing: `✗ A pairing with <saved server> isn't finished yet.` followed by `To finish it, run:  tervi pair --server <saved server>`. Equal → if `credential_saved` is `false` (the save happened but was not recorded), sets it to `true`; then finishes the earlier pairing by sending the acknowledgment again (step 7b). |
-| `credential_saved: true` | Missing | Incomplete data: stop, change nothing (R31) |
+| `credential_saved: true` | Missing | Leftover data (R31): removes it, says so, starts a new pairing |
 | `confirmed: true` | Exists | Already paired (R2): `This computer is already paired with <saved server>. Nothing was changed.` Exit code `1`. |
 
-**Incomplete data** gets a message naming what is missing, and a hint for
-cleaning up by hand until `tervi unpair` exists:
-
-```text
-✗ The local pairing data is incomplete: state.json exists, but the secret store entry is missing.
-  Nothing was changed.
-  To start over, delete ~/.config/tervi/state.json and the "tervi" entry in Passwords and Keys.
-```
-
 **A well-formed entry** is valid JSON with a `server` in standard form and a
-non-empty `credential`. Whenever step 0 finds an entry that is not well
-formed, it stops, changes nothing, and exits with `1`:
+non-empty `credential`. An entry that is not well formed is also leftover
+data, whatever `state.json` holds.
+
+**Leftover data** is removed by the worker itself, so the user never cleans up
+by hand. The worker deletes the entry first, then `state.json`, says what it
+found, and continues with a new pairing in the same run (the first row):
 
 ```text
-✗ The secret store entry for tervi is damaged. Nothing was changed.
-  To start over, delete ~/.config/tervi/state.json and the "tervi" entry in Passwords and Keys.
+Found incomplete pairing data: state.json exists, but the secret store entry is missing.
+  Removed the leftover pairing data. Starting a new pairing.
+
+Pairing this computer with http://localhost:8080
+  ...
 ```
+
+If a delete fails, the worker shows that failure (see "Secret store access"),
+keeps what it could not delete, and stops with exit code `1`; the next run
+tries again. A removed entry may have belonged to a machine the server still
+lists as `active`; that machine can never connect again, and removing it from
+the server comes with the Machines page.
 
 **A credential only ever goes to the server that issued it.** That is why a
 different `--server` is refused instead of used. Once `tervi unpair` exists
@@ -452,7 +456,7 @@ machine expires, and the user pairs again.
 | --- | --- |
 | Worker shows | `✗ Couldn't save the credential. Pairing was not completed.` (R20) |
 | Worker sends | "Saving failed", with the credential as proof (once; its answer changes nothing) |
-| Worker cleans up | Deletes the secret store entry if one was written (a save can write the entry and still fail its read-back), then deletes `state.json`. If the entry cannot be deleted, it also shows `✗ Couldn't remove the partly saved secret store entry.` and the manual clean-up hint, and keeps `state.json`. Exit code `1`. |
+| Worker cleans up | Deletes the secret store entry if one was written (a save can write the entry and still fail its read-back), then deletes `state.json`. If the entry cannot be deleted, it also shows `✗ Couldn't remove the partly saved secret store entry.` and the keyring hint, and keeps `state.json`; the next run cleans up what is left. Exit code `1`. |
 | Server does | The machine's status becomes `failed`; the pairing request's status becomes `failed`, and the browser shows that pairing failed |
 
 This report may never arrive, for example when the network is down or the
@@ -600,6 +604,7 @@ failed, adds a hint, and stops with exit code `1`:
 | --- | --- | --- |
 | Before step 1 (R3) | Save a test value, read it back, delete it | Stop before contacting the server |
 | Step 0 | Read the entry | Stop |
+| Step 0, leftover data (R31) | Delete the entry, then `state.json` | Stop and keep what was not deleted, so the next run tries again |
 | Step 6 | Save the real entry, read it back, compare | Saving failed: step 7a |
 | Step 7b, or finishing an earlier pairing, when the server says `expired`, `failed`, or `401` | Delete the entry, then `state.json` | Stop and keep `state.json`, so the next run tries again |
 
@@ -764,9 +769,10 @@ The worker saves the standard form in its secret store entry.
   waste their time and leave a pending machine behind.
 - A save is verified by reading it back — it proves the credential can really
   be used later.
-- Incomplete local data stops the worker, which changes nothing — repairing it
-  belongs to `tervi unpair` in a later slice; until then a hint explains the
-  manual clean-up so the user is not stuck.
+- Incomplete or damaged local data is removed by the worker, which says so and
+  starts a new pairing — the user ran `tervi pair` to pair, so cleaning up by
+  hand would only be busywork. The cost is rare: a removed credential may
+  leave an `active` machine on the server that can never connect.
 - Addresses are compared in a standard form — otherwise `http://LOCALHOST:8080/`
   would be refused as a different server.
 - Expiry is checked at every request and also cleaned up every minute — the
@@ -857,5 +863,6 @@ For a later slice (move to `slices/backlog.md` when this plan is done):
 - Ctrl+C during a GNOME Keyring unlock prompt only takes effect once the
   prompt returns; the keyring library cannot be interrupted.
 - `tervi unpair`: remove a pairing. Then the "isn't finished yet" message also
-  offers unpairing, and incomplete local data can be cleaned up by the command
-  instead of by hand.
+  offers unpairing.
+- Removing machines from the server, including an `active` machine left
+  behind when step 0 removed leftover local data.

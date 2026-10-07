@@ -59,8 +59,13 @@ earlier unconfirmed pairing, and handle Ctrl+C after saving has begun.
   `Entry{Server, Credential}`, the store logic (`Store.Get`, `Store.Save` =
   set + read back + compare, `Store.Delete`), the exported read and write
   functions for `state.json` (`machine_id`, `credential_saved`, `confirmed`;
-  safe writes), and step 0, which calls `Flow.FinishEarlier` for a saved,
-  unconfirmed pairing whose server matches `--server`.
+  safe writes), `StatePath(dir)` and `DeleteState(dir)` (a missing file is not
+  an error), and step 0, which calls `Flow.FinishEarlier` for a saved,
+  unconfirmed pairing whose server matches `--server`. Step 0 also removes
+  leftover or damaged data by itself and starts a new pairing.
+- A failed `state.json` delete prints `✗ Can't delete <path>.` then
+  `  Check that you can change files in <folder>, then run the same command again.`
+  (task 05's message), and exits `1`.
 - The exported test backend `local.NewMemoryBackend()`: set `FailGet`,
   `FailSet`, `FailDelete`, or `ChangeOnRead` to make an operation fail;
   `Value(user)` shows what is stored. Use it as `local.NewStore(backend)`.
@@ -113,10 +118,11 @@ Each write finishes before the next starts:
 1. Show `✗ Couldn't save the credential. Pairing was not completed.`
 2. Send the save-failure report once; its answer changes nothing.
 3. Try `Store.Delete()`, since a save can write the entry and still fail its read-back.
-4. If the delete worked (or there was nothing to delete), delete `state.json`.
-   If it failed, also show `✗ Couldn't remove the partly saved secret store entry.`
-   and the hint `To start over, delete <state.json path> and the "tervi" entry in Passwords and Keys.`,
-   and keep `state.json`.
+4. If the delete worked (or there was nothing to delete), delete `state.json`;
+   if that fails, also show the `state.json` delete message. If the entry
+   delete failed, also show `✗ Couldn't remove the partly saved secret store entry.`
+   and `  Make sure you are logged in to a desktop session and the keyring is unlocked, then run the same command again.`,
+   and keep `state.json`; the next run cleans up what is left.
 5. Exit `1`.
 
 **If a `state.json` write fails** (`<path>` is the real path; the next run
@@ -147,11 +153,12 @@ credential to the **entry's server**, never to any other address.
 | `401 unknown_credential` | Clean up (below); `✗ The server doesn't recognize this pairing. Run the same command again to start a new one.` | Exit `1` |
 | Any other answer | `✗ Unexpected answer from the server.` then the finish command below | Exit `1` |
 
-**Clean up** = `Store.Delete()` first, then delete `state.json`. If the entry
+**Clean up** = `Store.Delete()` first, then `DeleteState`. If the entry
 cannot be deleted, show `✗ Can't delete the secret store entry.` and
 `  Make sure you are logged in to a desktop session and the keyring is unlocked.`
 **instead of** the message above, keep `state.json` (so the next run tries
-again), and exit `1`.
+again), and exit `1`. If `state.json` cannot be deleted, show the
+`state.json` delete message instead, and exit `1`.
 
 After 3 failed tries (`state.json` stays `confirmed: false`):
 
@@ -227,6 +234,7 @@ fail), short durations, a fixed `Now`, and a fake standard input.
 | `TestAckRetries` — answers lost: 3 tries, each at least one `PollInterval` after the previous ended, each shown, the finish command, exit `1`, `state.json` still `confirmed: false` | R28 |
 | `TestAckResults` — `expired`, `failed`, and `401` each delete the entry, then `state.json`, and show their own first-run message | R29 |
 | `TestAckCleanupDeleteFails` — `expired` with `FailDelete`: the delete message and hint, `state.json` kept, exit `1` | No silent failure |
+| `TestStateDeleteFails` — read-only `StateDir` after `Save` fails, and after `expired`: the entry deleted, the `state.json` delete message, exit `1` | No silent failure |
 | `TestFinishEarlierPairing` — `FinishEarlier` with an entry: the acknowledgment goes to the entry's server, `confirmed: true`, exit `0` | R29, R30 |
 | `TestFinishEarlierResults` — `FinishEarlier` answered `expired`, `failed`, and `401`: each "earlier" message in full, entry and `state.json` deleted, exit `1` | R29 |
 | `TestCtrlCDuringCodePhase` — cancelling while waiting for input and while the code request is running: `Pairing cancelled. Nothing was saved.`, exit `130`, nothing written | R23 |

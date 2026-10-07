@@ -147,10 +147,11 @@ protections, Windows, and sign-in.
   credential shall never be sent to any server other than the one that issued
   it: the server address is saved with the credential in the OS secret store,
   and only that saved address decides where the credential may go.
-- R31. If the local pairing data is incomplete (the state file without the
-  secret store entry, or the entry without the state file), then the worker
-  shall say what is missing, change nothing, stop, and explain how to clean up
-  by hand.
+- R31. If the local pairing data is incomplete or damaged (the state file
+  without the secret store entry, the entry without the state file, or an
+  entry that cannot be read as pairing data), then the worker shall remove
+  what is left, say what it found and removed, and start a new pairing. If
+  removing fails, then the worker shall say so and stop.
 
 **Secrets**
 

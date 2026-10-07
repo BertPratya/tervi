@@ -37,10 +37,11 @@ and `cmd/tervi` are tasks 06 and 07.
   credential shall never be sent to any server other than the one that issued
   it: the server address is saved with the credential in the OS secret store,
   and only that saved address decides where the credential may go.
-- R31. If the local pairing data is incomplete (the state file without the
-  secret store entry, or the entry without the state file), then the worker
-  shall say what is missing, change nothing, stop, and explain how to clean up
-  by hand.
+- R31. If the local pairing data is incomplete or damaged (the state file
+  without the secret store entry, the entry without the state file, or an
+  entry that cannot be read as pairing data), then the worker shall remove
+  what is left, say what it found and removed, and start a new pairing. If
+  removing fails, then the worker shall say so and stop.
 
 ## Context
 
@@ -203,37 +204,52 @@ It holds nothing secret and no server address.
 - A file that exists but cannot be read, or is not valid JSON: `✗ Can't read <path>.`,
   change nothing, exit `1`.
 - A write that fails: `✗ Can't write <path>.`, exit `1`.
+- A delete that fails: `✗ Can't delete <path>.` then
+  `  Check that you can change files in <folder>, then run the same command again.`,
+  exit `1`. Deleting a file that does not exist is not an error.
 
-Export the read and write functions; task 07 uses them.
+Export the read and write functions, plus `StatePath(dir string) string` and
+`DeleteState(dir string) error`; task 07 uses them.
 
 ### Step 0 — deciding what to do
 
-Rows are checked in this order. **An entry that is not well formed always
-gives message C, whatever `state.json` holds**, so the last row is checked
-first.
+**Check the last row first:** an entry that is not well formed always gives
+message C, whatever `state.json` holds. Then check the other rows from the top.
 
 | `state.json` | Entry | Outcome |
 | --- | --- | --- |
 | Missing | Missing | `Check` the store. Usable → `flow.StartNew`. |
-| Missing | Exists | Incomplete data (message A below), exit `1` |
-| `credential_saved: false` | Missing | Delete `state.json`; `✗ The earlier pairing was interrupted before the credential was saved. Run the same command again to start a new one.`; exit `1` |
+| Missing | Exists | Leftover data (message A below), then as the first row |
+| `credential_saved: false` | Missing | Leftover data (message D), then as the first row |
 | `credential_saved: false` or `true`, `confirmed: false` | Exists, well formed | Compare `--server` (standard form) with the entry's server **first**. Different → `✗ A pairing with <saved server> isn't finished yet.` and `To finish it, run:  tervi pair --server <saved server>`; **change nothing**; exit `1`. Equal → if `credential_saved` is `false`, set it to `true`; then `flow.FinishEarlier`. |
-| `credential_saved: true` | Missing | Incomplete data (message B), exit `1` |
+| `credential_saved: true` | Missing | Leftover data (message B), then as the first row |
 | `confirmed: true` | Exists, well formed | `This computer is already paired with <saved server>. Nothing was changed.`; exit `1` |
-| Any | Exists, **not** well formed | Damaged entry (message C), change nothing, exit `1` |
+| Any, or missing | Exists, **not** well formed | Leftover data (message C), then as the first row |
+
+**Leftover data** means: delete the entry if one exists, then delete
+`state.json` if it exists, then print the message, then continue as the first
+row (`Check`, then `flow.StartNew`) in the same run. The entry is deleted
+first so that, if that fails, `state.json` still records that something is
+left. If a delete fails, print only its failure message (`✗ Can't delete the secret store entry.`
+with its hint, or the `state.json` delete message), keep whatever was not
+deleted, and exit `1`; the next run tries again.
 
 ```text
-A: ✗ The local pairing data is incomplete: the secret store entry exists, but state.json is missing.
-B: ✗ The local pairing data is incomplete: state.json exists, but the secret store entry is missing.
-C: ✗ The secret store entry for tervi is damaged.
+A: Found incomplete pairing data: the secret store entry exists, but state.json is missing.
+B: Found incomplete pairing data: state.json exists, but the secret store entry is missing.
+C: Found a damaged secret store entry for tervi.
+D: The earlier pairing was interrupted before the credential was saved.
 ```
 
-A, B, and C are each followed by (with the real `state.json` path):
+A, B, C, and D are each followed by:
 
 ```text
-  Nothing was changed.
-  To start over, delete ~/.config/tervi/state.json and the "tervi" entry in Passwords and Keys.
+  Removed the leftover pairing data. Starting a new pairing.
 ```
+
+A deleted entry may have belonged to a machine the server still lists as
+`active`. That machine can never connect again; removing it from the server
+comes with the Machines page in a later slice.
 
 ### Where the code goes
 
@@ -264,7 +280,10 @@ A, B, and C are each followed by (with the real `state.json` path):
 | `TestUnusableStoreStopsBeforeFlow` — `Check` fails: the message, exit `1`, `StartNew` never called | R3 |
 | `TestStateWriteFailsInStepZero` — the `credential_saved` update cannot be written (read-only `StateDir`): the write message, exit `1`, `FinishEarlier` never called | Defined failure |
 | `TestCtrlCDuringStepZero` — `ctx` cancelled before and during step 0: `Pairing cancelled. Nothing was saved.`, exit `130`, no flow call; cancelled after a well-formed unconfirmed entry for the same server was found: the not-confirmed message with the finish command, exit `130` | R23 |
-| `TestDamagedEntryWins` — a damaged entry with `state.json` missing, and with each `state.json` value: always message C | R31 |
+| `TestDamagedEntryWins` — a damaged entry with `state.json` missing, and with each `state.json` value: always message C, both removed, then `StartNew` | R31 |
+| `TestLeftoverThenStartNew` — rows A, B, and D: the message, the leftover removed, then `Check` and `StartNew` in the same run | R31 |
+| `TestLeftoverDeleteFails` — `FailDelete` with an entry left over: the entry delete message, exit `1`, `state.json` kept, `StartNew` never called; `state.json` cannot be deleted (read-only `StateDir`): the `state.json` delete message, exit `1`, `StartNew` never called | R31 |
+| `TestStateFileDelete` — `DeleteState` removes the file; a missing file is not an error | Defined failure |
 | `TestCredentialNeverPrinted` — across all tests, nothing written to standard output or error contains the credential | R18 |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md` changes
