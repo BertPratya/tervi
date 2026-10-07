@@ -115,6 +115,13 @@ The only command in this slice is `tervi pair --server <url>`. Covers R1.
 with an optional port: `http://localhost:8080`. An invalid address stops the
 command before anything is contacted.
 
+## Server setup
+
+| Setting | Value in this slice | Why |
+| --- | --- | --- |
+| `SERVER_ADDR` (where the server listens) | `127.0.0.1:8080` by default | Only this computer can reach the server, which keeps R21's limitation safe. The current default `:8080` listens on every network interface and must change. |
+| `TERVI_PUBLIC_URL` (the address in approval links) | `http://localhost:8080` | See step 1 |
+
 ## Flow
 
 ### Step 0 — The worker reads its state
@@ -482,6 +489,9 @@ The worker saves the standard form in its secret store entry.
 
 ## Technical decisions
 
+- The server listens on `127.0.0.1` only — without sign-in, anyone who can
+  reach the server can pair (R21); listening only on this computer makes that
+  limitation safe instead of just written down.
 - One command, `tervi pair --server <url>`; anything else is wrong usage —
   slice 1 needs nothing more, and a clear "Unknown flag" beats a silent default.
 - Exit codes `0` paired, `1` failure, `2` wrong usage, `130` cancelled with
@@ -591,12 +601,10 @@ The worker saves the standard form in its secret store entry.
 
 ## Parked
 
-To add later in this plan:
-
-- R21: anyone with the approval link can approve.
-
 For a later slice (move to `slices/backlog.md` when this plan is done):
 
+- **Sign-in, so only the server's owner can approve a pairing. Required before
+  the server is reachable from any other computer (R21).**
 - Custom computer names chosen by the user.
 - A Machines page listing every active machine.
 - `tervi unpair`: remove a pairing. Then the "isn't finished yet" message also

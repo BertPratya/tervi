@@ -151,7 +151,12 @@ protections, Windows, and sign-in.
 
 **Secrets**
 
-- R21. Having only the approval link shall not be enough to get the credential.
+- R21. **Known limitation of this slice:** without sign-in, anyone who can
+  reach the server can pair a computer with it, because whoever runs
+  `tervi pair` sees the approval link and can approve it. This slice is
+  therefore limited to a server reachable only from its own computer
+  (`localhost`). Sign-in, so that only the server's owner can approve, shall
+  exist before the server is reachable from any other computer.
 - R22. The server shall store only hashes of the approval key, the polling key,
   and the credential. The pairing code may be stored as it is, because it is
   useless without the polling key and lives at most 10 minutes.
@@ -172,7 +177,9 @@ protections, Windows, and sign-in.
 
 ## Not in this slice
 
-- Sign-in. Anyone with the link can approve; the pairing code limits the risk.
+- Sign-in. Until it exists, anyone who can reach the server can pair (R21), so
+  the server stays on `localhost`. Sign-in must come before the server is
+  reachable over a network.
 - Resuming a pairing whose credential never reached the worker. The user runs
   `tervi pair` again.
 - Crash recovery, re-pairing, and unpairing (slice 3).
@@ -190,12 +197,15 @@ None.
 
 - `tervi pair --server <url>` — the word "pair" says what it does and leaves
   room for other commands later.
-- Approve through a link, with no sign-in in this slice — sign-in doesn't exist
-  yet, and the pairing code blocks the main attack.
-- The browser shows the code and the user types it into the terminal — this
-  blocks the "attacker sends you a link" attack (device code phishing): only
-  someone at the computer being paired can finish. Typing the code into the
-  browser, or comparing two codes, does not block it.
+- Approve through a link, with no sign-in in this slice — sign-in is a large
+  feature of its own; on `localhost` nobody else can reach the server, so the
+  limitation (R21) is safe for now. Sign-in comes before network access.
+- The browser shows the code and the user types it into the terminal — once
+  sign-in exists, this blocks the "attacker sends you a link" attack (device
+  code phishing): only someone at the computer being paired can finish.
+  Without sign-in it does not stop someone who runs `tervi pair` themselves,
+  because they see the link too. Typing the code into the browser, or
+  comparing two codes, would not block the attack even with sign-in.
 - The terminal asks for the code only after approval — the user can't type it
   too early.
 - Ctrl+C lets the pairing expire instead of cancelling it on the server —
