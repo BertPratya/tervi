@@ -69,7 +69,7 @@ Request: `{"code": "4827-1934"}`. Unknown polling key →
 | `wrong_code` | `tries_left` | It does not match, and tries remain |
 | `failed` | — | It does not match, and no tries remain |
 | `expired` | — | The status is `waiting_for_code` but `expires_at` is past |
-| `not_waiting_for_code` | `status` | Any other status, including `finishing` after an earlier correct code, and `rejected` or `failed` however old |
+| `not_waiting_for_code` | `status` | Any other status, including `finishing` after an earlier correct code, and `rejected` or `failed` however old. `status` is the status after expiry is applied, the same value the poll would answer (for example `expired` for a `waiting_for_approval` request past `expires_at`, and `failed` for a `finishing` request whose machine has expired). |
 
 Compare `NormalizeCode(submitted)` with `NormalizeCode(stored)` in constant
 time, only against the row found by this polling key (R14).

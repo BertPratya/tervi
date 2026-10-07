@@ -200,7 +200,8 @@ each field optional. Answer `201`:
 A value over its limit: `400 {"error": "invalid_input"}`.
 
 **2 — Poll.** Answer `200`: `{"status": "...", "expires_in_seconds": 412}`, plus
-`"tries_left": 5` when the status is `waiting_for_code`. The status is the
+`"tries_left": 5` when the status is `waiting_for_code`, and `"failure_reason"`
+when the status is `failed` (the worker does not use it yet). The status is the
 current one after expiry is applied (see Mechanisms): `waiting_for_approval`,
 `waiting_for_code`, `finishing`, `paired`, `rejected`, `failed`, or `expired`.
 An unknown polling key: `401 {"error": "unknown_key"}`.
