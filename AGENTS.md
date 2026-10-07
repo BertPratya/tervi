@@ -15,6 +15,11 @@ go test ./...
 Inside the Codex sandbox the default Go build cache is read-only. Prefix Go
 commands with `GOCACHE=/tmp/<worktree folder name>-gocache`.
 
+The sandbox blocks the network unless `.codex/config.toml` allows it. That file
+allows it, so tests can reach the local PostgreSQL and Go can download modules.
+Start PostgreSQL from outside the sandbox: the architect runs
+`docker compose up -d` before starting a worker.
+
 ## Roles
 
 | Role | Who | Job |
