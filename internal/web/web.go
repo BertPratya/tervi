@@ -2,11 +2,9 @@
 package web
 
 import (
-	"bytes"
 	"embed"
-	"io/fs"
 	"net/http"
-	"time"
+	"strings"
 )
 
 //go:embed static/index.html static/app.js static/view.js
@@ -16,13 +14,7 @@ var staticFiles embed.FS
 func Register(mux *http.ServeMux) {
 	page := staticPageHandler()
 	mux.Handle("GET /pair/{approval_key}", page)
-
-	assets, err := fs.Sub(staticFiles, "static")
-	if err != nil {
-		panic(err)
-	}
-	files := http.StripPrefix("/static/", http.FileServer(http.FS(assets)))
-	mux.Handle("GET /static/", withPageHeaders(files))
+	mux.Handle("GET /static/", withPageHeaders(staticFileHandler()))
 }
 
 func staticPageHandler() http.Handler {
@@ -32,8 +24,33 @@ func staticPageHandler() http.Handler {
 			http.Error(w, "page unavailable", http.StatusInternalServerError)
 			return
 		}
-		http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(page))
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(page)
 	}))
+}
+
+func staticFileHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/static/")
+		contentType := ""
+		switch name {
+		case "index.html":
+			contentType = "text/html; charset=utf-8"
+		case "app.js", "view.js":
+			contentType = "application/javascript; charset=utf-8"
+		default:
+			http.NotFound(w, r)
+			return
+		}
+
+		contents, err := staticFiles.ReadFile("static/" + name)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		_, _ = w.Write(contents)
+	})
 }
 
 func withPageHeaders(next http.Handler) http.Handler {

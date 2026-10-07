@@ -8,6 +8,7 @@ let hasAnswer = false;
 let actionRunning = false;
 let inFlight = null;
 let pollTimer = null;
+let renderedKey = null;
 
 function textElement(tag, className, text) {
   const element = document.createElement(tag);
@@ -17,6 +18,12 @@ function textElement(tag, className, text) {
 }
 
 function render(nextView) {
+  const nextKey = JSON.stringify({ view: nextView, actionRunning });
+  if (nextKey === renderedKey) {
+    currentView = nextView;
+    return;
+  }
+  renderedKey = nextKey;
   currentView = nextView;
   app.replaceChildren();
 
@@ -104,10 +111,6 @@ async function poll() {
   }
 }
 
-function disableButtons(disabled) {
-  for (const button of app.querySelectorAll('button')) button.disabled = disabled;
-}
-
 async function performAction(action) {
   if (actionRunning) return;
   actionRunning = true;
@@ -115,7 +118,7 @@ async function performAction(action) {
     clearTimeout(pollTimer);
     pollTimer = null;
   }
-  disableButtons(true);
+  render(currentView);
 
   const previous = inFlight;
   if (previous !== null) await previous.catch(() => {});
@@ -131,6 +134,7 @@ async function performAction(action) {
   } finally {
     if (inFlight === pending) inFlight = null;
     actionRunning = false;
+    render(currentView);
     if (currentView.poll) schedulePoll();
   }
 }

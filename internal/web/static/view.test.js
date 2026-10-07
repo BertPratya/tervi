@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { view } from './static/view.js';
+import { view } from './view.js';
 
 const states = [
   {
@@ -114,6 +114,20 @@ test('empty hostname and OS fields are shown as unknown', () => {
   const actual = view({ status: 'waiting_for_approval', hostname: '', os_name: '', os_version: '' });
   assert.equal(actual.name, 'unknown');
   assert.equal(actual.os, 'unknown unknown');
+});
+
+test('empty OS version is shown as unknown', () => {
+  const actual = view({ status: 'waiting_for_approval', hostname: 'workstation', os_name: 'Ubuntu', os_version: '' });
+  assert.equal(actual.name, 'workstation');
+  assert.equal(actual.os, 'Ubuntu unknown');
+});
+
+test('loading view keeps polling without buttons or code', () => {
+  const actual = view({ status: 'loading' });
+  assert.equal(actual.message, 'Loading…');
+  assert.equal(actual.poll, true);
+  assert.deepEqual(actual.buttons, []);
+  assert.equal(actual.code, '');
 });
 
 test('invalid_link gives an error result without polling', () => {

@@ -1,7 +1,7 @@
 package web
 
 import (
-	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -54,49 +54,45 @@ func TestStaticFilesServed(t *testing.T) {
 	if recorder.Code != http.StatusNotFound {
 		t.Errorf("GET /static/view.test.js status = %d, want %d", recorder.Code, http.StatusNotFound)
 	}
+	assertPageHeaders(t, recorder)
 }
 
 func TestPageLoadsNothingExternal(t *testing.T) {
-	mux := http.NewServeMux()
-	Register(mux)
-
-	for _, path := range []string{"/pair/key", "/static/app.js", "/static/view.js"} {
-		t.Run(path, func(t *testing.T) {
-			recorder := webRequest(t, mux, http.MethodGet, path)
-			if recorder.Code != http.StatusOK {
-				t.Fatalf("GET %s status = %d, want %d", path, recorder.Code, http.StatusOK)
-			}
-			body, err := io.ReadAll(recorder.Result().Body)
-			if err != nil {
-				t.Fatalf("read %s response: %v", path, err)
-			}
-			if strings.Contains(string(body), "http://") || strings.Contains(string(body), "https://") {
-				t.Errorf("%s contains an external URL", path)
-			}
-		})
-	}
+	checkEmbeddedFiles(t, func(path string, contents []byte) {
+		if strings.Contains(string(contents), "http://") || strings.Contains(string(contents), "https://") {
+			t.Errorf("%s contains an external URL", path)
+		}
+	})
 }
 
 func TestNoHTMLInsertion(t *testing.T) {
-	mux := http.NewServeMux()
-	Register(mux)
+	checkEmbeddedFiles(t, func(path string, contents []byte) {
+		for _, forbidden := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"} {
+			if strings.Contains(string(contents), forbidden) {
+				t.Errorf("%s contains forbidden HTML insertion API %q", path, forbidden)
+			}
+		}
+	})
+}
 
-	for _, path := range []string{"/pair/key", "/static/app.js", "/static/view.js"} {
-		t.Run(path, func(t *testing.T) {
-			recorder := webRequest(t, mux, http.MethodGet, path)
-			if recorder.Code != http.StatusOK {
-				t.Fatalf("GET %s status = %d, want %d", path, recorder.Code, http.StatusOK)
-			}
-			body, err := io.ReadAll(recorder.Result().Body)
-			if err != nil {
-				t.Fatalf("read %s response: %v", path, err)
-			}
-			for _, forbidden := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"} {
-				if strings.Contains(string(body), forbidden) {
-					t.Errorf("%s contains forbidden HTML insertion API %q", path, forbidden)
-				}
-			}
-		})
+func checkEmbeddedFiles(t *testing.T, check func(path string, contents []byte)) {
+	t.Helper()
+	err := fs.WalkDir(staticFiles, ".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		contents, err := staticFiles.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		check(path, contents)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk embedded files: %v", err)
 	}
 }
 
