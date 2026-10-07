@@ -18,7 +18,7 @@ function textElement(tag, className, text) {
 }
 
 function render(nextView) {
-  const nextKey = JSON.stringify({ view: nextView, actionRunning });
+  const nextKey = JSON.stringify(nextView);
   if (nextKey === renderedKey) {
     currentView = nextView;
     return;
@@ -59,6 +59,12 @@ function render(nextView) {
       actions.append(button);
     }
     app.append(actions);
+  }
+}
+
+function disableButtons(disabled) {
+  for (const button of app.querySelectorAll('.actions button')) {
+    button.disabled = disabled;
   }
 }
 
@@ -118,7 +124,7 @@ async function performAction(action) {
     clearTimeout(pollTimer);
     pollTimer = null;
   }
-  render(currentView);
+  disableButtons(true);
 
   const previous = inFlight;
   if (previous !== null) await previous.catch(() => {});
@@ -134,7 +140,7 @@ async function performAction(action) {
   } finally {
     if (inFlight === pending) inFlight = null;
     actionRunning = false;
-    render(currentView);
+    disableButtons(false);
     if (currentView.poll) schedulePoll();
   }
 }
