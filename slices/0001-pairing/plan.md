@@ -44,11 +44,27 @@ One record per pairing attempt. Table `pairing_requests`.
 
 ### Pairing request lifecycle
 
-```text
-waiting_for_approval ──Accept──► waiting_for_code ──correct code──► finishing ──acknowledged──► paired
-        │                              │                               │
-        ├──Reject──► rejected          ├──tries_left reaches 0──► failed ◄──saving failed, or machine expired
-        └──expires_at passes──► expired ◄──────────── expires_at passes
+Boxes are states, stored in `status`. Arrows are transitions: the event that
+moves a request from one state to the next. A state with no arrow out is
+final and never changes again.
+
+```mermaid
+stateDiagram-v2
+    [*] --> waiting_for_approval : worker starts a pairing
+    waiting_for_approval --> waiting_for_code : Accept clicked
+    waiting_for_approval --> rejected : Reject clicked
+    waiting_for_approval --> expired : expires_at passes
+    waiting_for_code --> waiting_for_code : wrong code (tries_left − 1)
+    waiting_for_code --> finishing : correct code (machine created)
+    waiting_for_code --> failed : 5th wrong code (wrong_codes)
+    waiting_for_code --> expired : expires_at passes
+    finishing --> paired : machine acknowledged
+    finishing --> failed : saving failed (not_saved)
+    finishing --> failed : machine expired (not_confirmed)
+    paired --> [*]
+    rejected --> [*]
+    failed --> [*]
+    expired --> [*]
 ```
 
 ### Machine
@@ -69,11 +85,21 @@ credential.
 
 ### Machine lifecycle
 
-```text
-pending ──acknowledged──► active
-   ├──worker reports saving failed──► failed
-   └──expires_at passes──► expired
+```mermaid
+stateDiagram-v2
+    [*] --> pending : correct code arrives (credential created)
+    pending --> active : acknowledgment arrives (credential was saved)
+    pending --> failed : worker reports saving failed
+    pending --> expired : expires_at passes (5 minutes, no message)
+    active --> active : acknowledgment repeated (nothing changes)
+    active --> [*]
+    failed --> [*]
+    expired --> [*]
 ```
+
+Each machine transition also moves its pairing request out of `finishing`:
+acknowledged → `paired`; saving failed → `failed` (`not_saved`); expired →
+`failed` (`not_confirmed`).
 
 Only `active` machines exist for the user. A `pending`, `failed`, or `expired`
 machine appears nowhere the user can see, and its credential is accepted for
