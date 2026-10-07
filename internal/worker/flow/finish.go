@@ -61,6 +61,7 @@ func (f *pairingFlow) runCodePhase(ctx context.Context, env local.Env, server st
 
 	lines := make(chan inputLine, 1)
 	go readInputLines(ctx, env.Stdin, lines)
+	inputEnded := false
 	remaining := deadline.Sub(f.now())
 	if remaining <= 0 {
 		fmt.Fprintln(output(env), "\n✗ The code expired. Run the command again.")
@@ -89,20 +90,29 @@ func (f *pairingFlow) runCodePhase(ctx context.Context, env local.Env, server st
 				fmt.Fprintln(output(env), "\n✗ The code expired. Run the command again.")
 				return 1
 			}
-			if line.err != nil && line.value == "" {
+			if line.err != nil {
 				if errors.Is(line.err, io.EOF) {
-					return cancelPairing(env)
+					if line.value == "" {
+						fmt.Fprintln(output(env), "\n✗ Input ended before a code was entered. Nothing was saved. Run the command again.")
+						return 1
+					}
+					inputEnded = true
+				} else {
+					fmt.Fprintln(output(env), "\n✗ Couldn't read the code. Nothing was saved. Run the command again.")
+					return 1
 				}
-				fmt.Fprintln(output(env), "\n✗ Couldn't read the code. Pairing was not completed.")
-				return 1
 			}
 			code := strings.TrimSuffix(strings.TrimSuffix(line.value, "\n"), "\r")
 			if code == "" {
 				fmt.Fprint(output(env), "Code: ")
+				if inputEnded {
+					fmt.Fprintln(output(env), "\n✗ Input ended before a code was entered. Nothing was saved. Run the command again.")
+					return 1
+				}
 				continue
 			}
 			body, _ := json.Marshal(map[string]string{"code": code})
-			result := f.requestUntil(ctx, http.MethodPost, server+codePath, pollingKey.Reveal(), body, deadline)
+			result := f.request(ctx, http.MethodPost, server+codePath, pollingKey.Reveal(), body)
 			if ctx.Err() != nil {
 				return cancelPairing(env)
 			}
@@ -142,6 +152,10 @@ func (f *pairingFlow) runCodePhase(ctx context.Context, env local.Env, server st
 				}
 				fmt.Fprintf(output(env), "✗ Wrong code. %d tries left.\n", answer.TriesLeft)
 				fmt.Fprint(output(env), "Code: ")
+				if inputEnded {
+					fmt.Fprintln(output(env), "\n✗ Input ended before a code was entered. Nothing was saved. Run the command again.")
+					return 1
+				}
 			case "failed":
 				fmt.Fprintln(output(env), "✗ Too many wrong codes. Pairing failed. Run the command again.")
 				return 1

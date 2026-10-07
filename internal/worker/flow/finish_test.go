@@ -28,7 +28,7 @@ const (
 
 func TestPromptShowsSameExpiry(t *testing.T) {
 	base := time.Date(2026, time.January, 2, 14, 22, 0, 0, time.Local)
-	server := codeServer(t, func(w http.ResponseWriter, r *http.Request) {
+	server := codeServerWithExpiryAndTries(t, 300, 3, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/machines/current/acknowledgment" {
 			writeResult(w, map[string]string{"result": "ok"})
 			return
@@ -43,9 +43,98 @@ func TestPromptShowsSameExpiry(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("StartNew() = %d, want 0; output %q", code, safeOutput(out.String()))
 	}
-	want := fmt.Sprintf("Type the code shown in the browser (expires at %s, 5 tries left):\nCode: ", base.Add(10*time.Minute).Local().Format("15:04"))
-	if !strings.Contains(out.String(), want) {
-		t.Errorf("prompt does not include expected expiry and tries: %q", safeOutput(out.String()))
+	var startExpiry string
+	for _, line := range strings.Split(out.String(), "\n") {
+		const prefix = "Waiting for approval... (expires at "
+		if strings.HasPrefix(line, prefix) {
+			startExpiry = strings.TrimSuffix(strings.TrimPrefix(line, prefix), ")")
+		}
+	}
+	want := fmt.Sprintf("Type the code shown in the browser (expires at %s, 3 tries left):\nCode: ", startExpiry)
+	if startExpiry == "" || startExpiry != base.Add(10*time.Minute).Local().Format("15:04") || !strings.Contains(out.String(), want) {
+		t.Errorf("prompt does not repeat start expiry %q with server tries: %q", startExpiry, safeOutput(out.String()))
+	}
+}
+
+func TestCodeReplyMayArriveAfterDeadline(t *testing.T) {
+	server := codeServerWithExpiry(t, 1, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/machines/current/acknowledgment" {
+			writeResult(w, map[string]string{"result": "ok"})
+			return
+		}
+		if r.URL.Path == "/api/v1/pairings/current/code" {
+			time.Sleep(450 * time.Millisecond)
+			writeAccepted(w)
+			return
+		}
+		http.NotFound(w, r)
+	})
+	defer server.Close()
+
+	var out bytes.Buffer
+	env := finishEnv(t, &out, &delayedReader{reader: bytes.NewReader([]byte(testCode + "\n")), delay: 650 * time.Millisecond})
+	flow := newFlow(Options{RequestTimeout: 800 * time.Millisecond, PollInterval: time.Millisecond})
+	got := flow.StartNew(context.Background(), env, server.URL)
+	state, exists, err := local.ReadState(env.StateDir)
+	if got != 0 || !strings.Contains(out.String(), "✓ Paired successfully.\n") || err != nil || !exists || !state.Confirmed {
+		t.Errorf("StartNew() = %d, state=%#v exists=%t err=%v output=%q; want accepted reply and completed save", got, state, exists, err, safeOutput(out.String()))
+	}
+}
+
+func TestCodeInputEOF(t *testing.T) {
+	var codeRequests atomic.Int32
+	server := codeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/pairings/current/code" {
+			codeRequests.Add(1)
+		}
+		writeAccepted(w)
+	})
+	defer server.Close()
+	var out bytes.Buffer
+	got := finishFlow(time.Now(), time.Second, time.Millisecond).StartNew(context.Background(), finishEnv(t, &out, strings.NewReader("")), server.URL)
+	want := "✗ Input ended before a code was entered. Nothing was saved. Run the command again.\n"
+	if got != 1 || codeRequests.Load() != 0 || !strings.Contains(out.String(), want) {
+		t.Errorf("StartNew() = %d, code requests=%d, output=%q", got, codeRequests.Load(), safeOutput(out.String()))
+	}
+}
+
+func TestPartialCodeWrongAnswerStopsAtNextPrompt(t *testing.T) {
+	var codeRequests atomic.Int32
+	server := codeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/pairings/current/code" {
+			codeRequests.Add(1)
+			writeResult(w, map[string]any{"result": "wrong_code", "tries_left": 4})
+			return
+		}
+		writeAccepted(w)
+	})
+	defer server.Close()
+	var out bytes.Buffer
+	started := time.Now()
+	got := finishFlow(started, time.Second, time.Millisecond).StartNew(context.Background(), finishEnv(t, &out, strings.NewReader("0000")), server.URL)
+	want := "✗ Input ended before a code was entered. Nothing was saved. Run the command again.\n"
+	if got != 1 || codeRequests.Load() != 1 || !strings.Contains(out.String(), "✗ Wrong code. 4 tries left.\nCode: \n"+want) {
+		t.Errorf("StartNew() = %d, code requests=%d, output=%q", got, codeRequests.Load(), safeOutput(out.String()))
+	}
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		t.Errorf("flow waited %s after EOF; want it to stop before the code deadline", elapsed)
+	}
+}
+
+func TestCodeInputReadError(t *testing.T) {
+	var codeRequests atomic.Int32
+	server := codeServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/pairings/current/code" {
+			codeRequests.Add(1)
+		}
+		writeAccepted(w)
+	})
+	defer server.Close()
+	var out bytes.Buffer
+	got := finishFlow(time.Now(), time.Second, time.Millisecond).StartNew(context.Background(), finishEnv(t, &out, failingReader{}), server.URL)
+	want := "✗ Couldn't read the code. Nothing was saved. Run the command again.\n"
+	if got != 1 || codeRequests.Load() != 0 || !strings.Contains(out.String(), want) {
+		t.Errorf("StartNew() = %d, code requests=%d, output=%q", got, codeRequests.Load(), safeOutput(out.String()))
 	}
 }
 
@@ -389,6 +478,45 @@ func TestAckRetries(t *testing.T) {
 	if err != nil || !exists || !state.CredentialSaved || state.Confirmed {
 		t.Errorf("state after failed retries = %#v exists=%t err=%v", state, exists, err)
 	}
+
+	t.Run("request timeout waits after each try ends", func(t *testing.T) {
+		const requestTimeout = 40 * time.Millisecond
+		const interval = 30 * time.Millisecond
+		var mu sync.Mutex
+		var starts, ends []time.Time
+		server := codeServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/machines/current/acknowledgment" {
+				writeAccepted(w)
+				return
+			}
+			mu.Lock()
+			starts = append(starts, time.Now())
+			mu.Unlock()
+			<-r.Context().Done()
+			mu.Lock()
+			ends = append(ends, time.Now())
+			mu.Unlock()
+		})
+		defer server.Close()
+		var out bytes.Buffer
+		env := finishEnv(t, &out, strings.NewReader(testCode+"\n"))
+		got := finishFlow(time.Now(), requestTimeout, interval).StartNew(context.Background(), env, server.URL)
+		if got != 1 {
+			t.Fatalf("StartNew() = %d; want 1", got)
+		}
+		mu.Lock()
+		gotStarts := append([]time.Time(nil), starts...)
+		gotEnds := append([]time.Time(nil), ends...)
+		mu.Unlock()
+		if len(gotStarts) != 3 || len(gotEnds) != 3 {
+			t.Fatalf("ack starts=%d ends=%d; want three timed-out tries", len(gotStarts), len(gotEnds))
+		}
+		for i := 1; i < len(gotStarts); i++ {
+			if gap := gotStarts[i].Sub(gotEnds[i-1]); gap < interval {
+				t.Errorf("ack try %d began %s after prior try ended, want at least %s", i+1, gap, interval)
+			}
+		}
+	})
 }
 
 func TestAckResults(t *testing.T) {
@@ -453,6 +581,9 @@ func TestAckCleanupDeleteFails(t *testing.T) {
 	if got != 1 || !strings.Contains(out.String(), want) {
 		t.Errorf("exit=%d output=%q", got, safeOutput(out.String()))
 	}
+	if strings.Contains(out.String(), "✗ The pairing didn't finish in time. Run the same command again to start a new one.") {
+		t.Errorf("expired result message printed despite secret delete failure: %q", safeOutput(out.String()))
+	}
 	if _, exists, _ := local.ReadState(env.StateDir); !exists {
 		t.Error("state should be kept after secret delete failure")
 	}
@@ -494,6 +625,9 @@ func TestStateDeleteFails(t *testing.T) {
 		if got != 1 || !strings.Contains(out.String(), deleteStateMessage(env.StateDir)) {
 			t.Errorf("exit=%d output=%q", got, safeOutput(out.String()))
 		}
+		if strings.Contains(out.String(), "✗ The pairing didn't finish in time. Run the same command again to start a new one.") {
+			t.Errorf("expired result message printed despite state delete failure: %q", safeOutput(out.String()))
+		}
 		if _, exists, _ := env.Store.Get(); exists {
 			t.Error("secret entry should be deleted before state delete")
 		}
@@ -512,8 +646,10 @@ func TestFinishEarlierPairing(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		if r.URL.Path != "/api/v1/machines/current/acknowledgment" || r.Header.Get("Authorization") != "Bearer "+testCredential {
-			t.Errorf("request path/proof = %s/%q", r.URL.Path, r.Header.Get("Authorization"))
+		pathOK := r.URL.Path == "/api/v1/machines/current/acknowledgment"
+		proofOK := r.Header.Get("Authorization") == "Bearer "+testCredential
+		if !pathOK || !proofOK {
+			t.Errorf("request path ok=%t, proof ok=%t", pathOK, proofOK)
 		}
 		writeResult(w, map[string]string{"result": "ok"})
 	}))
@@ -700,6 +836,10 @@ func codeServer(t *testing.T, handler func(http.ResponseWriter, *http.Request)) 
 }
 
 func codeServerWithExpiry(t *testing.T, expires int, handler func(http.ResponseWriter, *http.Request)) *httptest.Server {
+	return codeServerWithExpiryAndTries(t, expires, 5, handler)
+}
+
+func codeServerWithExpiryAndTries(t *testing.T, expires, triesLeft int, handler func(http.ResponseWriter, *http.Request)) *httptest.Server {
 	t.Helper()
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -707,7 +847,7 @@ func codeServerWithExpiry(t *testing.T, expires int, handler func(http.ResponseW
 		case startPath:
 			writeStart(w, testPollingKey, serverURL(r)+"/pair/"+testApprovalKey, 600)
 		case pollPath:
-			writePoll(w, "waiting_for_code", expires, intPointer(5))
+			writePoll(w, "waiting_for_code", expires, intPointer(triesLeft))
 		case "/api/v1/pairings/current/code":
 			if r.Header.Get("Authorization") != "Bearer "+testPollingKey {
 				t.Errorf("code proof mismatch")
@@ -812,6 +952,21 @@ type blockingReader struct {
 	started   chan struct{}
 	done      chan struct{}
 }
+
+type delayedReader struct {
+	reader *bytes.Reader
+	delay  time.Duration
+	once   sync.Once
+}
+
+func (r *delayedReader) Read(p []byte) (int, error) {
+	r.once.Do(func() { time.Sleep(r.delay) })
+	return r.reader.Read(p)
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
 
 func newBlockingReader() *blockingReader {
 	return &blockingReader{started: make(chan struct{}), done: make(chan struct{})}
