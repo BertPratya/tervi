@@ -73,7 +73,10 @@ Proof: `Authorization: Bearer <approval key>`; the approval key is the part of
   drive the approval API as the page would.
 - To lose an answer on purpose, put a small HTTP proxy between the worker and
   the server that forwards each request but drops the answer for the paths a
-  test chooses.
+  test chooses. The proxy can also **hold** a request on a chosen path and
+  signal the test when it arrives, so the test can act at exactly that moment.
+- The worker's `Options` (task 06): `RequestTimeout`, `PollInterval` (also the
+  gap between acknowledgment tries), and `Now`. Use short durations.
 
 If the database cannot be reached from your environment, stop and report it;
 do not skip these tests.
@@ -81,8 +84,9 @@ do not skip these tests.
 ## Boundaries
 
 - May create or change: `test/e2e/`.
-- Must not change: any other folder. If a test finds a bug in another task's
-  code, stop and report it with the failing test; do not fix it here.
+- Must not change: any other folder, except this task's row in
+  `slices/0001-pairing/plan.md`. If a test finds a bug in another task's code,
+  stop and report it with the failing test; do not fix it here.
 - Do not add dependencies.
 
 ## Definition of done
@@ -92,7 +96,7 @@ do not skip these tests.
 | `TestPairingHappyPath` — start → Accept → read the code from the approval API → type it → `✓ Paired successfully.`, exit `0`; the approval read answers `paired` with the display name and OS; `state.json` says `confirmed: true`; the store holds the server and a credential; no file under `StateDir` contains the credential | R18, R19 |
 | `TestRejectEndToEnd` — Reject → the worker prints the rejection and exits `1`; the approval read answers `rejected` | R9 |
 | `TestFiveWrongCodesEndToEnd` — 5 wrong codes → the worker prints the failed message, exit `1`; the approval read answers `failed` with `wrong_codes` | R13 |
-| `TestCtrlCAfterSavingThenFinish` — cancel `ctx` right after the credential is saved → the not-confirmed message, exit `130`; a second `Run` with the same `--server` finishes the pairing, exit `0` | R23 |
+| `TestCtrlCAfterSavingThenFinish` — the proxy holds the acknowledgment request when it arrives (the credential is saved by then); the test cancels `ctx` at that moment, then the proxy drops the request → the not-confirmed message, exit `130`; a second `Run` with the same `--server` finishes the pairing, exit `0`. Cancelling only at that held moment avoids a race with the acknowledgment. | R23 |
 | `TestLostAcknowledgmentThenFinish` — the proxy drops the acknowledgment's answers → 3 tries shown, the finish command printed, exit `1`; a second `Run` finishes, exit `0` | R28 |
 | `TestNoSecretEverPrinted` — across all tests above: the server's log contains no approval key, polling key, pairing code, or credential; neither of the worker's two output streams contains a polling key, pairing code, or credential, and the approval key appears only inside the printed link | R18 |
 

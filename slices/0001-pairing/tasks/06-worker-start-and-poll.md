@@ -90,6 +90,8 @@ program itself.
    `signal.NotifyContext(context.Background(), os.Interrupt)`,
    `Env{os.Stdin, os.Stdout, os.Stderr, local.NewStore(keyring.New()), <os.UserConfigDir()>/tervi}`,
    `flow.New` with the real values, then `os.Exit(local.Run(ctx, os.Args[1:], env, f))`.
+   If `os.UserConfigDir()` fails, print `✗ Can't find this user's configuration folder.`
+   and exit `1`.
 
 ### Reading this computer's details
 
@@ -108,6 +110,7 @@ All messages go to standard output.
 | `201` | The start screen below, then polling | — |
 | No connection within the request timeout | `✗ Can't reach <server>. Check that the server is running, then run the command again.` | `1` |
 | Sent, but no answer within the request timeout | `✗ The server didn't answer, so the pairing could not be started. Run the command again.` **Never retried.** | `1` |
+| `201`, but the body cannot be read or is not the expected JSON | `✗ The server sent an answer that could not be read. Run the command again.` | `1` |
 | Any other answer | `✗ The server refused to start a pairing (HTTP <code>).` | `1` |
 
 Start screen (`<server>` is the standard form; the link exactly as received):
@@ -163,15 +166,16 @@ or test failure message may contain the polling key.
 
 Use a fake server built with `net/http/httptest`, a temporary `StateDir`,
 `local.NewStore(local.NewMemoryBackend())`, short durations, and a fixed
-`Now`.
+`Now`. Expiry times are shown in `time.Local`; build the fixed `Now` and the
+expected `HH:MM` in `time.Local` too, so tests pass in any time zone.
 
 ## Boundaries
 
 - May create or change: `internal/worker/flow/`, `internal/worker/keyring/`,
   `cmd/tervi/`, `go.mod`, `go.sum`.
-- Must not change: `internal/worker/local/` (except small exported additions
-  the flow needs, listed in your report), everything else except this task's
-  row in `slices/0001-pairing/plan.md`.
+- Must not change: `internal/worker/local/` or anything else, except this
+  task's row in `slices/0001-pairing/plan.md`. If `local` lacks something the
+  flow needs, stop and report it.
 
 ## Definition of done
 
@@ -189,7 +193,6 @@ Use a fake server built with `net/http/httptest`, a temporary `StateDir`,
 | `TestApprovedHandsOver` — with `codePhase` replaced: `✓ Approved in the browser.`, and `codePhase` receives the polling key, `tries_left`, a deadline reset from the poll answer, and the unchanged shown expiry | R12 |
 | `TestCtrlCBeforeSaving` — cancelling `ctx` while starting and while polling: `Pairing cancelled. Nothing was saved.`, exit `130`, nothing written, no further request | R23 |
 | `TestNoSecretInOutput` — no output contains the polling key; the approval key appears only inside the printed link | Secrets never printed |
-| `TestProgramBuilds` — `go build ./cmd/tervi` succeeds | The program is wired |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md` changes
 to `done`.

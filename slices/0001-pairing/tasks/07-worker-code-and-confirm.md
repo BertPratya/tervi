@@ -141,11 +141,17 @@ credential to the **entry's server**, never to any other address.
 | Result | Output | Then |
 | --- | --- | --- |
 | `ok` | `state.json` ← `confirmed: true`; `✓ Paired successfully.` | Exit `0` |
-| No answer, connection failure, or `5xx` | Before try 2 and try 3: `  No answer, retrying (2 of 3)...` / `(3 of 3)`, 2 seconds after the previous try ended | After 3 failed tries: the message below, exit `1` |
-| `expired` | Delete the entry and `state.json`; `✗ The pairing didn't finish in time. Run the same command again to start a new one.` | Exit `1` |
-| `failed` | Delete the entry and `state.json`; `✗ The pairing failed. Run the same command again to start a new one.` | Exit `1` |
-| `401 unknown_credential` | Delete the entry and `state.json`; `✗ The server doesn't recognize this pairing. Run the same command again to start a new one.` | Exit `1` |
+| No answer, connection failure, or `5xx` | Before try 2 and try 3: `  No answer, retrying (2 of 3)...` / `(3 of 3)`, one `opts.PollInterval` (2 seconds in `cmd/tervi`) after the previous try ended | After 3 failed tries: the message below, exit `1` |
+| `expired` | Clean up (below); `✗ The pairing didn't finish in time. Run the same command again to start a new one.` | Exit `1` |
+| `failed` | Clean up (below); `✗ The pairing failed. Run the same command again to start a new one.` | Exit `1` |
+| `401 unknown_credential` | Clean up (below); `✗ The server doesn't recognize this pairing. Run the same command again to start a new one.` | Exit `1` |
 | Any other answer | `✗ Unexpected answer from the server.` then the finish command below | Exit `1` |
+
+**Clean up** = `Store.Delete()` first, then delete `state.json`. If the entry
+cannot be deleted, show `✗ Can't delete the secret store entry.` and
+`  Make sure you are logged in to a desktop session and the keyring is unlocked.`
+**instead of** the message above, keep `state.json` (so the next run tries
+again), and exit `1`.
 
 After 3 failed tries (`state.json` stays `confirmed: false`):
 
@@ -157,8 +163,14 @@ After 3 failed tries (`state.json` stays `confirmed: false`):
 ### Finishing an earlier pairing — fill in `FinishEarlier`
 
 Print `Finishing the earlier pairing with <entry server>...`, then confirm as
-above using the entry. In this case the three deletion messages say "The
-**earlier** pairing …" instead of "The pairing …".
+above using the entry, with the same clean-up. In this case the three messages
+are:
+
+| Answer | Message |
+| --- | --- |
+| `expired` | `✗ The earlier pairing didn't finish in time. Run the same command again to start a new one.` |
+| `failed` | `✗ The earlier pairing failed. Run the same command again to start a new one.` |
+| `401 unknown_credential` | `✗ The server doesn't recognize the earlier pairing. Run the same command again to start a new one.` |
 
 ### Ctrl+C after saving has begun
 
@@ -193,9 +205,9 @@ fail), short durations, a fixed `Now`, and a fake standard input.
 ## Boundaries
 
 - May create or change: `internal/worker/flow/`.
-- Must not change: `internal/worker/local/` (except small exported additions
-  the flow needs, listed in your report), everything else except this task's
-  row in `slices/0001-pairing/plan.md`.
+- Must not change: `internal/worker/local/` or anything else, except this
+  task's row in `slices/0001-pairing/plan.md`. If `local` lacks something the
+  flow needs, stop and report it.
 - Do not add dependencies.
 
 ## Definition of done
@@ -212,10 +224,11 @@ fail), short durations, a fixed `Now`, and a fake standard input.
 | `TestStateWriteFails` — each of the three `state.json` writes failing: its message, exit `1`, and the save-failure report only for write 1 | Defined failure |
 | `TestSaveFails` — `Save` fails: the R20 message, one save-failure report, the entry deleted, `state.json` deleted, exit `1` | R20, R25 |
 | `TestSaveFailsAndDeleteFails` — `Save` and `Delete` both fail: both messages and the hint, `state.json` kept, exit `1` | No stuck partial state |
-| `TestAckRetries` — answers lost: 3 tries 2 intervals apart, each shown, the finish command, exit `1`, `state.json` still `confirmed: false` | R28 |
-| `TestAckResults` — `expired`, `failed`, and `401` each delete the entry and `state.json` and show their own message | R29 |
-| `TestFinishEarlierPairing` — `FinishEarlier` with an entry: acknowledgment to the entry's server, `confirmed: true`, exit `0` | R29 |
-| `TestFinishEarlierExpired` — `FinishEarlier` answered `expired`: the "earlier" message, entry and `state.json` deleted, exit `1` | R29 |
+| `TestAckRetries` — answers lost: 3 tries, each at least one `PollInterval` after the previous ended, each shown, the finish command, exit `1`, `state.json` still `confirmed: false` | R28 |
+| `TestAckResults` — `expired`, `failed`, and `401` each delete the entry, then `state.json`, and show their own first-run message | R29 |
+| `TestAckCleanupDeleteFails` — `expired` with `FailDelete`: the delete message and hint, `state.json` kept, exit `1` | No silent failure |
+| `TestFinishEarlierPairing` — `FinishEarlier` with an entry: the acknowledgment goes to the entry's server, `confirmed: true`, exit `0` | R29, R30 |
+| `TestFinishEarlierResults` — `FinishEarlier` answered `expired`, `failed`, and `401`: each "earlier" message in full, entry and `state.json` deleted, exit `1` | R29 |
 | `TestCtrlCDuringCodePhase` — cancelling while waiting for input and while the code request is running: `Pairing cancelled. Nothing was saved.`, exit `130`, nothing written | R23 |
 | `TestCtrlCAfterSaving` — cancelling after write 1 and during `FinishEarlier`: the not-confirmed message with the finish command, exit `130`, no further request | R23 |
 | `TestNoSecretInOutput` — no output contains the polling key or the credential | R18 |

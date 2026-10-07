@@ -226,8 +226,7 @@ entry, compared with `--server` in standard form (see Mechanisms).
 | Missing | Missing | Checks that the secret store is usable (see Mechanisms), then starts a new pairing (step 1) |
 | Missing | Exists | Incomplete data: stop, change nothing (R31). Since `state.json` is always written first, only something outside tervi can cause this. |
 | `credential_saved: false` | Missing | The save never happened, so the credential is lost. Deletes `state.json` and shows `✗ The earlier pairing was interrupted before the credential was saved. Run the same command again to start a new one.` The server's machine expires by itself. |
-| `credential_saved: false` | Exists | The save happened but was not recorded. Checks the entry is well formed (below), sets `credential_saved: true`, then continues as in the next row. |
-| `credential_saved: true`, `confirmed: false` | Exists | `--server` equals the saved server: finishes the earlier pairing by sending the acknowledgment again (step 7b). `--server` differs: refuses and changes nothing: `✗ A pairing with <saved server> isn't finished yet.` followed by `To finish it, run:  tervi pair --server <saved server>` |
+| `credential_saved: false` or `true`, `confirmed: false` | Exists, well formed (below) | Compares `--server` with the saved server **first**. Different → refuses and changes nothing: `✗ A pairing with <saved server> isn't finished yet.` followed by `To finish it, run:  tervi pair --server <saved server>`. Equal → if `credential_saved` is `false` (the save happened but was not recorded), sets it to `true`; then finishes the earlier pairing by sending the acknowledgment again (step 7b). |
 | `credential_saved: true` | Missing | Incomplete data: stop, change nothing (R31) |
 | `confirmed: true` | Exists | Already paired (R2): `This computer is already paired with <saved server>. Nothing was changed.` Exit code `1`. |
 
@@ -257,17 +256,15 @@ different `--server` is refused instead of used. Once `tervi unpair` exists
 
 - OK → `confirmed: true`, and `✓ Paired successfully.`
 - The machine expired, failed, or is unknown (`401`) → the credential will
-  never work, so the worker deletes `state.json` and its secret store entry,
-  and shows one of these, then exits with `1`:
+  never work, so the worker deletes its secret store entry, then `state.json`,
+  and shows one of these, then exits with `1`. (If the entry cannot be
+  deleted, it says so and keeps `state.json`, so the next run tries again.)
 
-| Answer | Message |
-| --- | --- |
-| `expired` | `✗ The earlier pairing didn't finish in time. Run the same command again to start a new one.` |
-| `failed` | `✗ The earlier pairing failed. Run the same command again to start a new one.` |
-| `401` | `✗ The server doesn't recognize the earlier pairing. Run the same command again to start a new one.` |
-
-During a first run (step 7b), the same three cases use the same messages
-without the word "earlier".
+| Answer | Finishing an earlier pairing | First run (step 7b) |
+| --- | --- | --- |
+| `expired` | `✗ The earlier pairing didn't finish in time. Run the same command again to start a new one.` | `✗ The pairing didn't finish in time. Run the same command again to start a new one.` |
+| `failed` | `✗ The earlier pairing failed. Run the same command again to start a new one.` | `✗ The pairing failed. Run the same command again to start a new one.` |
+| `401` | `✗ The server doesn't recognize the earlier pairing. Run the same command again to start a new one.` | `✗ The server doesn't recognize this pairing. Run the same command again to start a new one.` |
 
 ### Step 1 — The worker starts a pairing
 
@@ -476,6 +473,7 @@ already written:
 | Ctrl+C during | Message | Exit code |
 | --- | --- | --- |
 | Step 0 to step 5: starting, polling, the code prompt | `Pairing cancelled. Nothing was saved.` | `130` |
+| Step 0, once it has found a saved, unconfirmed entry for the same server | `Pairing cancelled before it was confirmed.` followed by `To finish, run:  tervi pair --server <saved server>` | `130` |
 | From step 6's first write onward | `Pairing cancelled before it was confirmed.` followed by `To finish, run:  tervi pair --server <server>`, where `<server>` is `--server` in standard form (the same address the entry holds or will hold) | `130` |
 
 Ctrl+C never needs to wait: whatever was written, the next run knows what to
@@ -577,7 +575,7 @@ failed, adds a hint, and stops with exit code `1`:
 | Before step 1 (R3) | Save a test value, read it back, delete it | Stop before contacting the server |
 | Step 0 | Read the entry | Stop |
 | Step 6 | Save the real entry, read it back, compare | Saving failed: step 7a |
-| Step 0, cleaning up an expired pairing | Delete the entry | Stop |
+| Step 7b, or finishing an earlier pairing, when the server says `expired`, `failed`, or `401` | Delete the entry, then `state.json` | Stop and keep `state.json`, so the next run tries again |
 
 **A save counts as successful only if reading it back returns exactly what
 was saved.**
@@ -765,7 +763,7 @@ The worker saves the standard form in its secret store entry.
 | --- | --- |
 | R1 (usage) | 05 |
 | R2 (already paired) | 05 |
-| R3 (secret store usable) | 05, 06 |
+| R3 (secret store usable) | 05 |
 | R4 (server unreachable) | 06 |
 | R5 (show details, link, expiry) | 02, 06 |
 | R6 (page shows details; opening changes nothing) | 02, 03 |

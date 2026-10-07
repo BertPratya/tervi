@@ -184,7 +184,7 @@ environment, stop and report it; do not skip those tests.
 | `TestPollUnknownKey` — unknown or missing key: `401 unknown_key` | Proof required |
 | `TestPollAfterExpiry` — `expires_at` set to the past by SQL: the poll answers `expired`, the stored status is still `waiting_for_approval` | R15 |
 | `TestReadShowsDetailsAndChangesNothing` — approval `GET` returns the details and `waiting_for_approval`; the row is unchanged | R6 |
-| `TestPairCreatesCode` — accept gives `waiting_for_code` and a code matching `^\d{4}-\d{4}$`; a poll now includes `tries_left: 5` | R7 |
+| `TestAcceptCreatesCode` — accept gives `waiting_for_code` and a code matching `^\d{4}-\d{4}$`; a poll now includes `tries_left: 5` | R7 |
 | `TestReopenShowsSameCode` — `GET` after accept returns the same code | R11 |
 | `TestReject` — reject gives `rejected`; a poll answers `rejected` | R9 |
 | `TestSecondClickDoesNotChangeDecision` — accept then reject, and reject then accept: the first decision stays; the second answer has `already_decided: true` and the real state | R10 |

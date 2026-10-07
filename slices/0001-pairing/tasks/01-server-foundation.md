@@ -144,8 +144,16 @@ tables. Add a helper every database test in the project uses:
   `DATABASE_URL`, creates a new database with a random name
   (`tervi_test_<random>`), runs `Migrate` on it, and returns a pool to it.
   `t.Cleanup` closes the pool and drops the database.
-- If `DATABASE_URL` is not set or the server cannot be reached, the helper
-  fails the test with a clear message. It never skips.
+- **Where the URL comes from**, first match wins: the real `DATABASE_URL`
+  environment variable; else `DATABASE_URL` in `<module root>/.env`; else
+  `DATABASE_URL` in `<module root>/.env.example`. (The module root is the
+  folder holding `go.mod`; find it by walking up from the test's working
+  directory.) So a plain `go test ./...` in a fresh clone, with
+  `docker compose up -d` running, needs no other setup.
+- If the server cannot be reached, the helper fails the test with a clear
+  message naming the URL's host. It never skips.
+- `internal/db`'s own tests are in package `db_test`, because `dbtest`
+  imports `db`.
 
 Start PostgreSQL with `docker compose up -d`; the URL is in `.env.example`.
 If the database cannot be reached from your environment, stop and report it.
@@ -163,6 +171,7 @@ If the database cannot be reached from your environment, stop and report it.
 | Test | Proves |
 | --- | --- |
 | `TestDBTestIsolated` — two `dbtest.New` pools in one test point at different databases; a row inserted in one is not visible in the other; after cleanup, both databases are gone | Tests never share tables |
+| `TestDBTestFindsURL` — with `DATABASE_URL` unset, the helper reads it from `.env`, or from `.env.example` when there is no `.env`; a set `DATABASE_URL` wins over both | `go test ./...` works without setup |
 | `TestMigrateCreatesTables` — after `Migrate`, both tables exist with every column above | R15, R22 |
 | `TestMigrateIsRepeatable` — running `Migrate` twice succeeds and changes nothing the second time | Migrations run at every start |
 | `TestHashColumnsAreUnique` — two rows with the same `polling_key_hash` cannot both be inserted | R22 |

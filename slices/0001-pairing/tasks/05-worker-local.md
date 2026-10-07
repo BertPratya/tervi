@@ -82,10 +82,16 @@ need the server. It returns the exit code. Ctrl+C reaches the worker as a
 cancelled `ctx`.
 
 **Ctrl+C during step 0:** before each step 0 operation, and after each one
-returns, `Run` checks `ctx`. If it is cancelled, `Run` prints
-`Pairing cancelled. Nothing was saved.` and returns `130` without doing
-anything further. (An operation already waiting on the keyring cannot be
-interrupted; the check happens when it returns.)
+returns, `Run` checks `ctx`. If it is cancelled, `Run` stops at once, does
+nothing further, and returns `130`, printing:
+
+- `Pairing cancelled before it was confirmed.` and
+  `  To finish, run:  tervi pair --server <saved server>`, once step 0 has
+  found a well-formed, unconfirmed entry whose server equals `--server`;
+- `Pairing cancelled. Nothing was saved.` at every other moment.
+
+(An operation already waiting on the keyring cannot be interrupted; the check
+happens when it returns.)
 
 ### The command line
 
@@ -94,11 +100,17 @@ error and return exit code `2`, before anything is read or written:
 
 | Input | Output |
 | --- | --- |
-| `--server` missing | `Usage: tervi pair --server <url>` |
+| `--server` missing, or `--server` with no value | `Usage: tervi pair --server <url>` |
+| `--server` given more than once | The usage line |
 | Invalid server address | `Invalid server address: <value>` then the usage line |
-| Unknown flag | `Unknown flag: <flag>` then the usage line |
+| Unknown flag, including a single-dash `-server` | `Unknown flag: <flag>` then the usage line |
+| An extra argument (`tervi pair --server x extra`) | `Unknown argument: <arg>` then the usage line |
 | Unknown command | `Unknown command: <command>` then the usage line |
-| No command | The usage line only |
+| No command, `-h`, or `--help` | The usage line only |
+
+Both `--server <url>` and `--server=<url>` are accepted. Parse the arguments by
+hand rather than with Go's `flag` package, which prints its own messages and
+accepts single-dash flags.
 
 ### A valid server address, and its standard form
 
@@ -196,6 +208,10 @@ Export the read and write functions; task 07 uses them.
 
 ### Step 0 — deciding what to do
 
+Rows are checked in this order. **An entry that is not well formed always
+gives message C, whatever `state.json` holds**, so the last row is checked
+first.
+
 | `state.json` | Entry | Outcome |
 | --- | --- | --- |
 | Missing | Missing | `Check` the store. Usable → `flow.StartNew`. |
@@ -234,7 +250,7 @@ A, B, and C are each followed by (with the real `state.json` path):
 
 | Test | Proves |
 | --- | --- |
-| `TestUsageErrors` — each input in the command table: exact message on standard error, exit `2`, nothing read or written | R1 |
+| `TestUsageErrors` — each input in the command table: exact message on standard error, exit `2`, nothing read or written; `--server=<url>` and `--server <url>` both accepted | R1 |
 | `TestAddressValid` — accepts `http://localhost:8080`, `https://example.com`, `http://localhost:8080/`; rejects `banana`, `ftp://x`, `http://`, `http://localhost:8080/foo`, `http://a?b`, `http://a#b`, `http://u@a` | R1 |
 | `TestAddressStandardForm` — `HTTP://LOCALHOST:8080/` → `http://localhost:8080`; `https://example.com:443` → `https://example.com`; `http://example.com:80` → `http://example.com` | R30 |
 | `TestStoreCheck` — a working backend passes and leaves no `worker-check` value; `FailGet`, `FailSet`, `FailDelete`, or `ChangeOnRead` make it unusable | R3 |
@@ -247,7 +263,8 @@ A, B, and C are each followed by (with the real `state.json` path):
 | `TestStepZeroOtherServerChangesNothing` — `credential_saved: false` and `true`, each with a different `--server`: the refusal, `state.json` byte-for-byte unchanged, `FinishEarlier` never called | R30 |
 | `TestUnusableStoreStopsBeforeFlow` — `Check` fails: the message, exit `1`, `StartNew` never called | R3 |
 | `TestStateWriteFailsInStepZero` — the `credential_saved` update cannot be written (read-only `StateDir`): the write message, exit `1`, `FinishEarlier` never called | Defined failure |
-| `TestCtrlCDuringStepZero` — `ctx` cancelled before and during step 0: `Pairing cancelled. Nothing was saved.`, exit `130`, no flow call | R23 |
+| `TestCtrlCDuringStepZero` — `ctx` cancelled before and during step 0: `Pairing cancelled. Nothing was saved.`, exit `130`, no flow call; cancelled after a well-formed unconfirmed entry for the same server was found: the not-confirmed message with the finish command, exit `130` | R23 |
+| `TestDamagedEntryWins` — a damaged entry with `state.json` missing, and with each `state.json` value: always message C | R31 |
 | `TestCredentialNeverPrinted` — across all tests, nothing written to standard output or error contains the credential | R18 |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md` changes
