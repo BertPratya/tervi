@@ -104,6 +104,13 @@ asks again without sending. Never print the code itself (R8).
 | Any other answer | `✗ Unexpected answer from the server. Run the command again.` | Exit `1` |
 | `accepted` | `✓ Code accepted.` | Saving |
 | Ctrl+C while waiting for input, or while the code request is running | `Pairing cancelled. Nothing was saved.` Do not tell the server. | Exit `130` |
+| Standard input ends (EOF) while waiting for a code, including at a later prompt after a wrong code | `✗ Input ended before a code was entered. Nothing was saved. Run the command again.` Do not tell the server. Stop at once; never wait for the deadline. | Exit `1` |
+| Standard input cannot be read | `✗ Couldn't read the code. Nothing was saved. Run the command again.` | Exit `1` |
+
+*The two input rows above are provisional: the architect chose them, and the
+user has not confirmed them yet.* Text that ends without a newline (for
+example `printf 0000 | tervi pair …`) still counts as a typed code and is sent;
+the next prompt then finds the input ended and stops with the EOF row.
 
 ### Saving (after `accepted`)
 
