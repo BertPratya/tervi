@@ -1,0 +1,212 @@
+# Task 07 — Worker: code, saving, and confirmation
+
+Slice: 0001-pairing    Risk: core    Depends on: 04, 06
+
+## Goal
+
+The second half of the worker's pairing flow: ask for the code, save the
+credential in a safe order, confirm with the server (with retries), finish an
+earlier unconfirmed pairing, and handle Ctrl+C after saving has begun.
+
+## Requirements (copied from the spec)
+
+- R8. The worker shall never show the pairing code. It appears only in the browser.
+- R12. The worker shall ask for the code only after the pairing is approved,
+  and shall show the same expiry time again.
+- R13. If a wrong code is typed, then the worker shall show how many tries are
+  left. After 5 wrong codes, the pairing shall fail, and both the terminal and
+  the browser shall say so.
+- R15. If the pairing is not approved and the correct code typed within 10
+  minutes of starting, then the pairing shall expire: the worker shall say so
+  and stop, and the link shall show that it has expired.
+- R17. When the correct code is typed, the worker shall receive its credential.
+- R18. The worker shall save the credential in the OS secret store, and never
+  in a plain file, in terminal output, or in logs.
+- R19. When the credential is saved, the worker shall confirm with the server.
+  Then the terminal shall show `✓ Paired successfully.`, and the browser shall
+  show that the computer is paired, with its name and OS, and that the tab can
+  be closed.
+- R20. If saving the credential fails, then the worker shall say that pairing
+  was not completed.
+- R23. When the user presses Ctrl+C, the worker shall stop at once. If nothing
+  was saved yet, it shall say `Pairing cancelled. Nothing was saved.` If saving
+  had begun, it shall say the pairing was not confirmed and show the command
+  that finishes it, and the next run shall recover whatever was saved. A
+  pairing that is not finished expires on its own.
+- R25. If saving the credential fails, then the worker shall report it, and the
+  pairing shall fail; the browser shall show that it failed.
+- R28. If the server's answer to the confirmation is lost, then the worker
+  shall retry the confirmation 3 times, showing each try. If every try fails,
+  the worker shall say that the credential is saved but not confirmed, and
+  show the full command that finishes the pairing.
+- R29. When the command runs again after a pairing that was saved but not
+  confirmed, the worker shall finish that pairing instead of starting a new
+  one. If that pairing already failed or expired, the worker shall say so,
+  remove what it saved, and the next run shall start a new pairing.
+- R30. If the command names a different server while a pairing is saved but
+  not confirmed, then the worker shall change nothing, say which server the
+  unfinished pairing belongs to, and show the command that finishes it. The
+  credential shall never be sent to any server other than the one that issued
+  it: the server address is saved with the credential in the OS secret store,
+  and only that saved address decides where the credential may go.
+
+## Context
+
+### What exists (tasks 01, 05, 06)
+
+- `internal/secret`: `secret.Value` prints `[hidden]`; `Reveal()`; `FromString(s)`.
+- `internal/worker/local`: `Env{Stdin, Stdout, Stderr, Store, StateDir}`,
+  `Entry{Server, Credential}`, `Store` (`Get`, `Save` = save + read back +
+  compare, `Delete`, `Check`), `state.json` with `machine_id`,
+  `credential_saved`, `confirmed` and safe writes, and step 0, which calls
+  `Flow.FinishEarlier` for a saved, unconfirmed pairing whose server matches.
+- `internal/worker/flow` (task 06): `New(opts)`, starting and polling, the
+  10-second request limit, Ctrl+C before saving, and two placeholders this
+  task replaces: `codePhase(ctx, env, server, pollingKey, triesLeft, deadline, shownExpiry) int`
+  and `FinishEarlier`.
+
+### The server's API (task 04)
+
+| Call | Answer |
+| --- | --- |
+| `POST /api/v1/pairings/current/code`, polling key, `{"code"}` | `200` with `result`: `accepted` (+ `credential`, `machine_id`), `wrong_code` (+ `tries_left`), `failed`, `expired`, or `not_waiting_for_code` (+ `status`); `401 {"error": "unknown_key"}` |
+| `POST /api/v1/machines/current/acknowledgment`, credential | `200` with `result`: `ok`, `failed`, or `expired`; `401 {"error": "unknown_credential"}` |
+| `POST /api/v1/machines/current/save-failure`, credential | `200` with `result`: `ok`, `active`, `failed`, or `expired` |
+
+Proofs go in `Authorization: Bearer <proof>`.
+
+### The code phase — fill in `codePhase`
+
+Print `Type the code shown in the browser (expires at <shownExpiry>, <triesLeft> tries left):`,
+then the prompt `Code: `. Read one line from standard input; an empty line
+asks again without sending. Never print the code itself (R8).
+
+| Event | Output | Then |
+| --- | --- | --- |
+| The deadline passes while waiting for input | `✗ The code expired. Run the command again.` | Exit `1` |
+| `wrong_code` | `✗ Wrong code. <n> tries left.` (n from the server) | Prompt again |
+| `failed` | `✗ Too many wrong codes. Pairing failed. Run the command again.` | Exit `1` |
+| `expired` | `✗ The code expired. Run the command again.` | Exit `1` |
+| `not_waiting_for_code` | `✗ The pairing is no longer waiting for a code. Run the command again.` | Exit `1` |
+| `401 unknown_key` | `✗ The server no longer knows this pairing. Run the command again.` | Exit `1` |
+| No answer within 10 seconds, a connection failure, `5xx`, or a body that is not valid JSON | `✗ No answer from the server after sending the code. Run the same command again to start over.` **Never send the code again.** | Exit `1` |
+| Any other answer | `✗ Unexpected answer from the server. Run the command again.` | Exit `1` |
+| `accepted` | `✓ Code accepted.` | Saving |
+
+### Saving (after `accepted`)
+
+Each write finishes before the next starts:
+
+1. `state.json` ← `machine_id`, `credential_saved: false`, `confirmed: false`
+2. `Store.Save(Entry{server, credential})` (save + read back + compare)
+3. `state.json` ← `credential_saved: true`
+
+**If write 2 fails:**
+
+1. Show `✗ Couldn't save the credential. Pairing was not completed.`
+2. Send the save-failure report once; its answer changes nothing.
+3. Try `Store.Delete()`, since a save can write the entry and still fail its read-back.
+4. If the delete worked (or there was nothing to delete), delete `state.json`.
+   If it failed, also show `✗ Couldn't remove the partly saved secret store entry.`
+   and the hint `To start over, delete <state.json path> and the "tervi" entry in Passwords and Keys.`,
+   and keep `state.json`.
+5. Exit `1`.
+
+On success, show `✓ Credential saved.` and confirm.
+
+### Confirming (also how an earlier pairing is finished)
+
+Print `Confirming with the server...` and send the acknowledgment with the
+credential to the **entry's server**, never to any other address.
+
+| Result | Output | Then |
+| --- | --- | --- |
+| `ok` | `state.json` ← `confirmed: true`; `✓ Paired successfully.` | Exit `0` |
+| No answer, connection failure, or `5xx` | Before try 2 and try 3: `  No answer, retrying (2 of 3)...` / `(3 of 3)`, 2 seconds after the previous try ended | After 3 failed tries: the message below, exit `1` |
+| `expired` | Delete the entry and `state.json`; `✗ The pairing didn't finish in time. Run the same command again to start a new one.` | Exit `1` |
+| `failed` | Delete the entry and `state.json`; `✗ The pairing failed. Run the same command again to start a new one.` | Exit `1` |
+| `401 unknown_credential` | Delete the entry and `state.json`; `✗ The server doesn't recognize this pairing. Run the same command again to start a new one.` | Exit `1` |
+| Any other answer | `✗ Unexpected answer from the server.` then the finish command below | Exit `1` |
+
+After 3 failed tries (`state.json` stays `confirmed: false`):
+
+```text
+✗ Saved, but couldn't confirm with the server.
+  To finish, run:  tervi pair --server http://localhost:8080
+```
+
+### Finishing an earlier pairing — fill in `FinishEarlier`
+
+Print `Finishing the earlier pairing with <entry server>...`, then confirm as
+above using the entry. In this case the three deletion messages say "The
+**earlier** pairing …" instead of "The pairing …".
+
+### Ctrl+C after saving has begun
+
+From write 1 onward, and during `FinishEarlier`, a cancelled `ctx` prints:
+
+```text
+Pairing cancelled before it was confirmed.
+  To finish, run:  tervi pair --server <server>
+```
+
+where `<server>` is the server in standard form (the address the entry holds,
+or is about to hold). Return `130`; do not tell the server. Before write 1,
+task 06's message applies.
+
+### Secrets
+
+The polling key and credential stay in `secret.Value` until sent or saved. No
+output, log line, or test failure message may contain the polling key, the
+credential, or the code the user typed.
+
+### Where the code goes
+
+`internal/worker/flow/`.
+
+### Tests
+
+Use a fake server built with `net/http/httptest`, the in-memory store from task
+05 (which can be told to fail any operation), a temporary `StateDir`, short
+durations, and a fake standard input.
+
+## Boundaries
+
+- May create or change: `internal/worker/flow/`.
+- Must not change: `internal/worker/local/` (except small exported additions
+  the flow needs, listed in your report), everything else except this task's
+  row in `slices/0001-pairing/plan.md`.
+- Do not add dependencies.
+
+## Definition of done
+
+| Test | Proves |
+| --- | --- |
+| `TestPromptShowsSameExpiry` — the prompt's time equals the start screen's, with the tries left from the server | R12 |
+| `TestCodeDeadline` — no input until the deadline: the code-expired message, exit `1` | R15 |
+| `TestWrongCodes` — `wrong_code` shows the server's tries left; `failed` gives its message, exit `1` | R13 |
+| `TestCodeAnswers` — `expired`, `not_waiting_for_code`, `401`, and an unexpected answer each give their message, exit `1` | Every answer defined |
+| `TestCodeNeverResent` — no answer, `503`, and invalid JSON: the code was sent once only, the message, exit `1` | Never two credentials |
+| `TestCodeNeverPrinted` — no output contains the typed code | R8 |
+| `TestHappyPath` — order: `state.json` (false) → entry saved and read back → `state.json` (true) → acknowledgment → `confirmed: true`; `✓ Paired successfully.`, exit `0` | R17, R18, R19 |
+| `TestSaveFails` — `Save` fails: the R20 message, one save-failure report, the entry deleted, `state.json` deleted, exit `1` | R20, R25 |
+| `TestSaveFailsAndDeleteFails` — `Save` and `Delete` both fail: both messages and the hint, `state.json` kept, exit `1` | No stuck partial state |
+| `TestAckRetries` — answers lost: 3 tries 2 intervals apart, each shown, the finish command, exit `1`, `state.json` still `confirmed: false` | R28 |
+| `TestAckResults` — `expired`, `failed`, and `401` each delete the entry and `state.json` and show their own message | R29 |
+| `TestFinishEarlierPairing` — `FinishEarlier` with an entry: acknowledgment to the entry's server, `confirmed: true`, exit `0` | R29 |
+| `TestFinishEarlierExpired` — `FinishEarlier` answered `expired`: the "earlier" message, entry and `state.json` deleted, exit `1` | R29 |
+| `TestCredentialOnlyToSavedServer` — the fake server records every request's host: the credential only ever reaches the entry's server | R30 |
+| `TestCtrlCAfterSaving` — cancelling after write 1 and during `FinishEarlier`: the not-confirmed message with the finish command, exit `130`, no further request | R23 |
+| `TestNoSecretInOutput` — no output contains the polling key or the credential | R18 |
+
+`go vet ./...` and `go test ./...` pass. This task's row in `plan.md` changes
+to `done`.
+
+## Out of scope
+
+Starting and polling (task 06), step 0 (05), the server (01–04), the
+end-to-end test (08).
+
+## If anything is unclear
+
+Stop and report the question. Do not guess.

@@ -1,15 +1,17 @@
 # Task 08 — End-to-end test
 
-Slice: 0001-pairing    Risk: normal    Depends on: 04, 07
+Slice: 0001-pairing    Risk: normal    Depends on: 03, 07
 
 ## Goal
 
-Prove the slice works as a whole: a real server and the real worker flow,
+Prove the slice works as a whole: the real server and the real worker,
 talking over HTTP, with the browser's part played by calls to the approval
 API. These tests are the evidence that slice 1 is done.
 
 ## Requirements (copied from the spec)
 
+- R9. When Reject is clicked, the browser shall show that the computer was not
+  paired, and the worker shall report the rejection within a few seconds and stop.
 - R13. If a wrong code is typed, then the worker shall show how many tries are
   left. After 5 wrong codes, the pairing shall fail, and both the terminal and
   the browser shall say so.
@@ -33,38 +35,42 @@ API. These tests are the evidence that slice 1 is done.
 
 ### What exists
 
-- **Server** (`cmd/server`, `internal/pairing`, `internal/web`,
-  `internal/db`): every endpoint of the slice, the approval page, and the
-  expiry clean-up job. Needs `DATABASE_URL`.
-- **Worker** (`cmd/tervi`, `internal/worker/local`, `internal/worker/flow`):
-  step 0 and the full flow, with parameters for its durations, an in-memory
-  secret store for tests, and a settable folder for `state.json`.
+- **The real server, importable** (`internal/server`, task 01):
+  `New(cfg, pool, logger) http.Handler` with every route of the slice;
+  `internal/db.Open` and `Migrate`; `internal/pairing.StartCleanup`. Needs
+  `DATABASE_URL`.
+- **The real worker, importable** (`internal/worker/local`, task 05):
+  `Run(ctx, args, env, flow) int` with
+  `Env{Stdin, Stdout, Stderr, Store, StateDir}`; an in-memory `Store` that can
+  be told to fail any operation; `internal/worker/flow.New(opts)` (tasks 06,
+  07) with short durations as options. Ctrl+C is a cancelled `ctx`.
 
 ### The approval API (the browser's part)
 
-Proof: `Authorization: Bearer <approval key>`, where the approval key is the
-last part of `approval_url`.
+Proof: `Authorization: Bearer <approval key>`; the approval key is the part of
+`approval_url` after `/pair/`.
 
 | Call | Does |
 | --- | --- |
-| `GET /api/v1/approvals/current` | The current state: `status`, details, `pairing_code` while `waiting_for_code`, `failure_reason` when `failed`, `display_name` when `paired` |
-| `POST /api/v1/approvals/current/accept` | Accept |
-| `POST /api/v1/approvals/current/reject` | Reject |
+| `GET /api/v1/approvals/current` | The state: `status`, details, `pairing_code` while `waiting_for_code`, `failure_reason` when `failed`, `display_name` when `paired` |
+| `POST /api/v1/approvals/current/accept` | The Pair button |
+| `POST /api/v1/approvals/current/reject` | The Reject button |
 
 ### How the tests run
 
-- Start the real server in the test process on `127.0.0.1` with a free port,
-  against the PostgreSQL in `DATABASE_URL` (start it with
-  `docker compose up -d`), with `TERVI_PUBLIC_URL` set to that address.
-- Run the real worker flow in the same process, with the in-memory secret
-  store, a temporary folder for `state.json`, short durations, and a fake
-  standard input that types what the test decides.
-- Read the approval link from the worker's output, take the approval key from
-  it, and drive the approval API like the page would.
+- Serve `server.New(...)` with `net/http/httptest` on `127.0.0.1`, against the
+  PostgreSQL in `DATABASE_URL` (start it with `docker compose up -d`), with
+  `PublicURL` set to the test server's address. Give it a logger writing into
+  a buffer, so the test can read everything the server logged.
+- Run `local.Run(ctx, []string{"pair", "--server", <address>}, env, flow.New(...))`
+  in a goroutine, with the in-memory store, a temporary `StateDir`, short
+  durations, standard output into a buffer, and a fake standard input the test
+  writes to.
+- Read the approval link from the worker's output, take the approval key, and
+  drive the approval API as the page would.
 - To lose an answer on purpose, put a small HTTP proxy between the worker and
-  the server that forwards requests but drops the answer for the paths a test
-  chooses.
-- Capture everything the server logs and everything the worker prints.
+  the server that forwards each request but drops the answer for the paths a
+  test chooses.
 
 If the database cannot be reached from your environment, stop and report it;
 do not skip these tests.
@@ -80,12 +86,12 @@ do not skip these tests.
 
 | Test | Proves |
 | --- | --- |
-| `TestPairingHappyPath` — start → accept → read the code from the approval API → type it → `✓ Paired successfully.`, exit `0`; the approval read answers `paired` with the display name and OS; `state.json` says `confirmed: true`; the entry holds the server and credential | R19 |
-| `TestRejectEndToEnd` — reject → the worker prints the rejection and exits `1`; the approval read answers `rejected` | — |
+| `TestPairingHappyPath` — start → Pair → read the code from the approval API → type it → `✓ Paired successfully.`, exit `0`; the approval read answers `paired` with the display name and OS; `state.json` says `confirmed: true`; the store holds the server and a credential | R19 |
+| `TestRejectEndToEnd` — Reject → the worker prints the rejection and exits `1`; the approval read answers `rejected` | R9 |
 | `TestFiveWrongCodesEndToEnd` — 5 wrong codes → the worker prints the failed message, exit `1`; the approval read answers `failed` with `wrong_codes` | R13 |
-| `TestCtrlCAfterSavingThenFinish` — cancel right after the credential is saved → the not-confirmed message and exit `130`; a second run with the same `--server` finishes the pairing and exits `0` | R23 |
-| `TestLostAcknowledgmentThenFinish` — the proxy drops the acknowledgment's answers → 3 tries shown, the finish command printed, exit `1`; a second run finishes, exit `0` | R28 |
-| `TestNoSecretEverPrinted` — across all tests above, neither the captured server log nor the worker's output contains any approval key, polling key, pairing code, or credential | R18 |
+| `TestCtrlCAfterSavingThenFinish` — cancel `ctx` right after the credential is saved → the not-confirmed message, exit `130`; a second `Run` with the same `--server` finishes the pairing, exit `0` | R23 |
+| `TestLostAcknowledgmentThenFinish` — the proxy drops the acknowledgment's answers → 3 tries shown, the finish command printed, exit `1`; a second `Run` finishes, exit `0` | R28 |
+| `TestNoSecretEverPrinted` — across all tests above: the server's log contains no approval key, polling key, pairing code, or credential; the worker's output contains no polling key, pairing code, or credential, and the approval key only inside the printed link | R18 |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md` changes
 to `done`.
