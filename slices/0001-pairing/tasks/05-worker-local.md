@@ -228,6 +228,8 @@ Export the read and write functions, plus `StatePath(dir string) string` and
 
 **Check the last row first:** an entry that is not well formed always gives
 message C, whatever `state.json` holds. Then check the other rows from the top.
+A `state.json` that cannot be read at all is not a row: it gives
+`✗ Can't read <path>.` and changes nothing, even when the entry is damaged.
 
 | `state.json` | Entry | Outcome |
 | --- | --- | --- |
