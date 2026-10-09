@@ -200,7 +200,8 @@ each field optional. Answer `201`:
 A value over its limit: `400 {"error": "invalid_input"}`.
 
 **2 — Poll.** Answer `200`: `{"status": "...", "expires_in_seconds": 412}`, plus
-`"tries_left": 5` when the status is `waiting_for_code`. The status is the
+`"tries_left": 5` when the status is `waiting_for_code`, and `"failure_reason"`
+when the status is `failed` (the worker does not use it yet). The status is the
 current one after expiry is applied (see Mechanisms): `waiting_for_approval`,
 `waiting_for_code`, `finishing`, `paired`, `rejected`, `failed`, or `expired`.
 An unknown polling key: `401 {"error": "unknown_key"}`.
@@ -835,7 +836,7 @@ The worker saves the standard form in its secret store entry.
 | 01 | [Server foundation](tasks/01-server-foundation.md) | — | core | done |
 | 02 | [Server: start, poll, and approval API](tasks/02-start-poll-approval.md) | 01 | core | done |
 | 03 | [Approval web page](tasks/03-approval-page.md) | 02 | low | done |
-| 04 | [Server: code, credential, finishing](tasks/04-code-and-credential.md) | 02 | core | todo |
+| 04 | [Server: code, credential, finishing](tasks/04-code-and-credential.md) | 02 | core | done |
 | 05 | [Worker: command and local state](tasks/05-worker-local.md) | 01 | core | todo |
 | 06 | [Worker: start and polling](tasks/06-worker-start-and-poll.md) | 02, 05 | core | todo |
 | 07 | [Worker: code, saving, and confirmation](tasks/07-worker-code-and-confirm.md) | 04, 06 | core | todo |

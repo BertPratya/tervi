@@ -68,8 +68,12 @@ Request: `{"code": "4827-1934"}`. Unknown polling key →
 | `accepted` | `credential`, `machine_id` | The code matches |
 | `wrong_code` | `tries_left` | It does not match, and tries remain |
 | `failed` | — | It does not match, and no tries remain |
-| `expired` | — | The status is `waiting_for_code` but `expires_at` is past |
-| `not_waiting_for_code` | `status` | Any other status, including `finishing` after an earlier correct code, and `rejected` or `failed` however old |
+| `expired` | — | The status after expiry is applied is `expired`: stored `expired` (for example after the clean-up job ran), or `waiting_for_approval` / `waiting_for_code` past `expires_at` |
+| `not_waiting_for_code` | `status` | Any other status, including `finishing` after an earlier correct code, and `rejected` or `failed` however old. `status` is the status after expiry is applied, the same value the poll would answer (for example `failed` for a `finishing` request whose machine has expired). |
+
+"The status after expiry is applied" is the same value the poll answers. So
+whether or not the clean-up job has run yet, a late code always gets the same
+answer.
 
 Compare `NormalizeCode(submitted)` with `NormalizeCode(stored)` in constant
 time, only against the row found by this polling key (R14).

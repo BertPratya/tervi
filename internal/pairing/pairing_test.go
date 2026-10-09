@@ -24,6 +24,9 @@ const testPublicURL = "https://pair.example:9443/base"
 
 type response struct {
 	Error            string `json:"error"`
+	Result           string `json:"result"`
+	Credential       string `json:"credential"`
+	MachineID        string `json:"machine_id"`
 	PollingKey       string `json:"polling_key"`
 	ApprovalURL      string `json:"approval_url"`
 	ExpiresInSeconds int    `json:"expires_in_seconds"`
