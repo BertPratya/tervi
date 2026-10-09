@@ -153,6 +153,12 @@ protections, Windows, and sign-in.
   what is left, say what it found and removed, and start a new pairing. If
   removing fails, then the worker shall say so and stop.
 
+**Running the server**
+
+- R32. The server shall change the database structure only when its
+  `migrate` command is run. If the database is not at the version the server
+  expects, then the server shall refuse to start and say what to do.
+
 **Secrets**
 
 - R21. **Known limitation of this slice:** without sign-in, anyone who can
@@ -236,3 +242,7 @@ None.
   can read or copy files.
 - An already-paired computer refuses to pair again — re-pairing needs crash
   recovery and unpairing, which come in later slices.
+- Database changes run only through a separate `migrate` command, never at
+  server start — the person deploying decides when the database changes, as
+  in most production setups; a server that starts against the wrong database
+  version stops with a clear message instead.

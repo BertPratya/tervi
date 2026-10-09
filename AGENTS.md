@@ -20,6 +20,27 @@ allows it, so tests can reach the local PostgreSQL and Go can download modules.
 Start PostgreSQL from outside the sandbox: the architect runs
 `docker compose up -d` before starting a worker.
 
+## Code layout
+
+| Where | Holds |
+| --- | --- |
+| `cmd/<program>/` | One folder per program: only `main`, which connects the packages |
+| `internal/server/` | The server's assembly: settings, routes, start and stop |
+| `internal/server/<feature>/` | Server code |
+| `internal/worker/<feature>/` | Worker code |
+| `internal/<feature>/` | Code used by both the server and the worker |
+
+- **Name each package after the feature it provides**: `pairing`,
+  `credential`, `launcher`. Generic names (`local`, `flow`, `util`, `common`,
+  `helpers`) are not allowed.
+- **One file per topic** inside a package, named after it: one endpoint or
+  group of endpoints, one job, one data type. The package's main file holds
+  its types and the helpers its files share.
+- **Split a file over 300 lines** (tests not counted) by topic. The same SQL
+  or logic written twice becomes one shared constant or function.
+- A plan's Overview names the package for every part; check it against
+  these rules before the plan is approved.
+
 ## Roles
 
 | Role | Who | Job |
