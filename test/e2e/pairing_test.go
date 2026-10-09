@@ -19,8 +19,10 @@ import (
 
 	"github.com/bertpratya/tervi/internal/server"
 	"github.com/bertpratya/tervi/internal/server/db/dbtest"
-	"github.com/bertpratya/tervi/internal/worker/flow"
-	"github.com/bertpratya/tervi/internal/worker/local"
+	"github.com/bertpratya/tervi/internal/worker/cli"
+	"github.com/bertpratya/tervi/internal/worker/credential"
+	"github.com/bertpratya/tervi/internal/worker/pair"
+	workerstate "github.com/bertpratya/tervi/internal/worker/state"
 )
 
 const (
@@ -199,7 +201,7 @@ func (p *testProxy) recordSecrets(path string, body []byte) {
 
 type fixture struct {
 	serverURL string
-	store     *local.Store
+	store     *credential.Store
 	stateDir  string
 	proxy     *testProxy
 	logs      *safeBuffer
@@ -217,7 +219,7 @@ func newFixture(t *testing.T) *fixture {
 	proxy.setTarget(origin.URL)
 	return &fixture{
 		serverURL: proxyServer.URL,
-		store:     local.NewStore(local.NewMemoryBackend()),
+		store:     credential.NewStore(credential.NewMemoryBackend()),
 		stateDir:  filepath.Join(t.TempDir(), "state"),
 		proxy:     proxy,
 		logs:      logs,
@@ -236,9 +238,9 @@ func (f *fixture) startWorker(parent context.Context) *workerRun {
 	stdout, stderr := &safeBuffer{}, &safeBuffer{}
 	run := &workerRun{input: input, stdout: stdout, stderr: stderr, done: make(chan int, 1)}
 	go func() {
-		run.done <- local.Run(parent, []string{"pair", "--server", f.serverURL}, local.Env{
+		run.done <- cli.Run(parent, []string{"pair", "--server", f.serverURL}, cli.Env{
 			Stdin: stdin, Stdout: stdout, Stderr: stderr, Store: f.store, StateDir: f.stateDir,
-		}, flow.New(flow.Options{RequestTimeout: 300 * time.Millisecond, PollInterval: 10 * time.Millisecond}))
+		}, pair.New(pair.Options{RequestTimeout: 300 * time.Millisecond, PollInterval: 10 * time.Millisecond}))
 		_ = stdin.Close()
 	}()
 	return run
@@ -332,7 +334,7 @@ func runHappyPath(t *testing.T) secretAudit {
 	if approval.OSName == "" || approval.OSVersion == "" {
 		t.Errorf("paired OS details = %q %q, want name and version", approval.OSName, approval.OSVersion)
 	}
-	state, exists, err := local.ReadState(f.stateDir)
+	state, exists, err := workerstate.ReadState(f.stateDir)
 	if err != nil || !exists || !state.Confirmed {
 		t.Errorf("state after pairing = %#v, exists=%t, error=%v; want confirmed", state, exists, err)
 	}
@@ -419,7 +421,7 @@ func runCtrlCAfterSavingThenFinish(t *testing.T) secretAudit {
 	if err != nil || !exists || entry.Credential.Reveal() == "" {
 		t.Fatalf("credential not saved when acknowledgment arrived: exists=%t error=%v", exists, err)
 	}
-	state, stateExists, err := local.ReadState(f.stateDir)
+	state, stateExists, err := workerstate.ReadState(f.stateDir)
 	if err != nil || !stateExists || !state.CredentialSaved || state.Confirmed {
 		t.Fatalf("state while acknowledgment held = %#v, exists=%t, error=%v", state, stateExists, err)
 	}

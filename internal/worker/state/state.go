@@ -1,4 +1,4 @@
-package local
+package state
 
 import (
 	"encoding/json"
@@ -19,7 +19,7 @@ type State struct {
 func StatePath(dir string) string { return filepath.Join(dir, "state.json") }
 
 // ReadState reads state.json. exists is false only when the file is missing.
-func ReadState(dir string) (state State, exists bool, err error) {
+func ReadState(dir string) (record State, exists bool, err error) {
 	data, err := os.ReadFile(StatePath(dir))
 	if errors.Is(err, os.ErrNotExist) {
 		return State{}, false, nil
@@ -27,14 +27,14 @@ func ReadState(dir string) (state State, exists bool, err error) {
 	if err != nil {
 		return State{}, false, err
 	}
-	if err := json.Unmarshal(data, &state); err != nil {
+	if err := json.Unmarshal(data, &record); err != nil {
 		return State{}, true, err
 	}
-	return state, true, nil
+	return record, true, nil
 }
 
 // WriteState atomically replaces state.json with private, synced contents.
-func WriteState(dir string, state State) error {
+func WriteState(dir string, record State) error {
 	_, statErr := os.Stat(dir)
 	created := errors.Is(statErr, os.ErrNotExist)
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -45,7 +45,7 @@ func WriteState(dir string, state State) error {
 			return err
 		}
 	}
-	data, err := json.Marshal(state)
+	data, err := json.Marshal(record)
 	if err != nil {
 		return err
 	}

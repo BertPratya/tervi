@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/bertpratya/tervi/internal/worker/flow"
-	"github.com/bertpratya/tervi/internal/worker/keyring"
-	"github.com/bertpratya/tervi/internal/worker/local"
+	"github.com/bertpratya/tervi/internal/worker/cli"
+	"github.com/bertpratya/tervi/internal/worker/credential"
+	"github.com/bertpratya/tervi/internal/worker/pair"
 )
 
 func main() {
@@ -21,19 +21,19 @@ func main() {
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	env := local.Env{
+	env := cli.Env{
 		Stdin:    os.Stdin,
 		Stdout:   os.Stdout,
 		Stderr:   os.Stderr,
-		Store:    local.NewStore(keyring.New()),
+		Store:    credential.NewStore(credential.NewKeyringBackend()),
 		StateDir: filepath.Join(configDir, "tervi"),
 	}
-	workerFlow := flow.New(flow.Options{
+	workerFlow := pair.New(pair.Options{
 		RequestTimeout: 10 * time.Second,
 		PollInterval:   2 * time.Second,
 		Now:            time.Now,
 	})
-	code := local.Run(ctx, os.Args[1:], env, workerFlow)
+	code := cli.Run(ctx, os.Args[1:], env, workerFlow)
 	stop()
 	os.Exit(code)
 }

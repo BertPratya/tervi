@@ -1,4 +1,4 @@
-package flow
+package pair
 
 import (
 	"bytes"
@@ -19,7 +19,8 @@ import (
 	"time"
 
 	"github.com/bertpratya/tervi/internal/secret"
-	"github.com/bertpratya/tervi/internal/worker/local"
+	"github.com/bertpratya/tervi/internal/worker/cli"
+	"github.com/bertpratya/tervi/internal/worker/credential"
 )
 
 const (
@@ -136,8 +137,8 @@ func TestCannotReach(t *testing.T) {
 
 	var stdout bytes.Buffer
 	env := testEnv(t, &stdout)
-	backend := local.NewMemoryBackend()
-	env.Store = local.NewStore(backend)
+	backend := credential.NewMemoryBackend()
+	env.Store = credential.NewStore(backend)
 	if code := newFlow(Options{RequestTimeout: 100 * time.Millisecond}).StartNew(context.Background(), env, server); code != 1 {
 		t.Fatalf("StartNew() = %d, want 1", code)
 	}
@@ -482,7 +483,7 @@ func TestApprovedHandsOver(t *testing.T) {
 		deadline    time.Time
 		shownExpiry time.Time
 	}
-	f.codePhase = func(_ context.Context, _ local.Env, server string, key secret.Value, tries int, deadline, shownExpiry time.Time) int {
+	f.codePhase = func(_ context.Context, _ cli.Env, server string, key secret.Value, tries int, deadline, shownExpiry time.Time) int {
 		received.server = server
 		received.key = key
 		received.tries = tries
@@ -573,8 +574,8 @@ func runCancelledFlow(t *testing.T, server *httptest.Server, requested <-chan st
 	defer cancel()
 	var stdout bytes.Buffer
 	env := testEnv(t, &stdout)
-	backend := local.NewMemoryBackend()
-	env.Store = local.NewStore(backend)
+	backend := credential.NewMemoryBackend()
+	env.Store = credential.NewStore(backend)
 	done := make(chan int, 1)
 	go func() {
 		done <- newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond}).StartNew(ctx, env, server.URL)
@@ -618,13 +619,13 @@ func runCancelledFlow(t *testing.T, server *httptest.Server, requested <-chan st
 	}
 }
 
-func testEnv(t *testing.T, stdout io.Writer) local.Env {
+func testEnv(t *testing.T, stdout io.Writer) cli.Env {
 	t.Helper()
-	return local.Env{
+	return cli.Env{
 		Stdin:    strings.NewReader(""),
 		Stdout:   stdout,
 		Stderr:   io.Discard,
-		Store:    local.NewStore(local.NewMemoryBackend()),
+		Store:    credential.NewStore(credential.NewMemoryBackend()),
 		StateDir: filepath.Join(t.TempDir(), "state"),
 	}
 }

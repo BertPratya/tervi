@@ -1,4 +1,4 @@
-package local
+package cli
 
 import (
 	"context"
@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/bertpratya/tervi/internal/worker/credential"
+	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
 const usageLine = "Usage: tervi pair --server <url>"
@@ -14,14 +17,14 @@ const usageLine = "Usage: tervi pair --server <url>"
 type Env struct {
 	Stdin          io.Reader
 	Stdout, Stderr io.Writer
-	Store          *Store
+	Store          *credential.Store
 	StateDir       string
 }
 
 // Flow runs the network portion of a new or resumed pairing.
 type Flow interface {
 	StartNew(ctx context.Context, env Env, server string) int
-	FinishEarlier(ctx context.Context, env Env, entry Entry) int
+	FinishEarlier(ctx context.Context, env Env, entry credential.Entry) int
 }
 
 type command struct{ server string }
@@ -66,7 +69,7 @@ func parseCommand(args []string) (command, string, bool) {
 		if server == "" {
 			return command{}, "", true
 		}
-		standard, err := StandardAddress(server)
+		standard, err := state.StandardAddress(server)
 		if err != nil {
 			return command{}, "Invalid server address: " + server, false
 		}
@@ -101,18 +104,18 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		return 130
 	}
 
-	state, stateExists, err := ReadState(env.StateDir)
+	record, stateExists, err := state.ReadState(env.StateDir)
 	if cancelled(ctx, env.Stdout, false) {
 		return 130
 	}
 	if err != nil {
-		fmt.Fprintf(env.Stdout, "✗ Can't read %s.\n", StatePath(env.StateDir))
+		fmt.Fprintf(env.Stdout, "✗ Can't read %s.\n", state.StatePath(env.StateDir))
 		return 1
 	}
 	if cancelled(ctx, env.Stdout, false) {
 		return 130
 	}
-	var entry Entry
+	var entry credential.Entry
 	var entryExists bool
 	var entryErr error
 	if env.Store == nil {
@@ -120,11 +123,11 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 	} else {
 		entry, entryExists, entryErr = env.Store.Get()
 	}
-	candidate := entryErr == nil && entryExists && stateExists && !state.Confirmed && entry.Server == cmd.server
+	candidate := entryErr == nil && entryExists && stateExists && !record.Confirmed && entry.Server == cmd.server
 	if cancelled(ctx, env.Stdout, candidate, cmd.server) {
 		return 130
 	}
-	if errors.Is(entryErr, ErrDamaged) {
+	if errors.Is(entryErr, credential.ErrDamaged) {
 		return runLeftover(ctx, env, true, stateExists, "Found a damaged secret store entry for tervi.", true, cmd.server, flow)
 	}
 	if entryErr != nil {
@@ -138,23 +141,23 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 	if !stateExists && entryExists {
 		return runLeftover(ctx, env, true, false, "Found incomplete pairing data: the secret store entry exists, but state.json is missing.", true, cmd.server, flow)
 	}
-	if stateExists && !state.CredentialSaved && !entryExists {
+	if stateExists && !record.CredentialSaved && !entryExists {
 		return runLeftover(ctx, env, false, true, "The earlier pairing was interrupted before the credential was saved.", true, cmd.server, flow)
 	}
-	if stateExists && entryExists && !state.Confirmed {
+	if stateExists && entryExists && !record.Confirmed {
 		if entry.Server != cmd.server {
 			fmt.Fprintf(env.Stdout, "✗ A pairing with %s isn't finished yet.\n  To finish it, run:  tervi pair --server %s\n", entry.Server, entry.Server)
 			return 1
 		}
-		if !state.CredentialSaved {
-			state.CredentialSaved = true
+		if !record.CredentialSaved {
+			record.CredentialSaved = true
 			if cancelled(ctx, env.Stdout, true, cmd.server) {
 				return 130
 			}
-			if err := WriteState(env.StateDir, state); cancelled(ctx, env.Stdout, true, cmd.server) {
+			if err := state.WriteState(env.StateDir, record); cancelled(ctx, env.Stdout, true, cmd.server) {
 				return 130
 			} else if err != nil {
-				fmt.Fprintf(env.Stdout, "✗ Can't write %s.\n", StatePath(env.StateDir))
+				fmt.Fprintf(env.Stdout, "✗ Can't write %s.\n", state.StatePath(env.StateDir))
 				return 1
 			}
 		}
@@ -166,68 +169,14 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		}
 		return flow.FinishEarlier(ctx, env, entry)
 	}
-	if stateExists && state.CredentialSaved && !entryExists {
+	if stateExists && record.CredentialSaved && !entryExists {
 		return runLeftover(ctx, env, false, true, "Found incomplete pairing data: state.json exists, but the secret store entry is missing.", true, cmd.server, flow)
 	}
-	if stateExists && state.Confirmed && entryExists {
+	if stateExists && record.Confirmed && entryExists {
 		fmt.Fprintf(env.Stdout, "This computer is already paired with %s. Nothing was changed.\n", entry.Server)
 		return 1
 	}
 	return 1
-}
-
-func checkAndStart(ctx context.Context, env Env, flow Flow, server string) int {
-	if cancelled(ctx, env.Stdout, false) {
-		return 130
-	}
-	if env.Store == nil || env.Store.check(ctx) != nil {
-		if cancelled(ctx, env.Stdout, false) {
-			return 130
-		}
-		printUnusableStore(env.Stdout)
-		return 1
-	}
-	if cancelled(ctx, env.Stdout, false) {
-		return 130
-	}
-	if flow == nil {
-		return 1
-	}
-	return flow.StartNew(ctx, env, server)
-}
-
-func runLeftover(ctx context.Context, env Env, entryExists, stateExists bool, message string, start bool, server string, flow Flow) int {
-	if entryExists {
-		if cancelled(ctx, env.Stdout, false) {
-			return 130
-		}
-		if env.Store == nil || env.Store.Delete() != nil {
-			if cancelled(ctx, env.Stdout, false) {
-				return 130
-			}
-			printStoreDeleteFailure(env.Stdout)
-			return 1
-		}
-		if cancelled(ctx, env.Stdout, false) {
-			return 130
-		}
-	}
-	if stateExists {
-		if cancelled(ctx, env.Stdout, false) {
-			return 130
-		}
-		if err := DeleteState(env.StateDir); cancelled(ctx, env.Stdout, false) {
-			return 130
-		} else if err != nil {
-			fmt.Fprintf(env.Stdout, "✗ Can't delete %s.\n  Check that you can change files in %s, then run the same command again.\n", StatePath(env.StateDir), env.StateDir)
-			return 1
-		}
-	}
-	fmt.Fprintf(env.Stdout, "%s\n  Removed the leftover pairing data. Starting a new pairing.\n", message)
-	if !start {
-		return 0
-	}
-	return checkAndStart(ctx, env, flow, server)
 }
 
 func cancelled(ctx context.Context, output io.Writer, resumable bool, server ...string) bool {

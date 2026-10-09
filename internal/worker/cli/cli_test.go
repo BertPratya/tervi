@@ -1,4 +1,4 @@
-package local
+package cli
 
 import (
 	"bytes"
@@ -12,7 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bertpratya/tervi/internal/secret"
+	"github.com/bertpratya/tervi/internal/worker/credential"
+	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
 const testCredential = "credential-must-never-be-printed"
@@ -21,7 +22,7 @@ type flowRecorder struct {
 	startCalls  int
 	finishCalls int
 	server      string
-	entry       Entry
+	entry       credential.Entry
 	startCode   int
 	finishCode  int
 }
@@ -32,7 +33,7 @@ func (f *flowRecorder) StartNew(_ context.Context, _ Env, server string) int {
 	return f.startCode
 }
 
-func (f *flowRecorder) FinishEarlier(_ context.Context, _ Env, entry Entry) int {
+func (f *flowRecorder) FinishEarlier(_ context.Context, _ Env, entry credential.Entry) int {
 	f.finishCalls++
 	f.entry = entry
 	return f.finishCode
@@ -51,12 +52,14 @@ type countingBackend struct {
 
 func (b *countingBackend) Get(string) (string, error) {
 	b.gets++
-	return "", ErrNotFound
+	return "", credential.ErrNotFound
 }
+
 func (b *countingBackend) Set(string, string) error {
 	b.sets++
 	return nil
 }
+
 func (b *countingBackend) Delete(string) error {
 	b.deletes++
 	return nil
@@ -65,7 +68,7 @@ func (b *countingBackend) Delete(string) error {
 func usageEnv(t *testing.T) (Env, *countingBackend, *trapReader, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	backend := &countingBackend{}
-	store := NewStore(backend)
+	store := credential.NewStore(backend)
 	stdin := &trapReader{}
 	var stdout, stderr bytes.Buffer
 	return Env{Stdin: stdin, Stdout: &stdout, Stderr: &stderr, Store: store, StateDir: filepath.Join(t.TempDir(), "state")}, backend, stdin, &stdout, &stderr
@@ -123,7 +126,7 @@ func TestUsageErrors(t *testing.T) {
 	}
 	for _, args := range [][]string{{"pair", "--server=http://localhost"}, {"pair", "--server", "http://localhost"}} {
 		var stdout, stderr bytes.Buffer
-		env := Env{Stdin: bytes.NewReader(nil), Stdout: &stdout, Stderr: &stderr, Store: NewStore(NewMemoryBackend()), StateDir: filepath.Join(t.TempDir(), "state")}
+		env := Env{Stdin: bytes.NewReader(nil), Stdout: &stdout, Stderr: &stderr, Store: credential.NewStore(credential.NewMemoryBackend()), StateDir: filepath.Join(t.TempDir(), "state")}
 		flow := &flowRecorder{}
 		if code := Run(context.Background(), args, env, flow); code != 0 {
 			t.Errorf("Run(%q) = %d, want 0", args, code)
@@ -137,151 +140,14 @@ func TestUsageErrors(t *testing.T) {
 	}
 }
 
-func TestAddressValid(t *testing.T) {
-	for _, address := range []string{"http://localhost:8080", "https://example.com", "http://localhost:8080/", "http://a:65535", "http://[::1]:8080"} {
-		if _, err := StandardAddress(address); err != nil {
-			t.Errorf("StandardAddress(%q) error = %v", address, err)
-		}
-	}
-	for _, address := range []string{"banana", "ftp://x", "http://", "http://localhost:8080/foo", "http://a?b", "http://a#b", "http://u@a", "http://a:8080:9090", "http://[fe80::1%25eth0]:80", "http://a:0", "http://a:70000"} {
-		if _, err := StandardAddress(address); err == nil {
-			t.Errorf("StandardAddress(%q) succeeded, want invalid address", address)
-		}
-	}
-}
-
-func TestAddressStandardForm(t *testing.T) {
-	for input, want := range map[string]string{
-		"HTTP://LOCALHOST:8080/":    "http://localhost:8080",
-		"https://example.com:443":   "https://example.com",
-		"http://example.com:80":     "http://example.com",
-		"HTTP://EXAMPLE.COM:08080/": "http://example.com:8080",
-		"http://[::1]:8080":         "http://[::1]:8080",
-	} {
-		got, err := StandardAddress(input)
-		if err != nil || got != want {
-			t.Errorf("StandardAddress(%q) = %q, %v; want %q", input, got, err, want)
-		}
-	}
-}
-
-func TestStoreCheck(t *testing.T) {
-	t.Run("working backend", func(t *testing.T) {
-		backend := NewMemoryBackend()
-		if err := NewStore(backend).Check(); err != nil {
-			t.Fatalf("Check() error = %v", err)
-		}
-		if _, ok := backend.Value("worker-check"); ok {
-			t.Fatal("Check() left its test value behind")
-		}
-	})
-	for _, failure := range []string{"get", "set", "delete", "change on read"} {
-		t.Run(failure, func(t *testing.T) {
-			backend := NewMemoryBackend()
-			switch failure {
-			case "get":
-				backend.FailGet = true
-			case "set":
-				backend.FailSet = true
-			case "delete":
-				backend.FailDelete = true
-			case "change on read":
-				backend.ChangeOnRead = true
-			}
-			if err := NewStore(backend).Check(); err == nil {
-				t.Fatal("Check() succeeded, want unusable store error")
-			}
-		})
-	}
-}
-
-func TestStoreSaveVerified(t *testing.T) {
-	backend := NewMemoryBackend()
-	backend.ChangeOnRead = true
-	if err := NewStore(backend).Save(Entry{Server: "http://localhost", Credential: secret.FromString(testCredential)}); err == nil {
-		t.Fatal("Save() succeeded when read-back differed")
-	}
-}
-
-func TestEntryJSONHoldsRealCredential(t *testing.T) {
-	backend := NewMemoryBackend()
-	if err := NewStore(backend).Save(Entry{Server: "http://localhost", Credential: secret.FromString(testCredential)}); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	value, ok := backend.Value("worker")
-	if !ok || !strings.Contains(value, testCredential) || strings.Contains(value, "[hidden]") {
-		t.Fatalf("stored entry missing revealed credential or contains placeholder: found=%v hidden=%v", strings.Contains(value, testCredential), strings.Contains(value, "[hidden]"))
-	}
-}
-
-func TestEntryWellFormed(t *testing.T) {
-	for _, raw := range []string{
-		"not json",
-		`{"server":"HTTP://localhost/","credential":"x"}`,
-		`{"server":"http://localhost","credential":""}`,
-	} {
-		t.Run(raw, func(t *testing.T) {
-			backend := NewMemoryBackend()
-			if err := backend.Set("worker", raw); err != nil {
-				t.Fatal(err)
-			}
-			_, exists, err := NewStore(backend).Get()
-			if !exists || !errors.Is(err, ErrDamaged) {
-				t.Fatalf("Get() = (_, %v, %v), want existing damaged entry", exists, err)
-			}
-		})
-	}
-}
-
-func TestStateFileWrite(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "private")
-	want := State{MachineID: "machine-123", CredentialSaved: true, Confirmed: false}
-	if err := WriteState(dir, want); err != nil {
-		t.Fatalf("WriteState() error = %v", err)
-	}
-	info, err := os.Stat(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0700 {
-		t.Errorf("directory mode = %04o, want 0700", got)
-	}
-	info, err = os.Stat(StatePath(dir))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0600 {
-		t.Errorf("state file mode = %04o, want 0600", got)
-	}
-	got, exists, err := ReadState(dir)
-	if err != nil || !exists || got != want {
-		t.Fatalf("ReadState() = (%+v, %v, %v), want (%+v, true, nil)", got, exists, err, want)
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 1 || entries[0].Name() != "state.json" {
-		t.Errorf("directory contains partial/temp files: %v", entries)
-	}
-	data, err := os.ReadFile(StatePath(dir))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal(data, &decoded); err != nil || len(decoded) != 3 {
-		t.Errorf("state JSON = %q, decode err %v; want all three fields only", data, err)
-	}
-}
-
 func TestStateFileBroken(t *testing.T) {
 	dir := t.TempDir()
-	path := StatePath(dir)
+	path := state.StatePath(dir)
 	if err := os.WriteFile(path, []byte("{"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(path)
-	backend := NewMemoryBackend()
+	backend := credential.NewMemoryBackend()
 	env, stdout, stderr := runEnv(t, dir, backend)
 	flow := &flowRecorder{}
 	if code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow); code != 1 {
@@ -309,13 +175,13 @@ func TestStepZero(t *testing.T) {
 	baseMessage := "  Removed the leftover pairing data. Starting a new pairing.\n"
 	cases := []struct {
 		name            string
-		state           *State
+		state           *state.State
 		entry           string
 		wantOut         string
 		wantCode        int
 		start           int
 		finish          int
-		wantState       *State
+		wantState       *state.State
 		wantStateExists bool
 		wantStateSame   bool
 		wantEntry       string
@@ -323,19 +189,19 @@ func TestStepZero(t *testing.T) {
 	}{
 		{name: "missing both", wantCode: 0, start: 1},
 		{name: "missing state", entry: entryRaw(server), wantOut: "Found incomplete pairing data: the secret store entry exists, but state.json is missing.\n" + baseMessage, wantCode: 0, start: 1},
-		{name: "saved false but entry missing", state: &State{MachineID: "m"}, wantOut: "The earlier pairing was interrupted before the credential was saved.\n" + baseMessage, wantCode: 0, start: 1},
-		{name: "saved false and entry exists", state: &State{MachineID: "m"}, entry: entryRaw(server), wantCode: 0, finish: 1, wantState: &State{MachineID: "m", CredentialSaved: true}, wantStateExists: true, wantEntry: entryRaw(server), wantEntryExists: true},
-		{name: "saved true and entry exists", state: &State{MachineID: "m", CredentialSaved: true}, entry: entryRaw(server), wantCode: 0, finish: 1, wantState: &State{MachineID: "m", CredentialSaved: true}, wantStateExists: true, wantEntry: entryRaw(server), wantEntryExists: true},
-		{name: "saved true but entry missing", state: &State{MachineID: "m", CredentialSaved: true}, wantOut: "Found incomplete pairing data: state.json exists, but the secret store entry is missing.\n" + baseMessage, wantCode: 0, start: 1},
-		{name: "confirmed", state: &State{MachineID: "m", CredentialSaved: true, Confirmed: true}, entry: entryRaw(server), wantOut: "This computer is already paired with http://localhost. Nothing was changed.\n", wantCode: 1, wantState: &State{MachineID: "m", CredentialSaved: true, Confirmed: true}, wantStateExists: true, wantStateSame: true, wantEntry: entryRaw(server), wantEntryExists: true},
-		{name: "damaged entry", state: &State{MachineID: "m"}, entry: "damaged json", wantOut: "Found a damaged secret store entry for tervi.\n" + baseMessage, wantCode: 0, start: 1},
+		{name: "saved false but entry missing", state: &state.State{MachineID: "m"}, wantOut: "The earlier pairing was interrupted before the credential was saved.\n" + baseMessage, wantCode: 0, start: 1},
+		{name: "saved false and entry exists", state: &state.State{MachineID: "m"}, entry: entryRaw(server), wantCode: 0, finish: 1, wantState: &state.State{MachineID: "m", CredentialSaved: true}, wantStateExists: true, wantEntry: entryRaw(server), wantEntryExists: true},
+		{name: "saved true and entry exists", state: &state.State{MachineID: "m", CredentialSaved: true}, entry: entryRaw(server), wantCode: 0, finish: 1, wantState: &state.State{MachineID: "m", CredentialSaved: true}, wantStateExists: true, wantEntry: entryRaw(server), wantEntryExists: true},
+		{name: "saved true but entry missing", state: &state.State{MachineID: "m", CredentialSaved: true}, wantOut: "Found incomplete pairing data: state.json exists, but the secret store entry is missing.\n" + baseMessage, wantCode: 0, start: 1},
+		{name: "confirmed", state: &state.State{MachineID: "m", CredentialSaved: true, Confirmed: true}, entry: entryRaw(server), wantOut: "This computer is already paired with http://localhost. Nothing was changed.\n", wantCode: 1, wantState: &state.State{MachineID: "m", CredentialSaved: true, Confirmed: true}, wantStateExists: true, wantStateSame: true, wantEntry: entryRaw(server), wantEntryExists: true},
+		{name: "damaged entry", state: &state.State{MachineID: "m"}, entry: "damaged json", wantOut: "Found a damaged secret store entry for tervi.\n" + baseMessage, wantCode: 0, start: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			backend := NewMemoryBackend()
+			backend := credential.NewMemoryBackend()
 			if tc.state != nil {
-				if err := WriteState(dir, *tc.state); err != nil {
+				if err := state.WriteState(dir, *tc.state); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -347,7 +213,7 @@ func TestStepZero(t *testing.T) {
 			var stateBefore []byte
 			if tc.state != nil {
 				var err error
-				stateBefore, err = os.ReadFile(StatePath(dir))
+				stateBefore, err = os.ReadFile(state.StatePath(dir))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -370,18 +236,18 @@ func TestStepZero(t *testing.T) {
 			if stderr.Len() != 0 {
 				t.Errorf("stderr = %q, want empty", stderr.String())
 			}
-			state, stateExists, stateErr := ReadState(dir)
+			record, stateExists, stateErr := state.ReadState(dir)
 			if stateErr != nil {
 				t.Fatalf("ReadState() error = %v", stateErr)
 			}
 			if stateExists != tc.wantStateExists {
 				t.Errorf("state exists = %v, want %v", stateExists, tc.wantStateExists)
 			}
-			if tc.wantStateExists && tc.wantState != nil && state != *tc.wantState {
-				t.Errorf("state after run = %+v, want %+v", state, *tc.wantState)
+			if tc.wantStateExists && tc.wantState != nil && record != *tc.wantState {
+				t.Errorf("state after run = %+v, want %+v", record, *tc.wantState)
 			}
 			if tc.wantStateSame {
-				stateAfter, err := os.ReadFile(StatePath(dir))
+				stateAfter, err := os.ReadFile(state.StatePath(dir))
 				if err != nil {
 					t.Fatalf("reading unchanged state: %v", err)
 				}
@@ -405,12 +271,12 @@ func TestStepZeroOtherServerChangesNothing(t *testing.T) {
 	for _, saved := range []bool{false, true} {
 		t.Run(fmt.Sprintf("credential_saved_%v", saved), func(t *testing.T) {
 			dir := t.TempDir()
-			state := State{MachineID: "m", CredentialSaved: saved}
-			if err := WriteState(dir, state); err != nil {
+			record := state.State{MachineID: "m", CredentialSaved: saved}
+			if err := state.WriteState(dir, record); err != nil {
 				t.Fatal(err)
 			}
-			before, _ := os.ReadFile(StatePath(dir))
-			backend := NewMemoryBackend()
+			before, _ := os.ReadFile(state.StatePath(dir))
+			backend := credential.NewMemoryBackend()
 			if err := backend.Set("worker", `{"server":"https://other.example","credential":"`+testCredential+`"}`); err != nil {
 				t.Fatal(err)
 			}
@@ -423,7 +289,7 @@ func TestStepZeroOtherServerChangesNothing(t *testing.T) {
 			if stdout.String() != want || stderr.Len() != 0 {
 				t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
 			}
-			after, _ := os.ReadFile(StatePath(dir))
+			after, _ := os.ReadFile(state.StatePath(dir))
 			if !bytes.Equal(before, after) {
 				t.Errorf("state changed: before=%q after=%q", before, after)
 			}
@@ -439,7 +305,7 @@ func TestStepZeroOtherServerChangesNothing(t *testing.T) {
 }
 
 func TestUnusableStoreStopsBeforeFlow(t *testing.T) {
-	backend := NewMemoryBackend()
+	backend := credential.NewMemoryBackend()
 	backend.FailSet = true
 	env, stdout, stderr := runEnv(t, t.TempDir(), backend)
 	flow := &flowRecorder{}
@@ -456,7 +322,7 @@ func TestStateWriteFailsInStepZero(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("permission checks are bypassed for the root user")
 	}
-	backend := NewMemoryBackend()
+	backend := credential.NewMemoryBackend()
 	if err := backend.Set("worker", `{"server":"http://localhost","credential":"`+testCredential+`"}`); err != nil {
 		t.Fatal(err)
 	}
@@ -464,7 +330,7 @@ func TestStateWriteFailsInStepZero(t *testing.T) {
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteState(dir, State{MachineID: "m", CredentialSaved: false}); err != nil {
+	if err := state.WriteState(dir, state.State{MachineID: "m", CredentialSaved: false}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(dir, 0500); err != nil {
@@ -474,7 +340,7 @@ func TestStateWriteFailsInStepZero(t *testing.T) {
 	env, stdout, stderr := runEnv(t, dir, backend)
 	flow := &flowRecorder{}
 	code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow)
-	if code != 1 || stdout.String() != fmt.Sprintf("✗ Can't write %s.\n", StatePath(dir)) || stderr.Len() != 0 || flow.finishCalls != 0 {
+	if code != 1 || stdout.String() != fmt.Sprintf("✗ Can't write %s.\n", state.StatePath(dir)) || stderr.Len() != 0 || flow.finishCalls != 0 {
 		t.Errorf("code=%d stdout=%q stderr=%q flow=%+v", code, stdout.String(), stderr.String(), flow)
 	}
 }
@@ -483,7 +349,7 @@ func TestCtrlCDuringStepZero(t *testing.T) {
 	t.Run("already cancelled", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		backend := NewMemoryBackend()
+		backend := credential.NewMemoryBackend()
 		env, stdout, stderr := runEnv(t, t.TempDir(), backend)
 		flow := &flowRecorder{}
 		if code := Run(ctx, []string{"pair", "--server", "http://localhost"}, env, flow); code != 130 {
@@ -495,11 +361,11 @@ func TestCtrlCDuringStepZero(t *testing.T) {
 	})
 	t.Run("cancelled during store read after finding resumable entry", func(t *testing.T) {
 		dir := t.TempDir()
-		if err := WriteState(dir, State{MachineID: "m", CredentialSaved: true}); err != nil {
+		if err := state.WriteState(dir, state.State{MachineID: "m", CredentialSaved: true}); err != nil {
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithCancel(context.Background())
-		backend := &cancelGetBackend{MemoryBackend: NewMemoryBackend(), cancel: cancel}
+		backend := &cancelGetBackend{MemoryBackend: credential.NewMemoryBackend(), cancel: cancel}
 		_ = backend.Set("worker", `{"server":"http://localhost","credential":"`+testCredential+`"}`)
 		env, stdout, stderr := runEnv(t, dir, backend)
 		flow := &flowRecorder{}
@@ -514,7 +380,7 @@ func TestCtrlCDuringStepZero(t *testing.T) {
 	t.Run("cancelled during store read without a resumable entry", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		backend := &cancelGetBackend{MemoryBackend: NewMemoryBackend(), cancel: cancel}
+		backend := &cancelGetBackend{MemoryBackend: credential.NewMemoryBackend(), cancel: cancel}
 		env, stdout, stderr := runEnv(t, t.TempDir(), backend)
 		flow := &flowRecorder{}
 		if code := Run(ctx, []string{"pair", "--server", "http://localhost"}, env, flow); code != 130 {
@@ -527,7 +393,7 @@ func TestCtrlCDuringStepZero(t *testing.T) {
 	t.Run("cancelled during secret store check", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		backend := &cancelSetBackend{MemoryBackend: NewMemoryBackend(), cancel: cancel}
+		backend := &cancelSetBackend{MemoryBackend: credential.NewMemoryBackend(), cancel: cancel}
 		env, stdout, stderr := runEnv(t, t.TempDir(), backend)
 		flow := &flowRecorder{}
 		if code := Run(ctx, []string{"pair", "--server", "http://localhost"}, env, flow); code != 130 {
@@ -543,7 +409,7 @@ func TestCtrlCDuringStepZero(t *testing.T) {
 }
 
 type cancelGetBackend struct {
-	*MemoryBackend
+	*credential.MemoryBackend
 	cancel context.CancelFunc
 }
 
@@ -554,7 +420,7 @@ func (b *cancelGetBackend) Get(user string) (string, error) {
 }
 
 type cancelSetBackend struct {
-	*MemoryBackend
+	*credential.MemoryBackend
 	cancel  context.CancelFunc
 	gets    int
 	deletes int
@@ -579,16 +445,16 @@ func (b *cancelSetBackend) Delete(user string) error {
 }
 
 func TestDamagedEntryWins(t *testing.T) {
-	states := []*State{nil, {}, {MachineID: "m"}, {MachineID: "m", CredentialSaved: true}, {MachineID: "m", CredentialSaved: true, Confirmed: true}}
-	for i, state := range states {
+	states := []*state.State{nil, {}, {MachineID: "m"}, {MachineID: "m", CredentialSaved: true}, {MachineID: "m", CredentialSaved: true, Confirmed: true}}
+	for i, record := range states {
 		t.Run(fmt.Sprintf("state_%d", i), func(t *testing.T) {
 			dir := t.TempDir()
-			if state != nil {
-				if err := WriteState(dir, *state); err != nil {
+			if record != nil {
+				if err := state.WriteState(dir, *record); err != nil {
 					t.Fatal(err)
 				}
 			}
-			backend := NewMemoryBackend()
+			backend := credential.NewMemoryBackend()
 			_ = backend.Set("worker", "damaged json")
 			env, stdout, stderr := runEnv(t, dir, backend)
 			flow := &flowRecorder{}
@@ -602,7 +468,7 @@ func TestDamagedEntryWins(t *testing.T) {
 			if _, ok := backend.Value("worker"); ok {
 				t.Error("damaged entry was not removed")
 			}
-			if _, exists, err := ReadState(dir); err != nil || exists {
+			if _, exists, err := state.ReadState(dir); err != nil || exists {
 				t.Errorf("state remains after damaged cleanup: exists=%v err=%v", exists, err)
 			}
 		})
@@ -612,20 +478,20 @@ func TestDamagedEntryWins(t *testing.T) {
 func TestLeftoverThenStartNew(t *testing.T) {
 	cases := []struct {
 		name  string
-		state *State
+		state *state.State
 		entry bool
 		msg   string
 	}{
 		{"A", nil, true, "Found incomplete pairing data: the secret store entry exists, but state.json is missing."},
-		{"B", &State{MachineID: "m", CredentialSaved: true}, false, "Found incomplete pairing data: state.json exists, but the secret store entry is missing."},
-		{"D", &State{MachineID: "m"}, false, "The earlier pairing was interrupted before the credential was saved."},
+		{"B", &state.State{MachineID: "m", CredentialSaved: true}, false, "Found incomplete pairing data: state.json exists, but the secret store entry is missing."},
+		{"D", &state.State{MachineID: "m"}, false, "The earlier pairing was interrupted before the credential was saved."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			backend := NewMemoryBackend()
+			backend := credential.NewMemoryBackend()
 			if tc.state != nil {
-				_ = WriteState(dir, *tc.state)
+				_ = state.WriteState(dir, *tc.state)
 			}
 			if tc.entry {
 				_ = backend.Set("worker", `{"server":"http://localhost","credential":"`+testCredential+`"}`)
@@ -642,7 +508,7 @@ func TestLeftoverThenStartNew(t *testing.T) {
 			if _, ok := backend.Value("worker"); ok {
 				t.Error("leftover entry not removed")
 			}
-			if _, exists, err := ReadState(dir); err != nil || exists {
+			if _, exists, err := state.ReadState(dir); err != nil || exists {
 				t.Errorf("leftover state remains: exists=%v err=%v", exists, err)
 			}
 		})
@@ -652,8 +518,8 @@ func TestLeftoverThenStartNew(t *testing.T) {
 func TestLeftoverDeleteFails(t *testing.T) {
 	t.Run("secret store delete", func(t *testing.T) {
 		dir := t.TempDir()
-		_ = WriteState(dir, State{MachineID: "m"})
-		backend := NewMemoryBackend()
+		_ = state.WriteState(dir, state.State{MachineID: "m"})
+		backend := credential.NewMemoryBackend()
 		_ = backend.Set("worker", "damaged json")
 		backend.FailDelete = true
 		env, stdout, stderr := runEnv(t, dir, backend)
@@ -665,7 +531,7 @@ func TestLeftoverDeleteFails(t *testing.T) {
 		if stdout.String() != want || stderr.Len() != 0 || flow.startCalls != 0 {
 			t.Errorf("stdout=%q stderr=%q flow=%+v", stdout.String(), stderr.String(), flow)
 		}
-		if _, exists, err := ReadState(dir); err != nil || !exists {
+		if _, exists, err := state.ReadState(dir); err != nil || !exists {
 			t.Errorf("state should remain after failed entry delete: exists=%v err=%v", exists, err)
 		}
 	})
@@ -674,44 +540,28 @@ func TestLeftoverDeleteFails(t *testing.T) {
 			t.Skip("permission checks are bypassed for the root user")
 		}
 		dir := t.TempDir()
-		_ = WriteState(dir, State{MachineID: "m", CredentialSaved: true})
+		_ = state.WriteState(dir, state.State{MachineID: "m", CredentialSaved: true})
 		if err := os.Chmod(dir, 0500); err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
-		backend := NewMemoryBackend()
+		backend := credential.NewMemoryBackend()
 		env, stdout, stderr := runEnv(t, dir, backend)
 		flow := &flowRecorder{}
 		if code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow); code != 1 {
 			t.Fatalf("Run() = %d, want 1", code)
 		}
-		want := fmt.Sprintf("✗ Can't delete %s.\n  Check that you can change files in %s, then run the same command again.\n", StatePath(dir), dir)
+		want := fmt.Sprintf("✗ Can't delete %s.\n  Check that you can change files in %s, then run the same command again.\n", state.StatePath(dir), dir)
 		if stdout.String() != want || stderr.Len() != 0 || flow.startCalls != 0 {
 			t.Errorf("stdout=%q stderr=%q flow=%+v", stdout.String(), stderr.String(), flow)
 		}
 	})
 }
 
-func TestStateFileDelete(t *testing.T) {
-	dir := t.TempDir()
-	if err := WriteState(dir, State{MachineID: "m"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := DeleteState(dir); err != nil {
-		t.Fatalf("DeleteState() error = %v", err)
-	}
-	if err := DeleteState(dir); err != nil {
-		t.Fatalf("DeleteState(missing) error = %v", err)
-	}
-	if _, err := os.Stat(StatePath(dir)); !os.IsNotExist(err) {
-		t.Errorf("state still exists or stat error: %v", err)
-	}
-}
-
 func TestCredentialNeverPrinted(t *testing.T) {
 	dir := t.TempDir()
-	_ = WriteState(dir, State{MachineID: "m", CredentialSaved: true})
-	backend := NewMemoryBackend()
+	_ = state.WriteState(dir, state.State{MachineID: "m", CredentialSaved: true})
+	backend := credential.NewMemoryBackend()
 	_ = backend.Set("worker", `{"server":"http://localhost","credential":"`+testCredential+`"}`)
 	env, stdout, stderr := runEnv(t, dir, backend)
 	flow := &flowRecorder{}
@@ -722,10 +572,10 @@ func TestCredentialNeverPrinted(t *testing.T) {
 	}
 }
 
-func runEnv(t *testing.T, dir string, backend Backend) (Env, *bytes.Buffer, *bytes.Buffer) {
+func runEnv(t *testing.T, dir string, backend credential.Backend) (Env, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	return Env{Stdin: bytes.NewReader(nil), Stdout: &stdout, Stderr: &stderr, Store: NewStore(backend), StateDir: dir}, &stdout, &stderr
+	return Env{Stdin: bytes.NewReader(nil), Stdout: &stdout, Stderr: &stderr, Store: credential.NewStore(backend), StateDir: dir}, &stdout, &stderr
 }
 
 func assertNoCredential(t *testing.T, streams ...string) {
