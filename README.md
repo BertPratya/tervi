@@ -11,6 +11,9 @@ go run ./cmd/server
 go run ./cmd/tervi pair --server http://localhost:8080
 ```
 
+To see the API, start the server with `TERVI_API_DOCS=on go run ./cmd/server`
+and open `http://localhost:8080/docs`.
+
 ## Code layout
 
 | Where | Holds |
