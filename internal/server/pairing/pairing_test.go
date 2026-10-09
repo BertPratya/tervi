@@ -15,8 +15,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/bertpratya/tervi/internal/db/dbtest"
 	"github.com/bertpratya/tervi/internal/secret"
+	"github.com/bertpratya/tervi/internal/server/db/dbtest"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

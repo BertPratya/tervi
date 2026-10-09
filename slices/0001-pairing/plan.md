@@ -854,7 +854,7 @@ The worker saves the standard form in its secret store entry.
 | 06 | [Worker: start and polling](tasks/06-worker-start-and-poll.md) | 02, 05 | core | done |
 | 07 | [Worker: code, saving, and confirmation](tasks/07-worker-code-and-confirm.md) | 04, 06 | core | done |
 | 08 | [End-to-end test](tasks/08-end-to-end.md) | 03, 07 | normal | done |
-| 09 | [Server layout](tasks/09-server-layout.md) | 01–08 | normal | todo |
+| 09 | [Server layout](tasks/09-server-layout.md) | 01–08 | normal | done|
 | 10 | [Worker layout](tasks/10-worker-layout.md) | 09 | normal | todo |
 | 11 | [The migrate command](tasks/11-migrate-command.md) | 09, 10 | core | todo |
 

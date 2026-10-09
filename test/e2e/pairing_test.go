@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bertpratya/tervi/internal/db/dbtest"
+	"github.com/bertpratya/tervi/internal/server/db/dbtest"
 	"github.com/bertpratya/tervi/internal/server"
 	"github.com/bertpratya/tervi/internal/worker/flow"
 	"github.com/bertpratya/tervi/internal/worker/local"
