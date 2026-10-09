@@ -21,7 +21,7 @@ the worktree the message names.
 
 ## Plan review
 
-Check all eight, for every requirement and every task file:
+Check all nine, for every requirement and every task file:
 
 1. **Coverage**: every requirement is handled by a task, and every test in a
    task's "Definition of done" proves a requirement or states its purpose.
@@ -41,6 +41,9 @@ Check all eight, for every requirement and every task file:
 8. **Layout**: every package in the Overview follows "Code layout" in
    `AGENTS.md`: under `internal/server/`, `internal/worker/`, or directly
    under `internal/` when shared, and named after its feature.
+9. **Contracts**: every route the plan adds or changes that `AGENTS.md`
+   says the contract lists is in `api/openapi.yaml`, every table or local file it adds or changes is in
+   `design/data-model.md`, and the plan links to them instead of copying.
 
 ## Code review
 
@@ -51,6 +54,8 @@ Review with two lenses:
   the task's boundaries were respected.
 - **Quality and security**: bugs, error handling, secrets in logs or
   responses, input checks, SQL injection.
+- **Contracts**: routes, requests, and answers match `api/openapi.yaml`; a
+  migration matches `design/data-model.md`; local file formats match it too.
 - **Layout**: the rules under "Code layout" in `AGENTS.md`. A non-test file
   over 300 lines, the same SQL or logic written twice, a generic package
   name, or code on the wrong side (server or worker) is a finding.

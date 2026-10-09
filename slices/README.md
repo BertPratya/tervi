@@ -35,7 +35,7 @@ creation order: `0001-pairing`, `tasks/02-start-pairing.md`.
 | --- | --- | --- |
 | User | Everything | `spec.md`; decisions; approves everything else |
 | Architect | Everything | `plan.md`, task files, `backlog.md`, `index.md`, commits, pull requests and their comments |
-| Worker | Its worker message, its task file, the code, `AGENTS.md` | Code and tests, in its worktree |
+| Worker | Its worker message, its task file, the code, `AGENTS.md`, `api/`, `design/` | Code and tests, in its worktree |
 | Reviewer | Only what the review message lists | Nothing; it reports to the architect |
 
 The worker never reads `spec.md` or `plan.md`. Each task file copies in the
@@ -91,10 +91,14 @@ Spec: [spec.md](spec.md)
 | Part | Location | Notes |
 
 ## Data
-Tables and columns, or files and fields, with types.
+What this slice adds or changes in design/data-model.md (changed in the same
+pull request), with a link. Not a copy.
 
 ## Interfaces
-Endpoints, commands, or messages: who calls them, with what proof, for what purpose.
+What this slice adds or changes in api/openapi.yaml (changed in the same pull
+request): a table of operations, who calls them, with what proof, for what
+purpose. Request and answer details live only in the contract. Worker
+commands, which are not HTTP, are described here in full.
 
 ## Mechanisms
 Methods that apply to several steps (expiry, retries, hashing, ...). For each:

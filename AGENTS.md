@@ -29,6 +29,8 @@ Start PostgreSQL from outside the sandbox: the architect runs
 | `internal/server/<feature>/` | Server code |
 | `internal/worker/<feature>/` | Worker code |
 | `internal/<feature>/` | Code used by both the server and the worker |
+| `api/` | The contracts, and the Go package `api` that embeds them |
+| `test/<suite>/` | Tests that run the real programs together (`e2e`, `contract`) |
 
 - **Name each package after the feature it provides**: `pairing`,
   `credential`, `launcher`. Generic names (`local`, `flow`, `util`, `common`,
@@ -40,6 +42,24 @@ Start PostgreSQL from outside the sandbox: the architect runs
   or logic written twice becomes one shared constant or function.
 - A plan's Overview names the package for every part; check it against
   these rules before the plan is approved.
+
+## Contracts and data model
+
+Two places hold the design that outlives any one slice. Both are readable by
+people and by agents:
+
+| File | Holds |
+| --- | --- |
+| [`api/openapi.yaml`](api/openapi.yaml) | Every API route, the approval page, and `/health`: who calls it, with what proof, every request and answer. Static files and the development-only docs page are not listed. Later, `api/asyncapi.yaml` holds the WebSocket messages. |
+| [`design/data-model.md`](design/data-model.md) | Every database table and column, each lifecycle, and the worker's local data |
+
+- **A plan pull request changes them directly**, in the same pull request as
+  `plan.md`. The plan links to what changed instead of copying it.
+- **The code must match them.** A test checks the server against
+  `api/openapi.yaml`. For the database, the migration files are the truth and
+  `design/data-model.md` must agree with them.
+- A task that finds the contract wrong stops and reports it; it does not
+  change the code to disagree with the contract.
 
 ## Roles
 

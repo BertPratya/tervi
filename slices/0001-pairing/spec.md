@@ -246,3 +246,8 @@ None.
   server start — the person deploying decides when the database changes, as
   in most production setups; a server that starts against the wrong database
   version stops with a clear message instead.
+- A Swagger page at `/docs` shows the API and lets a developer try it, only
+  when `TERVI_API_DOCS=on` — a development tool the user asked for; it is
+  off by default, so a running server never shows its API page by accident.
+  It loads Swagger UI from a CDN, pinned to one version with integrity
+  hashes.
