@@ -33,9 +33,10 @@ files with goose v3.27.0 (`github.com/pressly/goose/v3`).
 | `server` (no arguments) | Checks the database version, then serves as today | as today | as today |
 | anything else | Nothing | Standard error: `Usage: server [migrate]` | `2` |
 
-**Never print `DATABASE_URL`** or any part of it in a message: it can contain
-a password. `db.Open` already reports a bad URL as `invalid DATABASE_URL`
-without its value; keep it that way.
+**Never print the password or the whole `DATABASE_URL`** in a message.
+(Decided in code review round 1: a connection error naming the user, host,
+or database is fine.) `db.Open` already reports a bad URL as
+`invalid DATABASE_URL` without its value; keep it that way.
 
 `server migrate` needs only `DATABASE_URL`. Add
 `func LoadDatabaseURL() (string, error)` to `internal/server/config.go`. It

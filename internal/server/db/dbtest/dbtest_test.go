@@ -27,6 +27,10 @@ func TestDatabaseURLFor(t *testing.T) {
 			databaseURL: "postgres://user:pass@localhost/original?dbname=tervi&sslmode=disable",
 			wantSSLMode: "disable",
 		},
+		{
+			name:        "database query parameter",
+			databaseURL: "postgres://user:pass@localhost/original?database=tervi",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

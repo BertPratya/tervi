@@ -122,7 +122,7 @@ func databaseURLFor(databaseURL, name string) (string, error) {
 	result := parsed.String()
 	config, err := pgx.ParseConfig(result)
 	if err != nil {
-		return "", fmt.Errorf("parse test database URL: %w", err)
+		return "", fmt.Errorf("parse test database URL")
 	}
 	if config.Database != name {
 		return "", fmt.Errorf("test database URL selects database %q, want %q", config.Database, name)
