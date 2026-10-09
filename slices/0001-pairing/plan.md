@@ -7,17 +7,23 @@ Spec: [spec.md](spec.md)
 
 | Part | Location | Notes |
 | --- | --- | --- |
-| Server program | `cmd/server` | A thin wrapper around `internal/server` |
-| Server assembly | `internal/server` | Settings, connecting, migrating, starting the clean-up, and `New(...)`, which returns the server's `http.Handler` with every route. Importable, so the end-to-end test runs the real server. |
-| Database | `internal/db` | Connection and migrations: embedded `.sql` files run with `github.com/pressly/goose/v3` at server start |
-| Secrets | `internal/secret` | The `[hidden]` secret type; generating keys, credentials, and pairing codes; hashing |
-| Pairing on the server | `internal/pairing` | Pairing requests, machines, the status changes, their HTTP handlers, and `Register(mux, ...)` for its routes |
-| Approval page | `internal/web` | `index.html`, `app.js`, and `view.js`, embedded with `go:embed`; no build step; `Register(mux)` for its routes |
-| Worker program | `cmd/tervi` | A thin wrapper around `local.Run` |
-| Worker command and local state | `internal/worker/local` | The command line, the address standard form, `state.json`, the secret store logic and an in-memory backend for tests, step 0, and `Run(ctx, args, env, flow)`, importable so the end-to-end test runs the real worker |
-| Worker keyring backend | `internal/worker/keyring` | The real secret store backend, GNOME Keyring through `github.com/zalando/go-keyring` |
-| Worker pairing flow | `internal/worker/flow` | Steps 1–7b as seen from the worker, Ctrl+C, every terminal message |
+| Server program | `cmd/server` | A thin wrapper around `internal/server`; `server migrate` applies migrations (task 11) |
+| Server assembly | `internal/server` | Settings, connecting, checking the database version, starting the clean-up, the Host check, and `New(...)`, which returns the server's `http.Handler` with every route. Importable, so the end-to-end test runs the real server. |
+| Database | `internal/server/db` | Connection, migrations (embedded `.sql` files run with `github.com/pressly/goose/v3` by `server migrate`), and the version check |
+| Secrets | `internal/secret` | Shared by both sides. The `[hidden]` secret type; generating keys, credentials, and pairing codes; hashing |
+| Pairing on the server | `internal/server/pairing` | Pairing requests, machines, the status changes, their HTTP handlers, and `Register(mux, ...)` for its routes; one file per endpoint group |
+| Approval page | `internal/server/web` | `index.html`, `app.js`, and `view.js`, embedded with `go:embed`; no build step; `Register(mux)` for its routes |
+| Worker program | `cmd/tervi` | A thin wrapper around `cli.Run` |
+| Worker command line | `internal/worker/cli` | Reading the command line, step 0 (the startup check and leftover clean-up), and `Run(ctx, args, env, flow)`, importable so the end-to-end test runs the real worker |
+| Worker pairing steps | `internal/worker/pair` | Steps 1–7b as seen from the worker, Ctrl+C, every terminal message |
+| Worker local record | `internal/worker/state` | `state.json` and the server address standard form |
+| Worker credential | `internal/worker/credential` | The secret store logic, the real backend (GNOME Keyring through `github.com/zalando/go-keyring`), and an in-memory backend for tests |
 | End-to-end test | `test/e2e` | Runs the real server and worker together |
+
+Tasks 01–08 built these parts under older names (`internal/db`,
+`internal/pairing`, `internal/web`, `internal/worker/local`, `flow`, and
+`keyring`); tasks 09 and 10 move them here. The task files keep the names they were
+built with.
 
 Each server package registers its own routes, so tasks that add routes do not
 edit the same file.
@@ -679,8 +685,11 @@ The worker saves the standard form in its secret store entry.
   a fast hash is safe; a slow password hash would only slow down every poll.
 - The pairing code is 8 digits, and `-` and spaces are ignored — easy to read
   and type; with 5 tries out of 100 million codes, guessing is hopeless.
-- Migrations are embedded `.sql` files run by `goose` at server start — the
-  usual Go approach; the schema travels with the program.
+- Migrations are embedded `.sql` files run by `goose`, through
+  `server migrate` only (task 11) — the schema travels with the program, and
+  the person deploying decides when the database changes. Starting the server
+  only checks the version. Goose's PostgreSQL session lock makes two
+  `migrate` runs at the same time safe.
 - The approval page is plain HTML and JavaScript embedded in the server — it
   is one small page; the React and Theia setup comes with later features.
 - The server listens on `127.0.0.1` only and refuses unknown `Host` headers —
@@ -831,6 +840,7 @@ The worker saves the standard form in its secret store entry.
 | R29 (next run finishes or restarts) | 05, 07 |
 | R30 (credential only to its saved server) | 05, 07 |
 | R31 (incomplete local data) | 05 |
+| R32 (database changes only through `migrate`) | 11 |
 
 ## Tasks
 
@@ -844,15 +854,24 @@ The worker saves the standard form in its secret store entry.
 | 06 | [Worker: start and polling](tasks/06-worker-start-and-poll.md) | 02, 05 | core | done |
 | 07 | [Worker: code, saving, and confirmation](tasks/07-worker-code-and-confirm.md) | 04, 06 | core | done |
 | 08 | [End-to-end test](tasks/08-end-to-end.md) | 03, 07 | normal | done |
+| 09 | [Server layout](tasks/09-server-layout.md) | 01–08 | normal | todo |
+| 10 | [Worker layout](tasks/10-worker-layout.md) | 09 | normal | todo |
+| 11 | [The migrate command](tasks/11-migrate-command.md) | 09, 10 | core | todo |
+
+Tasks 09–11 come from the user's review of tasks 01–08, and the user chose to
+keep them in this slice, past the usual 8 tasks. Tasks 09 and 10 only move
+code. Each one targets `main` and is merged before the next starts: 09, then
+10, then 11.
 
 ```text
 01 ──► 02 ──► 03 ───────────────────┐
  │      ├───► 04 ──────┐            │
  │      └───────┐      ▼            ▼
- └──► 05 ─────► 06 ──► 07 ───────► 08
+ └──► 05 ─────► 06 ──► 07 ───────► 08 ──► 09 ──► 10 ──► 11
 ```
 
-06 needs 02 and 05; 07 needs 04 and 06; 08 needs 03 and 07.
+06 needs 02 and 05; 07 needs 04 and 06; 08 needs 03 and 07; 09–11 follow
+in order.
 
 Task 05 can be built at the same time as 02–04; tasks 03 and 04 can be built
 at the same time, since they change different packages. Each task changes its

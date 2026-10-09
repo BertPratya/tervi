@@ -21,7 +21,7 @@ the worktree the message names.
 
 ## Plan review
 
-Check all seven, for every requirement and every task file:
+Check all eight, for every requirement and every task file:
 
 1. **Coverage**: every requirement is handled by a task, and every test in a
    task's "Definition of done" proves a requirement or states its purpose.
@@ -38,6 +38,9 @@ Check all seven, for every requirement and every task file:
 7. **Size**: the slice has 4–8 tasks, and each task's pull request can be
    reviewed in 20–40 minutes (roughly 300–400 changed lines, not counting
    tests).
+8. **Layout**: every package in the Overview follows "Code layout" in
+   `AGENTS.md`: under `internal/server/`, `internal/worker/`, or directly
+   under `internal/` when shared, and named after its feature.
 
 ## Code review
 
@@ -48,6 +51,9 @@ Review with two lenses:
   the task's boundaries were respected.
 - **Quality and security**: bugs, error handling, secrets in logs or
   responses, input checks, SQL injection.
+- **Layout**: the rules under "Code layout" in `AGENTS.md`. A non-test file
+  over 300 lines, the same SQL or logic written twice, a generic package
+  name, or code on the wrong side (server or worker) is a finding.
 
 ## Later rounds
 
