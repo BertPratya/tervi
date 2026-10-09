@@ -3,16 +3,19 @@ package pairing
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/bertpratya/tervi/internal/secret"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -29,13 +32,65 @@ type Deps struct {
 func Register(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /api/v1/pairings", deps.start)
 	mux.HandleFunc("GET /api/v1/pairings/current", deps.poll)
+	mux.HandleFunc("POST /api/v1/pairings/current/code", deps.submitCode)
+	mux.HandleFunc("POST /api/v1/machines/current/acknowledgment", deps.acknowledge)
+	mux.HandleFunc("POST /api/v1/machines/current/save-failure", deps.saveFailure)
 	mux.HandleFunc("GET /api/v1/approvals/current", deps.readApproval)
 	mux.HandleFunc("POST /api/v1/approvals/current/accept", deps.accept)
 	mux.HandleFunc("POST /api/v1/approvals/current/reject", deps.reject)
 }
 
 // StartCleanup starts pairing cleanup work.
-func StartCleanup(_ context.Context, _ *pgxpool.Pool, _ *slog.Logger) {}
+func StartCleanup(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) {
+	startCleanup(ctx, pool, logger, time.Minute)
+}
+
+func startCleanup(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := cleanupPass(ctx, pool); err != nil && ctx.Err() == nil {
+					logger.Error("pairing cleanup failed", "error", err)
+				}
+			}
+		}
+	}()
+}
+
+func cleanupPass(ctx context.Context, pool *pgxpool.Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `UPDATE pairing_requests SET status = 'expired'
+		WHERE status IN ('waiting_for_approval', 'waiting_for_code') AND expires_at <= now()`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `WITH expired_machines AS (
+			UPDATE machines SET status = 'expired'
+			WHERE status = 'pending' AND expires_at <= now()
+			RETURNING pairing_request_id
+		)
+		UPDATE pairing_requests AS pr
+		SET status = 'failed', failure_reason = 'not_confirmed'
+		FROM expired_machines AS em
+		WHERE pr.id = em.pairing_request_id AND pr.status = 'finishing'`); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
 
 type startInput struct {
 	Hostname  string
@@ -127,13 +182,21 @@ func (deps Deps) poll(w http.ResponseWriter, r *http.Request) {
 	var status string
 	var expiresInSeconds int
 	var triesLeft int
+	var failureReason string
 	err := deps.Pool.QueryRow(r.Context(), `SELECT
-		CASE WHEN status IN ('waiting_for_approval', 'waiting_for_code') AND expires_at <= now()
-			THEN 'expired' ELSE status END,
-		GREATEST(0, CEIL(EXTRACT(EPOCH FROM expires_at - now()))::integer),
-		tries_left
-		FROM pairing_requests WHERE polling_key_hash = $1`, secret.Hash(secret.FromString(proof))).
-		Scan(&status, &expiresInSeconds, &triesLeft)
+		CASE
+			WHEN pr.status IN ('waiting_for_approval', 'waiting_for_code') AND pr.expires_at <= now() THEN 'expired'
+			WHEN pr.status = 'finishing' AND m.status = 'pending' AND m.expires_at <= now() THEN 'failed'
+			ELSE pr.status
+		END,
+		GREATEST(0, CEIL(EXTRACT(EPOCH FROM pr.expires_at - now()))::integer),
+		pr.tries_left,
+		CASE WHEN pr.status = 'finishing' AND m.status = 'pending' AND m.expires_at <= now()
+			THEN 'not_confirmed' ELSE coalesce(pr.failure_reason, '') END
+		FROM pairing_requests AS pr
+		LEFT JOIN machines AS m ON m.pairing_request_id = pr.id
+		WHERE pr.polling_key_hash = $1`, secret.Hash(secret.FromString(proof))).
+		Scan(&status, &expiresInSeconds, &triesLeft, &failureReason)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusUnauthorized, "unknown_key")
 		return
@@ -149,7 +212,266 @@ func (deps Deps) poll(w http.ResponseWriter, r *http.Request) {
 	if status == "waiting_for_code" {
 		body["tries_left"] = triesLeft
 	}
+	if status == "failed" {
+		body["failure_reason"] = failureReason
+	}
 	writeJSON(w, http.StatusOK, body)
+}
+
+type codeInput struct {
+	Code string `json:"code"`
+}
+
+func (deps Deps) submitCode(w http.ResponseWriter, r *http.Request) {
+	proof, ok := bearerProof(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unknown_key")
+		return
+	}
+	input, ok := decodeCodeInput(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
+	pollingHash := secret.Hash(secret.FromString(proof))
+	var requestID, status, storedCode string
+	var triesLeft int
+	err := deps.Pool.QueryRow(r.Context(), `SELECT pr.id::text,
+		CASE
+			WHEN pr.status IN ('waiting_for_approval', 'waiting_for_code') AND pr.expires_at <= now() THEN 'expired'
+			WHEN pr.status = 'finishing' AND m.status = 'pending' AND m.expires_at <= now() THEN 'failed'
+			ELSE pr.status
+		END,
+		coalesce(pr.pairing_code, ''),
+		pr.tries_left
+		FROM pairing_requests AS pr
+		LEFT JOIN machines AS m ON m.pairing_request_id = pr.id
+		WHERE pr.polling_key_hash = $1`, pollingHash).
+		Scan(&requestID, &status, &storedCode, &triesLeft)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusUnauthorized, "unknown_key")
+		return
+	}
+	if err != nil {
+		writeInternalError(w)
+		return
+	}
+	if status == "expired" {
+		writeJSON(w, http.StatusOK, map[string]string{"result": "expired"})
+		return
+	}
+	if status != "waiting_for_code" {
+		writeJSON(w, http.StatusOK, map[string]string{"result": "not_waiting_for_code", "status": status})
+		return
+	}
+
+	submitted := secret.NormalizeCode(input.Code)
+	stored := secret.NormalizeCode(storedCode)
+	if subtle.ConstantTimeCompare([]byte(submitted), []byte(stored)) == 1 {
+		deps.issueCredential(w, r, requestID)
+		return
+	}
+
+	err = deps.Pool.QueryRow(r.Context(), `UPDATE pairing_requests
+		SET tries_left = tries_left - 1,
+			status = CASE WHEN tries_left - 1 = 0 THEN 'failed' ELSE status END,
+			failure_reason = CASE WHEN tries_left - 1 = 0 THEN 'wrong_codes' ELSE failure_reason END
+		WHERE id = $1 AND status = 'waiting_for_code' AND tries_left > 0 AND expires_at > now()
+		RETURNING tries_left, status`, requestID).Scan(&triesLeft, &status)
+	if err == nil {
+		if status == "failed" {
+			writeJSON(w, http.StatusOK, map[string]string{"result": "failed"})
+		} else {
+			writeJSON(w, http.StatusOK, map[string]any{"result": "wrong_code", "tries_left": triesLeft})
+		}
+		return
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		writeInternalError(w)
+		return
+	}
+	deps.writeCodeUnavailable(w, r, requestID)
+}
+
+func decodeCodeInput(r *http.Request) (codeInput, bool) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodyBytes+1))
+	if err != nil || len(body) > maxRequestBodyBytes {
+		return codeInput{}, false
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
+		return codeInput{}, false
+	}
+	raw, exists := fields["code"]
+	if !exists {
+		return codeInput{}, false
+	}
+	var input codeInput
+	if err := json.Unmarshal(raw, &input.Code); err != nil {
+		return codeInput{}, false
+	}
+	return input, true
+}
+
+func (deps Deps) issueCredential(w http.ResponseWriter, r *http.Request, requestID string) {
+	tx, err := deps.Pool.Begin(r.Context())
+	if err != nil {
+		writeInternalError(w)
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	var hostname, osName, osVersion string
+	err = tx.QueryRow(r.Context(), `UPDATE pairing_requests SET status = 'finishing'
+		WHERE id = $1 AND status = 'waiting_for_code' AND expires_at > now()
+		RETURNING hostname, os_name, os_version`, requestID).
+		Scan(&hostname, &osName, &osVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		deps.writeCodeUnavailable(w, r, requestID)
+		return
+	}
+	if err != nil {
+		writeInternalError(w)
+		return
+	}
+	credential, err := secret.NewKey()
+	if err != nil {
+		writeInternalError(w)
+		return
+	}
+	displayName := hostname
+	if displayName == "" {
+		displayName = "unknown"
+	}
+	var machineID string
+	err = tx.QueryRow(r.Context(), `INSERT INTO machines
+		(pairing_request_id, hostname, os_name, os_version, display_name, credential_hash, status, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, 'pending', now() + interval '5 minutes')
+		RETURNING machine_id::text`, requestID, hostname, osName, osVersion, displayName, secret.Hash(credential)).Scan(&machineID)
+	if err != nil {
+		writeInternalError(w)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeInternalError(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"result":     "accepted",
+		"credential": credential.Reveal(),
+		"machine_id": machineID,
+	})
+}
+
+func (deps Deps) writeCodeUnavailable(w http.ResponseWriter, r *http.Request, requestID string) {
+	var status string
+	err := deps.Pool.QueryRow(r.Context(), `SELECT
+		CASE
+			WHEN pr.status IN ('waiting_for_approval', 'waiting_for_code') AND pr.expires_at <= now() THEN 'expired'
+			WHEN pr.status = 'finishing' AND m.status = 'pending' AND m.expires_at <= now() THEN 'failed'
+			ELSE pr.status
+		END
+		FROM pairing_requests AS pr
+		LEFT JOIN machines AS m ON m.pairing_request_id = pr.id
+		WHERE pr.id = $1`, requestID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusUnauthorized, "unknown_key")
+		return
+	}
+	if err != nil {
+		writeInternalError(w)
+		return
+	}
+	if status == "expired" {
+		writeJSON(w, http.StatusOK, map[string]string{"result": "expired"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"result": "not_waiting_for_code", "status": status})
+}
+
+func (deps Deps) acknowledge(w http.ResponseWriter, r *http.Request) {
+	deps.changeMachine(w, r, true)
+}
+
+func (deps Deps) saveFailure(w http.ResponseWriter, r *http.Request) {
+	deps.changeMachine(w, r, false)
+}
+
+func (deps Deps) changeMachine(w http.ResponseWriter, r *http.Request, acknowledgment bool) {
+	proof, ok := bearerProof(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unknown_credential")
+		return
+	}
+	credentialHash := secret.Hash(secret.FromString(proof))
+	tx, err := deps.Pool.Begin(r.Context())
+	if err != nil {
+		writeInternalError(w)
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	var machineID, requestID string
+	var updateErr error
+	if acknowledgment {
+		updateErr = tx.QueryRow(r.Context(), `UPDATE machines SET status = 'active'
+			WHERE credential_hash = $1 AND status = 'pending' AND expires_at > now()
+			RETURNING machine_id::text, pairing_request_id::text`, credentialHash).Scan(&machineID, &requestID)
+	} else {
+		updateErr = tx.QueryRow(r.Context(), `UPDATE machines SET status = 'failed'
+			WHERE credential_hash = $1 AND status = 'pending' AND expires_at > now()
+			RETURNING machine_id::text, pairing_request_id::text`, credentialHash).Scan(&machineID, &requestID)
+	}
+	if updateErr == nil {
+		var tag pgconn.CommandTag
+		if acknowledgment {
+			tag, err = tx.Exec(r.Context(), `UPDATE pairing_requests SET status = 'paired'
+				WHERE id = $1 AND status = 'finishing'`, requestID)
+		} else {
+			tag, err = tx.Exec(r.Context(), `UPDATE pairing_requests SET status = 'failed', failure_reason = 'not_saved'
+				WHERE id = $1 AND status = 'finishing'`, requestID)
+		}
+		if err != nil || tag.RowsAffected() != 1 {
+			writeInternalError(w)
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			writeInternalError(w)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
+		return
+	}
+	if !errors.Is(updateErr, pgx.ErrNoRows) {
+		writeInternalError(w)
+		return
+	}
+	_ = tx.Rollback(r.Context())
+	var status string
+	err = deps.Pool.QueryRow(r.Context(), `SELECT CASE WHEN status = 'pending' AND expires_at <= now()
+		THEN 'expired' ELSE status END FROM machines WHERE credential_hash = $1`, credentialHash).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusUnauthorized, "unknown_credential")
+		return
+	}
+	if err != nil {
+		writeInternalError(w)
+		return
+	}
+	result := ""
+	switch status {
+	case "active":
+		if acknowledgment {
+			result = "ok"
+		} else {
+			result = "active"
+		}
+	case "failed", "expired":
+		result = status
+	default:
+		writeInternalError(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"result": result})
 }
 
 type approvalRow struct {
@@ -241,10 +563,15 @@ func (deps Deps) decide(w http.ResponseWriter, r *http.Request, accept bool) {
 func queryApproval(ctx context.Context, pool *pgxpool.Pool, approvalHash []byte) (approvalRow, error) {
 	var row approvalRow
 	err := pool.QueryRow(ctx, `SELECT
-		CASE WHEN pr.status IN ('waiting_for_approval', 'waiting_for_code') AND pr.expires_at <= now()
-			THEN 'expired' ELSE pr.status END,
+		CASE
+			WHEN pr.status IN ('waiting_for_approval', 'waiting_for_code') AND pr.expires_at <= now() THEN 'expired'
+			WHEN pr.status = 'finishing' AND m.status = 'pending' AND m.expires_at <= now() THEN 'failed'
+			ELSE pr.status
+		END,
 		pr.hostname, pr.os_name, pr.os_version, coalesce(pr.pairing_code, ''),
-		coalesce(pr.failure_reason, ''), coalesce(m.display_name, '')
+		CASE WHEN pr.status = 'finishing' AND m.status = 'pending' AND m.expires_at <= now()
+			THEN 'not_confirmed' ELSE coalesce(pr.failure_reason, '') END,
+		coalesce(m.display_name, '')
 		FROM pairing_requests AS pr
 		LEFT JOIN machines AS m ON m.pairing_request_id = pr.id
 		WHERE pr.approval_key_hash = $1`, approvalHash).Scan(
