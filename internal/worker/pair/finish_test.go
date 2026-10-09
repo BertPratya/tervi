@@ -1,4 +1,4 @@
-package flow
+package pair
 
 import (
 	"bytes"
@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/bertpratya/tervi/internal/secret"
-	"github.com/bertpratya/tervi/internal/worker/local"
+	"github.com/bertpratya/tervi/internal/worker/cli"
+	"github.com/bertpratya/tervi/internal/worker/credential"
+	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
 const (
@@ -75,9 +77,9 @@ func TestCodeReplyMayArriveAfterDeadline(t *testing.T) {
 	env := finishEnv(t, &out, &delayedReader{reader: bytes.NewReader([]byte(testCode + "\n")), delay: 650 * time.Millisecond})
 	flow := newFlow(Options{RequestTimeout: 800 * time.Millisecond, PollInterval: time.Millisecond})
 	got := flow.StartNew(context.Background(), env, server.URL)
-	state, exists, err := local.ReadState(env.StateDir)
-	if got != 0 || !strings.Contains(out.String(), "✓ Paired successfully.\n") || err != nil || !exists || !state.Confirmed {
-		t.Errorf("StartNew() = %d, state=%#v exists=%t err=%v output=%q; want accepted reply and completed save", got, state, exists, err, safeOutput(out.String()))
+	record, exists, err := state.ReadState(env.StateDir)
+	if got != 0 || !strings.Contains(out.String(), "✓ Paired successfully.\n") || err != nil || !exists || !record.Confirmed {
+		t.Errorf("StartNew() = %d, state=%#v exists=%t err=%v output=%q; want accepted reply and completed save", got, record, exists, err, safeOutput(out.String()))
 	}
 }
 
@@ -259,7 +261,7 @@ func TestEmptyCodeLineDoesNotSend(t *testing.T) {
 func TestHappyPath(t *testing.T) {
 	var out bytes.Buffer
 	env := finishEnv(t, &out, strings.NewReader(testCode+"\n"))
-	backend := local.NewMemoryBackend()
+	backend := credential.NewMemoryBackend()
 	var eventMu sync.Mutex
 	var events []string
 	appendEvent := func(event string) {
@@ -267,18 +269,18 @@ func TestHappyPath(t *testing.T) {
 		events = append(events, event)
 		eventMu.Unlock()
 	}
-	env.Store = local.NewStore(&recordingBackend{backend: backend, observe: func(event string) {
-		state, exists, err := local.ReadState(env.StateDir)
-		if err != nil || !exists || state.MachineID != testMachineID || state.CredentialSaved || state.Confirmed {
-			t.Errorf("state before secret store %s = %#v, exists %t, err %v", event, state, exists, err)
+	env.Store = credential.NewStore(&recordingBackend{backend: backend, observe: func(event string) {
+		record, exists, err := state.ReadState(env.StateDir)
+		if err != nil || !exists || record.MachineID != testMachineID || record.CredentialSaved || record.Confirmed {
+			t.Errorf("state before secret store %s = %#v, exists %t, err %v", event, record, exists, err)
 		}
 		appendEvent(event)
 	}})
 	var ackSawSavedState atomic.Bool
 	server := codeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/machines/current/acknowledgment" {
-			state, exists, err := local.ReadState(env.StateDir)
-			ackSawSavedState.Store(err == nil && exists && state.MachineID == testMachineID && state.CredentialSaved && !state.Confirmed)
+			record, exists, err := state.ReadState(env.StateDir)
+			ackSawSavedState.Store(err == nil && exists && record.MachineID == testMachineID && record.CredentialSaved && !record.Confirmed)
 			if r.Header.Get("Authorization") != "Bearer "+testCredential {
 				t.Errorf("ack proof was not credential")
 			}
@@ -294,9 +296,9 @@ func TestHappyPath(t *testing.T) {
 	if got != 0 || !strings.Contains(out.String(), "✓ Paired successfully.\n") || !ackSawSavedState.Load() {
 		t.Fatalf("StartNew() = %d, ack saw saved state %t, output %q", got, ackSawSavedState.Load(), safeOutput(out.String()))
 	}
-	state, exists, err := local.ReadState(env.StateDir)
-	if err != nil || !exists || !state.CredentialSaved || !state.Confirmed || state.MachineID != testMachineID {
-		t.Errorf("final state = %#v, exists %t, err %v", state, exists, err)
+	record, exists, err := state.ReadState(env.StateDir)
+	if err != nil || !exists || !record.CredentialSaved || !record.Confirmed || record.MachineID != testMachineID {
+		t.Errorf("final state = %#v, exists %t, err %v", record, exists, err)
 	}
 	appendEvent("confirmed true")
 	rawEntry, entryExists := backend.Value("worker")
@@ -324,20 +326,20 @@ func TestHappyPath(t *testing.T) {
 func TestStateWriteFails(t *testing.T) {
 	tests := []struct {
 		name             string
-		setup            func(t *testing.T, env *local.Env, backend *local.MemoryBackend, cancel context.CancelFunc) func(http.ResponseWriter, *http.Request)
-		want             func(env local.Env) string
+		setup            func(t *testing.T, env *cli.Env, backend *credential.MemoryBackend, cancel context.CancelFunc) func(http.ResponseWriter, *http.Request)
+		want             func(env cli.Env) string
 		saveFailureCalls int
 	}{
-		{name: "initial state", setup: func(t *testing.T, env *local.Env, _ *local.MemoryBackend, _ context.CancelFunc) func(http.ResponseWriter, *http.Request) {
+		{name: "initial state", setup: func(t *testing.T, env *cli.Env, _ *credential.MemoryBackend, _ context.CancelFunc) func(http.ResponseWriter, *http.Request) {
 			if err := os.MkdirAll(env.StateDir, 0700); err != nil {
 				t.Fatal(err)
 			}
 			makeStateDirReadOnly(t, env.StateDir)
 			return func(w http.ResponseWriter, _ *http.Request) { writeAccepted(w) }
-		}, want: func(env local.Env) string {
-			return fmt.Sprintf("✗ Can't write %s. Pairing was not completed.\n", local.StatePath(env.StateDir))
+		}, want: func(env cli.Env) string {
+			return fmt.Sprintf("✗ Can't write %s. Pairing was not completed.\n", state.StatePath(env.StateDir))
 		}, saveFailureCalls: 1},
-		{name: "credential-saved state", setup: func(t *testing.T, env *local.Env, _ *local.MemoryBackend, _ context.CancelFunc) func(http.ResponseWriter, *http.Request) {
+		{name: "credential-saved state", setup: func(t *testing.T, env *cli.Env, _ *credential.MemoryBackend, _ context.CancelFunc) func(http.ResponseWriter, *http.Request) {
 			return func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/api/v1/machines/current/acknowledgment" {
 					writeResult(w, map[string]string{"result": "ok"})
@@ -345,10 +347,10 @@ func TestStateWriteFails(t *testing.T) {
 				}
 				writeAccepted(w)
 			}
-		}, want: func(env local.Env) string {
-			return fmt.Sprintf("✗ Can't write %s.\n  To finish, run:  tervi pair --server ", local.StatePath(env.StateDir))
+		}, want: func(env cli.Env) string {
+			return fmt.Sprintf("✗ Can't write %s.\n  To finish, run:  tervi pair --server ", state.StatePath(env.StateDir))
 		}},
-		{name: "confirmed state", setup: func(t *testing.T, env *local.Env, _ *local.MemoryBackend, _ context.CancelFunc) func(http.ResponseWriter, *http.Request) {
+		{name: "confirmed state", setup: func(t *testing.T, env *cli.Env, _ *credential.MemoryBackend, _ context.CancelFunc) func(http.ResponseWriter, *http.Request) {
 			return func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/api/v1/machines/current/acknowledgment" {
 					makeStateDirReadOnly(t, env.StateDir)
@@ -357,19 +359,19 @@ func TestStateWriteFails(t *testing.T) {
 				}
 				writeAccepted(w)
 			}
-		}, want: func(env local.Env) string {
-			return fmt.Sprintf("✗ The server confirmed the pairing, but this computer couldn't record it: can't write %s.\n  To finish, run:  tervi pair --server ", local.StatePath(env.StateDir))
+		}, want: func(env cli.Env) string {
+			return fmt.Sprintf("✗ The server confirmed the pairing, but this computer couldn't record it: can't write %s.\n  To finish, run:  tervi pair --server ", state.StatePath(env.StateDir))
 		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
 			env := finishEnv(t, &out, strings.NewReader(testCode+"\n"))
-			backend := local.NewMemoryBackend()
+			backend := credential.NewMemoryBackend()
 			if tc.name == "credential-saved state" {
-				env.Store = local.NewStore(&sabotageBackend{MemoryBackend: backend, onSet: func() { makeStateDirReadOnly(t, env.StateDir) }})
+				env.Store = credential.NewStore(&sabotageBackend{MemoryBackend: backend, onSet: func() { makeStateDirReadOnly(t, env.StateDir) }})
 			} else {
-				env.Store = local.NewStore(backend)
+				env.Store = credential.NewStore(backend)
 			}
 			var failures atomic.Int32
 			handler := tc.setup(t, &env, backend, nil)
@@ -398,10 +400,10 @@ func runSaveFailureTest(t *testing.T, failDelete bool) {
 	t.Helper()
 	var out bytes.Buffer
 	env := finishEnv(t, &out, strings.NewReader(testCode+"\n"))
-	backend := local.NewMemoryBackend()
+	backend := credential.NewMemoryBackend()
 	backend.ChangeOnRead = true
 	backend.FailDelete = failDelete
-	env.Store = local.NewStore(backend)
+	env.Store = credential.NewStore(backend)
 	var reports atomic.Int32
 	server := codeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/machines/current/save-failure" {
@@ -420,7 +422,7 @@ func runSaveFailureTest(t *testing.T, failDelete bool) {
 		if !strings.Contains(out.String(), "✗ Couldn't remove the partly saved secret store entry.\n  Make sure you are logged in to a desktop session and the keyring is unlocked, then run the same command again.\n") {
 			t.Errorf("missing partial-entry cleanup failure: %q", safeOutput(out.String()))
 		}
-		if _, exists, _ := local.ReadState(env.StateDir); !exists {
+		if _, exists, _ := state.ReadState(env.StateDir); !exists {
 			t.Error("state.json removed despite secret delete failure")
 		}
 		if _, exists := backend.Value("worker"); !exists {
@@ -430,7 +432,7 @@ func runSaveFailureTest(t *testing.T, failDelete bool) {
 		if _, exists := backend.Value("worker"); exists {
 			t.Error("secret entry was not deleted")
 		}
-		if _, exists, _ := local.ReadState(env.StateDir); exists {
+		if _, exists, _ := state.ReadState(env.StateDir); exists {
 			t.Error("state.json was not deleted")
 		}
 		if strings.Contains(out.String(), "Can't delete") {
@@ -474,9 +476,9 @@ func TestAckRetries(t *testing.T) {
 			t.Errorf("output missing %q: %q", want, safeOutput(out.String()))
 		}
 	}
-	state, exists, err := local.ReadState(env.StateDir)
-	if err != nil || !exists || !state.CredentialSaved || state.Confirmed {
-		t.Errorf("state after failed retries = %#v exists=%t err=%v", state, exists, err)
+	record, exists, err := state.ReadState(env.StateDir)
+	if err != nil || !exists || !record.CredentialSaved || record.Confirmed {
+		t.Errorf("state after failed retries = %#v exists=%t err=%v", record, exists, err)
 	}
 
 	t.Run("request timeout waits after each try ends", func(t *testing.T) {
@@ -529,8 +531,8 @@ func TestAckResults(t *testing.T) {
 		t.Run(tc.result, func(t *testing.T) {
 			var out bytes.Buffer
 			env := finishEnv(t, &out, strings.NewReader(testCode+"\n"))
-			backend := local.NewMemoryBackend()
-			env.Store = local.NewStore(backend)
+			backend := credential.NewMemoryBackend()
+			env.Store = credential.NewStore(backend)
 			status := http.StatusOK
 			result := tc.result
 			if result == "unknown_credential" {
@@ -556,7 +558,7 @@ func TestAckResults(t *testing.T) {
 			if _, exists := backend.Value("worker"); exists {
 				t.Error("entry was not removed")
 			}
-			if _, exists, _ := local.ReadState(env.StateDir); exists {
+			if _, exists, _ := state.ReadState(env.StateDir); exists {
 				t.Error("state was not removed")
 			}
 		})
@@ -566,9 +568,9 @@ func TestAckResults(t *testing.T) {
 func TestAckCleanupDeleteFails(t *testing.T) {
 	var out bytes.Buffer
 	env := finishEnv(t, &out, strings.NewReader(testCode+"\n"))
-	backend := local.NewMemoryBackend()
+	backend := credential.NewMemoryBackend()
 	backend.FailDelete = true
-	env.Store = local.NewStore(backend)
+	env.Store = credential.NewStore(backend)
 	server := codeServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/machines/current/acknowledgment" {
 			writeResult(w, map[string]string{"result": "expired"})
@@ -585,7 +587,7 @@ func TestAckCleanupDeleteFails(t *testing.T) {
 	if strings.Contains(out.String(), "✗ The pairing didn't finish in time. Run the same command again to start a new one.") {
 		t.Errorf("expired result message printed despite secret delete failure: %q", safeOutput(out.String()))
 	}
-	if _, exists, _ := local.ReadState(env.StateDir); !exists {
+	if _, exists, _ := state.ReadState(env.StateDir); !exists {
 		t.Error("state should be kept after secret delete failure")
 	}
 }
@@ -594,9 +596,9 @@ func TestStateDeleteFails(t *testing.T) {
 	t.Run("after save failure", func(t *testing.T) {
 		var out bytes.Buffer
 		env := finishEnv(t, &out, strings.NewReader(testCode+"\n"))
-		backend := &sabotageBackend{MemoryBackend: local.NewMemoryBackend(), onSet: func() { makeStateDirReadOnly(t, env.StateDir) }}
+		backend := &sabotageBackend{MemoryBackend: credential.NewMemoryBackend(), onSet: func() { makeStateDirReadOnly(t, env.StateDir) }}
 		backend.FailSet = true
-		env.Store = local.NewStore(backend)
+		env.Store = credential.NewStore(backend)
 		server := codeServer(t, func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/v1/machines/current/save-failure" {
 				writeResult(w, map[string]string{"result": "ok"})
@@ -638,10 +640,10 @@ func TestStateDeleteFails(t *testing.T) {
 func TestFinishEarlierPairing(t *testing.T) {
 	var out bytes.Buffer
 	env := finishEnv(t, &out, strings.NewReader(""))
-	backend := local.NewMemoryBackend()
-	env.Store = local.NewStore(backend)
-	entry := local.Entry{Server: "http://entry-server.example", Credential: secret.FromString(testCredential)}
-	if err := local.WriteState(env.StateDir, local.State{MachineID: testMachineID, CredentialSaved: true}); err != nil {
+	backend := credential.NewMemoryBackend()
+	env.Store = credential.NewStore(backend)
+	entry := credential.Entry{Server: "http://entry-server.example", Credential: secret.FromString(testCredential)}
+	if err := state.WriteState(env.StateDir, state.State{MachineID: testMachineID, CredentialSaved: true}); err != nil {
 		t.Fatal(err)
 	}
 	var requests atomic.Int32
@@ -657,9 +659,9 @@ func TestFinishEarlierPairing(t *testing.T) {
 	defer server.Close()
 	entry.Server = server.URL
 	got := finishFlow(time.Now(), time.Second, time.Millisecond).FinishEarlier(context.Background(), env, entry)
-	state, exists, err := local.ReadState(env.StateDir)
-	if got != 0 || requests.Load() != 1 || err != nil || !exists || !state.Confirmed || !strings.Contains(out.String(), "Finishing the earlier pairing with "+server.URL+"...\nConfirming with the server...\n✓ Paired successfully.\n") {
-		t.Errorf("exit=%d requests=%d state=%#v exists=%t err=%v output=%q", got, requests.Load(), state, exists, err, safeOutput(out.String()))
+	record, exists, err := state.ReadState(env.StateDir)
+	if got != 0 || requests.Load() != 1 || err != nil || !exists || !record.Confirmed || !strings.Contains(out.String(), "Finishing the earlier pairing with "+server.URL+"...\nConfirming with the server...\n✓ Paired successfully.\n") {
+		t.Errorf("exit=%d requests=%d state=%#v exists=%t err=%v output=%q", got, requests.Load(), record, exists, err, safeOutput(out.String()))
 	}
 }
 
@@ -672,10 +674,10 @@ func TestFinishEarlierResults(t *testing.T) {
 		t.Run(tc.result, func(t *testing.T) {
 			var out bytes.Buffer
 			env := finishEnv(t, &out, strings.NewReader(""))
-			backend := local.NewMemoryBackend()
-			env.Store = local.NewStore(backend)
-			entry := local.Entry{Server: "http://entry.example", Credential: secret.FromString(testCredential)}
-			_ = local.WriteState(env.StateDir, local.State{MachineID: testMachineID, CredentialSaved: true})
+			backend := credential.NewMemoryBackend()
+			env.Store = credential.NewStore(backend)
+			entry := credential.Entry{Server: "http://entry.example", Credential: secret.FromString(testCredential)}
+			_ = state.WriteState(env.StateDir, state.State{MachineID: testMachineID, CredentialSaved: true})
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tc.result == "unknown_credential" {
 					w.WriteHeader(http.StatusUnauthorized)
@@ -693,7 +695,7 @@ func TestFinishEarlierResults(t *testing.T) {
 			if _, exists := backend.Value("worker"); exists {
 				t.Error("entry was not deleted")
 			}
-			if _, exists, _ := local.ReadState(env.StateDir); exists {
+			if _, exists, _ := state.ReadState(env.StateDir); exists {
 				t.Error("state was not deleted")
 			}
 		})
@@ -721,7 +723,7 @@ func TestCtrlCDuringCodePhase(t *testing.T) {
 		if !strings.Contains(out.String(), "Pairing cancelled. Nothing was saved.\n") || codeRequests.Load() != 0 {
 			t.Errorf("output=%q requests=%d", safeOutput(out.String()), codeRequests.Load())
 		}
-		if _, exists, _ := local.ReadState(env.StateDir); exists {
+		if _, exists, _ := state.ReadState(env.StateDir); exists {
 			t.Error("state written while waiting for input")
 		}
 	})
@@ -743,7 +745,7 @@ func TestCtrlCDuringCodePhase(t *testing.T) {
 		if !strings.Contains(out.String(), "Pairing cancelled. Nothing was saved.\n") || codeRequests.Load() != 1 {
 			t.Errorf("output=%q requests=%d", safeOutput(out.String()), codeRequests.Load())
 		}
-		if _, exists, _ := local.ReadState(env.StateDir); exists {
+		if _, exists, _ := state.ReadState(env.StateDir); exists {
 			t.Error("state written during code request")
 		}
 	})
@@ -755,8 +757,8 @@ func TestCtrlCAfterSaving(t *testing.T) {
 		defer cancel()
 		var out bytes.Buffer
 		env := finishEnv(t, &out, strings.NewReader(testCode+"\n"))
-		backend := &cancelBackend{MemoryBackend: local.NewMemoryBackend(), cancel: cancel}
-		env.Store = local.NewStore(backend)
+		backend := &cancelBackend{MemoryBackend: credential.NewMemoryBackend(), cancel: cancel}
+		env.Store = credential.NewStore(backend)
 		var ack atomic.Int32
 		server := codeServer(t, func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/v1/machines/current/acknowledgment" {
@@ -777,9 +779,9 @@ func TestCtrlCAfterSaving(t *testing.T) {
 		defer cancel()
 		var out bytes.Buffer
 		env := finishEnv(t, &out, strings.NewReader(""))
-		env.Store = local.NewStore(local.NewMemoryBackend())
-		entry := local.Entry{Server: "http://placeholder", Credential: secret.FromString(testCredential)}
-		_ = local.WriteState(env.StateDir, local.State{MachineID: testMachineID, CredentialSaved: true})
+		env.Store = credential.NewStore(credential.NewMemoryBackend())
+		entry := credential.Entry{Server: "http://placeholder", Credential: secret.FromString(testCredential)}
+		_ = state.WriteState(env.StateDir, state.State{MachineID: testMachineID, CredentialSaved: true})
 		var acks atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { acks.Add(1); cancel(); <-r.Context().Done() }))
 		defer server.Close()
@@ -813,9 +815,9 @@ func TestFinishEarlierDoesNotUseRequestedServer(t *testing.T) {
 	// FinishEarlier receives only the locally saved entry; its server is the sole destination.
 	var out bytes.Buffer
 	env := finishEnv(t, &out, strings.NewReader(""))
-	env.Store = local.NewStore(local.NewMemoryBackend())
-	entry := local.Entry{Server: "http://127.0.0.1:1", Credential: secret.FromString(testCredential)}
-	_ = local.WriteState(env.StateDir, local.State{MachineID: testMachineID, CredentialSaved: true})
+	env.Store = credential.NewStore(credential.NewMemoryBackend())
+	entry := credential.Entry{Server: "http://127.0.0.1:1", Credential: secret.FromString(testCredential)}
+	_ = state.WriteState(env.StateDir, state.State{MachineID: testMachineID, CredentialSaved: true})
 	got := finishFlow(time.Now(), 20*time.Millisecond, time.Millisecond).FinishEarlier(context.Background(), env, entry)
 	if got != 1 || !strings.Contains(out.String(), "Finishing the earlier pairing with "+entry.Server) {
 		t.Errorf("exit=%d output=%q", got, safeOutput(out.String()))
@@ -826,9 +828,9 @@ func finishFlow(now time.Time, requestTimeout, pollInterval time.Duration) *pair
 	return newFlow(Options{RequestTimeout: requestTimeout, PollInterval: pollInterval, Now: func() time.Time { return now }})
 }
 
-func finishEnv(t *testing.T, out io.Writer, stdin io.Reader) local.Env {
+func finishEnv(t *testing.T, out io.Writer, stdin io.Reader) cli.Env {
 	t.Helper()
-	return local.Env{Stdin: stdin, Stdout: out, Stderr: io.Discard, Store: local.NewStore(local.NewMemoryBackend()), StateDir: filepath.Join(t.TempDir(), "state")}
+	return cli.Env{Stdin: stdin, Stdout: out, Stderr: io.Discard, Store: credential.NewStore(credential.NewMemoryBackend()), StateDir: filepath.Join(t.TempDir(), "state")}
 }
 
 func codeServer(t *testing.T, handler func(http.ResponseWriter, *http.Request)) *httptest.Server {
@@ -888,7 +890,7 @@ func writeResult(w http.ResponseWriter, body any) {
 }
 
 func deleteStateMessage(dir string) string {
-	return fmt.Sprintf("✗ Can't delete %s.\n  Check that you can change files in %s, then run the same command again.\n", local.StatePath(dir), dir)
+	return fmt.Sprintf("✗ Can't delete %s.\n  Check that you can change files in %s, then run the same command again.\n", state.StatePath(dir), dir)
 }
 
 func makeStateDirReadOnly(t *testing.T, dir string) {
@@ -901,7 +903,7 @@ func makeStateDirReadOnly(t *testing.T, dir string) {
 }
 
 type sabotageBackend struct {
-	*local.MemoryBackend
+	*credential.MemoryBackend
 	onSet func()
 }
 
@@ -914,12 +916,12 @@ func (b *sabotageBackend) Set(user, value string) error {
 }
 
 type cancelBackend struct {
-	*local.MemoryBackend
+	*credential.MemoryBackend
 	cancel context.CancelFunc
 }
 
 type recordingBackend struct {
-	backend local.Backend
+	backend credential.Backend
 	observe func(string)
 }
 
