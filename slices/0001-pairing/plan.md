@@ -703,7 +703,7 @@ The worker saves the standard form in its secret store entry.
 | 09 | [Server layout](tasks/09-server-layout.md) | 01–08 | normal | done |
 | 10 | [Worker layout](tasks/10-worker-layout.md) | 09 | normal | done |
 | 11 | [The migrate command](tasks/11-migrate-command.md) | 09, 10 | core | done |
-| 12 | [Contract test and API docs page](tasks/12-contract-test-and-docs.md) | 09, 10, 11 | normal | todo |
+| 12 | [Contract test and API docs page](tasks/12-contract-test-and-docs.md) | 09, 10, 11 | normal | done |
 
 Tasks 09–12 come from the user's review of tasks 01–08, and the user chose to
 keep them in this slice, past the usual 8 tasks. Task 12 checks the server

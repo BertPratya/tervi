@@ -17,11 +17,16 @@ type Config struct {
 	ServerAddr  string
 	PublicURL   string
 	DatabaseURL string
+	APIDocs     bool
 }
 
 // LoadConfig loads .env from the working directory and validates server settings.
 func LoadConfig() (Config, error) {
 	if err := loadEnvironment(); err != nil {
+		return Config{}, err
+	}
+	apiDocs, err := apiDocsFromEnvironment(os.Getenv("TERVI_API_DOCS"))
+	if err != nil {
 		return Config{}, err
 	}
 
@@ -48,12 +53,23 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-
 	return Config{
 		ServerAddr:  addr,
 		PublicURL:   publicURL,
 		DatabaseURL: databaseURL,
+		APIDocs:     apiDocs,
 	}, nil
+}
+
+func apiDocsFromEnvironment(value string) (bool, error) {
+	switch value {
+	case "", "off":
+		return false, nil
+	case "on":
+		return true, nil
+	default:
+		return false, fmt.Errorf(`TERVI_API_DOCS must be "on" or "off"`)
+	}
 }
 
 // LoadDatabaseURL loads .env from the working directory and returns DATABASE_URL.

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/bertpratya/tervi/internal/server/apidocs"
 	"github.com/bertpratya/tervi/internal/server/db"
 	"github.com/bertpratya/tervi/internal/server/pairing"
 	"github.com/bertpratya/tervi/internal/server/web"
@@ -23,6 +24,9 @@ func New(cfg Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handler {
 	})
 	pairing.Register(mux, pairing.Deps{Pool: pool, PublicURL: cfg.PublicURL, Logger: logger})
 	web.Register(mux)
+	if cfg.APIDocs {
+		apidocs.Register(mux)
+	}
 
 	return requireKnownHost(cfg, mux)
 }
@@ -31,6 +35,9 @@ func New(cfg Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handler {
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if cfg.APIDocs {
+		logger.Warn("API docs are on at /docs; turn them off outside development")
 	}
 
 	pool, err := db.Open(ctx, cfg.DatabaseURL)
