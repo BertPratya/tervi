@@ -833,7 +833,7 @@ The worker saves the standard form in its secret store entry.
 | # | Task | Depends on | Risk | Status |
 | --- | --- | --- | --- | --- |
 | 01 | [Server foundation](tasks/01-server-foundation.md) | — | core | done |
-| 02 | [Server: start, poll, and approval API](tasks/02-start-poll-approval.md) | 01 | core | todo |
+| 02 | [Server: start, poll, and approval API](tasks/02-start-poll-approval.md) | 01 | core | done |
 | 03 | [Approval web page](tasks/03-approval-page.md) | 02 | low | todo |
 | 04 | [Server: code, credential, finishing](tasks/04-code-and-credential.md) | 02 | core | todo |
 | 05 | [Worker: command and local state](tasks/05-worker-local.md) | 01 | core | todo |

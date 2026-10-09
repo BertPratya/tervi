@@ -69,8 +69,9 @@ job does that in task 04. Every other status never expires.
 Request (each field optional; unknown fields ignored):
 `{"hostname": "bert-desktop", "os_name": "Ubuntu", "os_version": "26.04"}`.
 Limits counted in characters (runes): `hostname` ≤ 64, `os_name` ≤ 64,
-`os_version` ≤ 32. Over a limit → `400 {"error": "invalid_input"}`, nothing
-stored. A missing field is stored as `''`.
+`os_version` ≤ 32. Over a limit, or a value containing a NUL character
+(`\u0000`, which PostgreSQL cannot store in `text`) → `400 {"error": "invalid_input"}`,
+nothing stored. A missing field is stored as `''`.
 
 1. Make a polling key and an approval key with `secret.NewKey()`.
 2. Insert a row: `status = 'waiting_for_approval'`, both hashes,
@@ -178,7 +179,7 @@ environment, stop and report it; do not skip those tests.
 | `TestStartStoresOnlyHashes` — neither raw key appears in any column; the stored hashes equal `Hash` of the returned values | R22 |
 | `TestStartKeysAreUnique` — two starts never return the same polling key or approval key | R22 |
 | `TestStartIgnoresHostHeader` — a forged `Host` header does not change the link | Links use only the configured address |
-| `TestStartLimits` — values at exactly 64/64/32 characters, including Thai, are accepted; one more character gives `400` and stores nothing; a 5 KB body gives `400` | Input limits |
+| `TestStartLimits` — values at exactly 64/64/32 characters, including Thai, are accepted; one more character gives `400` and stores nothing; a value containing `\u0000` gives `400` and stores nothing; a 5 KB body gives `400` | Input limits |
 | `TestStartMissingFields` — `{}` is accepted and stored as `''` | Unknown details allowed |
 | `TestPollWaiting` — a fresh pairing polls as `waiting_for_approval`, `expires_in_seconds` between 595 and 600 | R9 |
 | `TestPollUnknownKey` — unknown or missing key: `401 unknown_key` | Proof required |
