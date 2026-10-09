@@ -156,8 +156,11 @@ The only command in this slice is `tervi pair --server <url>`. Covers R1.
 | Invalid server address | `Invalid server address: <value>` + usage | `2` |
 | Unknown flag | `Unknown flag: <flag>` + usage | `2` |
 | Unknown command | `Unknown command: <command>` + usage | `2` |
-| No command | Usage only | `2` |
+| No command, `-h`, or `--help` | Usage only | `2` |
 | Ctrl+C at any point | See "Cancelling with Ctrl+C" | `130` |
+
+Task 05 has the full list of inputs, including `--help` anywhere, an empty
+`--server`, and which error wins when several apply (left to right).
 
 **A valid server address** starts with `http://` or `https://` and has a host,
 with an optional port: `http://localhost:8080`. Nothing else is allowed except
@@ -837,7 +840,7 @@ The worker saves the standard form in its secret store entry.
 | 02 | [Server: start, poll, and approval API](tasks/02-start-poll-approval.md) | 01 | core | done |
 | 03 | [Approval web page](tasks/03-approval-page.md) | 02 | low | done |
 | 04 | [Server: code, credential, finishing](tasks/04-code-and-credential.md) | 02 | core | done |
-| 05 | [Worker: command and local state](tasks/05-worker-local.md) | 01 | core | todo |
+| 05 | [Worker: command and local state](tasks/05-worker-local.md) | 01 | core | done |
 | 06 | [Worker: start and polling](tasks/06-worker-start-and-poll.md) | 02, 05 | core | todo |
 | 07 | [Worker: code, saving, and confirmation](tasks/07-worker-code-and-confirm.md) | 04, 06 | core | todo |
 | 08 | [End-to-end test](tasks/08-end-to-end.md) | 03, 07 | normal | todo |

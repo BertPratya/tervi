@@ -11,3 +11,5 @@ proposes items to include. The format is in [README.md](README.md#backlogmd).
 | B4 | Log the kind of each `500 internal_error` in `internal/pairing` (never the values), using `Deps.Logger` | No failure leaves a trace today; matters once someone runs the server for real | PR #8, review round 1 | open |
 | B5 | Answer unknown paths and wrong methods with `{"error": "<code>"}` JSON instead of Go's plain-text `404`/`405` | Only API clients notice; no client relies on it yet | PR #8, review round 1 | open |
 | B6 | `TestInvalidLink`: start a real pairing first, send accept and reject with wrong keys, and check the real row is unchanged | The current 0-rows check cannot fail | PR #8, review round 2 | open |
+| B7 | `TestLeftoverThenStartNew`: also prove that `Check` runs after removing leftover data (for example, a `FailSet` case) | The code does it; only the test does not prove it | PR #11, review round 3 | open |
+| B8 | Server addresses: write IPv6 in canonical form (`[0:0::1]` → `[::1]`), and reject or convert non-ASCII hosts | Rare; today it only errs toward refusing a server, never toward sending a credential elsewhere | PR #11, review round 2 | open |
