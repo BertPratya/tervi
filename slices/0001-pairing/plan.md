@@ -19,6 +19,9 @@ Spec: [spec.md](spec.md)
 | Worker local record | `internal/worker/state` | `state.json` and the server address standard form |
 | Worker credential | `internal/worker/credential` | The secret store logic, the real backend (GNOME Keyring through `github.com/zalando/go-keyring`), and an in-memory backend for tests |
 | End-to-end test | `test/e2e` | Runs the real server and worker together |
+| API contract | `api` | `openapi.yaml`, embedded for the server and tests (task 12) |
+| API docs page | `internal/server/apidocs` | Swagger at `/docs`, only when `TERVI_API_DOCS=on` (task 12) |
+| Contract test | `test/contract` | Checks every operation of the real server against `api/openapi.yaml` (task 12) |
 
 Tasks 01–08 built these parts under older names (`internal/db`,
 `internal/pairing`, `internal/web`, `internal/worker/local`, `flow`, and
@@ -30,126 +33,11 @@ edit the same file.
 
 ## Data
 
-Column types and constraints are in task 01, which creates both tables.
-
-### Pairing request
-
-One record per pairing attempt. Table `pairing_requests`.
-
-| Field | Meaning |
-| --- | --- |
-| `id` | The pairing request's ID |
-| `hostname`, `os_name`, `os_version` | As reported by the worker; each one may be empty |
-| `status` | Lifecycle state (below) |
-| `polling_key_hash` | Hash of the polling key |
-| `approval_key_hash` | Hash of the approval key |
-| `pairing_code` | Created when the user accepts. Stored as it is, so the page can show the same code again (R11, R22). |
-| `tries_left` | Wrong codes still allowed. Starts at 5. |
-| `failure_reason` | Set whenever the status becomes `failed`: `wrong_codes`, `not_saved`, or `not_confirmed`. Empty otherwise. |
-| `expires_at` | 10 minutes after creation |
-
-### Pairing request lifecycle
-
-Boxes are states, stored in `status`. Arrows are transitions: the event that
-moves a request from one state to the next. A state with no arrow out is
-final and never changes again.
-
-```mermaid
-stateDiagram-v2
-    [*] --> waiting_for_approval : worker starts a pairing
-    waiting_for_approval --> waiting_for_code : Accept clicked
-    waiting_for_approval --> rejected : Reject clicked
-    waiting_for_approval --> expired : expires_at passes
-    waiting_for_code --> waiting_for_code : wrong code (tries_left − 1)
-    waiting_for_code --> finishing : correct code (machine created)
-    waiting_for_code --> failed : 5th wrong code (wrong_codes)
-    waiting_for_code --> expired : expires_at passes
-    finishing --> paired : machine acknowledged
-    finishing --> failed : saving failed (not_saved)
-    finishing --> failed : machine expired (not_confirmed)
-    paired --> [*]
-    rejected --> [*]
-    failed --> [*]
-    expired --> [*]
-```
-
-### Machine
-
-One record per paired computer. Table `machines`. Created when the correct
-code arrives; a pairing request holds only the pairing state, never the
-credential.
-
-| Field | Meaning |
-| --- | --- |
-| `machine_id` | The machine's permanent ID |
-| `pairing_request_id` | The pairing request that created this machine |
-| `hostname`, `os_name`, `os_version` | As reported during pairing |
-| `display_name` | Starts as the hostname; editing it comes later |
-| `credential_hash` | Hash of the credential; the credential itself is never stored |
-| `status` | Lifecycle state (below) |
-| `expires_at` | 5 minutes after creation; matters only while `pending` |
-
-### Machine lifecycle
-
-```mermaid
-stateDiagram-v2
-    [*] --> pending : correct code arrives (credential created)
-    pending --> active : acknowledgment arrives (credential was saved)
-    pending --> failed : worker reports saving failed
-    pending --> expired : expires_at passes (5 minutes, no message)
-    active --> active : acknowledgment repeated (nothing changes)
-    active --> [*]
-    failed --> [*]
-    expired --> [*]
-```
-
-Each machine transition also moves its pairing request out of `finishing`:
-acknowledged → `paired`; saving failed → `failed` (`not_saved`); expired →
-`failed` (`not_confirmed`).
-
-Only `active` machines exist for the user. A `pending`, `failed`, or `expired`
-machine appears nowhere the user can see, and its credential is accepted for
-nothing except acknowledging or reporting a failure while `pending`.
-
-### Worker secret store entry
-
-One entry in the OS secret store (GNOME Keyring on Linux), named
-service `tervi`, user `worker`, accessed with the Go library
-`github.com/zalando/go-keyring`. Its value holds the credential together with
-the server it belongs to:
-
-```json
-{ "server": "http://localhost:8080", "credential": "<credential>" }
-```
-
-**This entry is the only place the worker reads the server address from
-before sending the credential.** The credential is sent only to the server
-saved with it (R30).
-
-### Worker state
-
-A small file on the paired computer: `~/.config/tervi/state.json`. It holds
-nothing secret and no server address, so editing it cannot redirect the
-credential.
-
-| Field | Meaning |
-| --- | --- |
-| `machine_id` | The machine this computer became |
-| `credential_saved` | `false` from just before the secret store entry is saved; `true` once it was saved and read back |
-| `confirmed` | `true` once the server answered OK to the acknowledgment |
-
-`state.json` is always written **before** the step it describes, so a stop at
-any moment leaves a note saying what was about to happen (step 0 reads it).
-
-### Names
-
-| Name | What it is |
-| --- | --- |
-| Pairing request | The record of one pairing attempt |
-| Approval key | The random key in the approval link `/pair/<approval key>` |
-| Polling key | The worker's own key; it polls and submits the code with it |
-| Pairing code | The code the browser shows and the user types into the terminal |
-| Credential | The permanent proof the worker receives at the end |
+This slice adds the tables `pairing_requests` and `machines` (migration
+`0001`), their lifecycles, and the worker's secret store entry and
+`state.json`. All of it is described in
+[`design/data-model.md`](../../design/data-model.md), with the names used
+throughout this plan.
 
 ## Worker command
 
@@ -181,9 +69,14 @@ contacted.
 | --- | --- | --- |
 | `SERVER_ADDR` (where the server listens) | `127.0.0.1:8080` by default | Only this computer can reach the server, which keeps R21's limitation safe. The current default `:8080` listens on every network interface and must change. **The server refuses to start if the host is not a loopback address** (`127.0.0.1`, `::1`, or `localhost`), with a message saying that sign-in must exist first. |
 | `TERVI_PUBLIC_URL` (the address in approval links) | `http://localhost:8080` | See step 1. A trailing `/` is removed, so links never contain `//pair/`. |
+| `TERVI_API_DOCS` | `off` by default; `on` serves Swagger at `/docs` (task 12) | A development tool; it stays off unless asked for, so a running server never shows its API page by accident. |
 | Allowed hosts | `localhost`, `127.0.0.1`, `::1`, and the host in `TERVI_PUBLIC_URL` | Listening on loopback is not enough: a website open in the user's browser can point its own name at `127.0.0.1` (DNS rebinding) and then talk to the server. Its requests still carry its own name in the `Host` header, so **the server refuses every request whose `Host` names another host**, with `403`. Only the host name counts, not the port, compared in lowercase. |
 
 ## Interfaces
+
+Every request and answer, with every status and error code, is in
+[`api/openapi.yaml`](../../api/openapi.yaml), which a test checks
+(task 12). This section lists the operations only.
 
 Every proof (polling key, approval key, credential) is sent in the
 `Authorization: Bearer <proof>` header, never in a URL or a body. The only
@@ -202,53 +95,6 @@ answer is JSON, and every error answer is `{"error": "<code>"}`.
 | 7 | `GET /api/v1/approvals/current` | Browser | Approval key | The page's data, also used for polling (step 3) |
 | 8 | `POST /api/v1/approvals/current/accept` | Browser | Approval key | The **Accept** button (step 4) |
 | 9 | `POST /api/v1/approvals/current/reject` | Browser | Approval key | Reject (step 4) |
-
-**1 — Start.** Request: `{"hostname": "...", "os_name": "...", "os_version": "..."}`,
-each field optional. Answer `201`:
-`{"polling_key": "...", "approval_url": "http://localhost:8080/pair/...", "expires_in_seconds": 600}`.
-A value over its limit: `400 {"error": "invalid_input"}`.
-
-**2 — Poll.** Answer `200`: `{"status": "...", "expires_in_seconds": 412}`, plus
-`"tries_left": 5` when the status is `waiting_for_code`, and `"failure_reason"`
-when the status is `failed` (the worker does not use it yet). The status is the
-current one after expiry is applied (see Mechanisms): `waiting_for_approval`,
-`waiting_for_code`, `finishing`, `paired`, `rejected`, `failed`, or `expired`.
-An unknown polling key: `401 {"error": "unknown_key"}`.
-
-**3 — Code.** Request: `{"code": "4827-1934"}`. Answer `200` with one `result`:
-
-| `result` | Other fields | Meaning |
-| --- | --- | --- |
-| `accepted` | `credential`, `machine_id` | Correct code; step 6 done |
-| `wrong_code` | `tries_left` | Wrong code, tries remain |
-| `failed` | — | Wrong code, no tries left |
-| `expired` | — | The pairing expired |
-| `not_waiting_for_code` | `status` | The pairing is in another state, for example `finishing` after an earlier correct code |
-
-An unknown polling key: `401 {"error": "unknown_key"}`. A body over 4 KB:
-`400 {"error": "invalid_input"}`. Expiry applies only to waiting statuses: a
-`rejected` or `failed` request answers `not_waiting_for_code` with its status,
-however old it is.
-
-**4 — Acknowledgment** and **5 — Save failure.** No body. Answer `200` with one
-`result`:
-
-| Machine | 4 — Acknowledgment | 5 — Save failure |
-| --- | --- | --- |
-| `pending`, not expired | `ok` (now `active`) | `ok` (now `failed`) |
-| `active` | `ok`, nothing changes (safe to repeat) | `active`, nothing changes |
-| `failed` | `failed` | `failed` |
-| `expired`, or `pending` past `expires_at` | `expired` | `expired` |
-
-An unknown credential: `401 {"error": "unknown_credential"}`.
-
-**7, 8, 9 — Approval data.** Answer `200`:
-`{"status": "...", "hostname": "...", "os_name": "...", "os_version": "...", "already_decided": false}`,
-plus `"pairing_code"` while `waiting_for_code`, `"failure_reason"` when `failed`,
-and `"display_name"` when `paired`. For 8 and 9, `"already_decided": true` means
-another click decided first; the rest of the answer is the real state. An
-expired request answers `expired` with `"already_decided": false`, since no
-click decided it. An unknown approval key: `404 {"error": "invalid_link"}`.
 
 ## Flow
 
@@ -857,20 +703,22 @@ The worker saves the standard form in its secret store entry.
 | 09 | [Server layout](tasks/09-server-layout.md) | 01–08 | normal | done |
 | 10 | [Worker layout](tasks/10-worker-layout.md) | 09 | normal | todo |
 | 11 | [The migrate command](tasks/11-migrate-command.md) | 09, 10 | core | todo |
+| 12 | [Contract test and API docs page](tasks/12-contract-test-and-docs.md) | 09, 10, 11 | normal | todo |
 
-Tasks 09–11 come from the user's review of tasks 01–08, and the user chose to
-keep them in this slice, past the usual 8 tasks. Tasks 09 and 10 only move
+Tasks 09–12 come from the user's review of tasks 01–08, and the user chose to
+keep them in this slice, past the usual 8 tasks. Task 12 checks the server
+against `api/openapi.yaml`. Tasks 09 and 10 only move
 code. Each one targets `main` and is merged before the next starts: 09, then
-10, then 11.
+10, then 11, then 12.
 
 ```text
 01 ──► 02 ──► 03 ───────────────────┐
  │      ├───► 04 ──────┐            │
  │      └───────┐      ▼            ▼
- └──► 05 ─────► 06 ──► 07 ───────► 08 ──► 09 ──► 10 ──► 11
+ └──► 05 ─────► 06 ──► 07 ───────► 08 ──► 09 ──► 10 ──► 11 ──► 12
 ```
 
-06 needs 02 and 05; 07 needs 04 and 06; 08 needs 03 and 07; 09–11 follow
+06 needs 02 and 05; 07 needs 04 and 06; 08 needs 03 and 07; 09–12 follow
 in order.
 
 Task 05 can be built at the same time as 02–04; tasks 03 and 04 can be built

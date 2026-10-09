@@ -1,0 +1,524 @@
+openapi: 3.0.3
+info:
+  title: tervi server API
+  version: 0.1.0
+  description: |
+    The HTTP contract between the tervi server, the worker (`tervi`), and the
+    browser. This file is the single place where the API is described; plans
+    change it, and tests check the server against it.
+
+    This file lists every API route under `/api/`, the approval page, and
+    `/health`. Not listed: the approval page's static files (`/static/…`)
+    and the development-only docs page (`/docs`).
+
+    Rules for the routes listed here:
+
+    - Every proof (polling key, approval key, credential) is sent in the
+      `Authorization: Bearer <proof>` header, never in a URL or a body. The
+      only exception is the approval page's own address, `/pair/{approval_key}`.
+    - Every `/api/` answer is JSON. Every error answer is `{"error": "<code>"}`.
+    - A request whose `Host` header names an unknown host gets
+      `403 {"error": "unknown_host"}`, before any route runs. Allowed hosts:
+      `localhost`, `127.0.0.1`, `::1`, and the host in `TERVI_PUBLIC_URL`.
+    - An unexpected failure in an `/api/` route answers
+      `500 {"error": "internal_error"}`.
+    - An unknown path or a wrong method gets Go's plain-text `404` or `405`
+      (backlog B5 makes these JSON).
+    - Answers contain only the fields listed here (`additionalProperties:
+      false`), so a field added by mistake fails the contract test.
+      Request objects may carry unknown fields; the server ignores them.
+
+    Added by slice 0001 (pairing).
+servers:
+  - url: http://localhost:8080
+    description: Local server (slice 0001 listens on loopback only)
+
+tags:
+  - name: worker
+    description: Called by the worker during `tervi pair`
+  - name: browser
+    description: Called by the approval page
+  - name: other
+    description: Not part of a feature
+
+paths:
+  /health:
+    get:
+      tags: [other]
+      summary: Health check
+      operationId: health
+      security: []
+      responses:
+        "200":
+          description: The server is running
+          content:
+            text/plain:
+              schema:
+                type: string
+                enum: [ok]
+        "403":
+          $ref: "#/components/responses/UnknownHost"
+
+  /api/v1/pairings:
+    post:
+      tags: [worker]
+      summary: Start a pairing (step 1)
+      operationId: startPairing
+      security: []
+      requestBody:
+        required: true
+        description: |
+          A JSON object of at most 4 KB. Each field is optional; unknown
+          fields are ignored. A field that is present must be a string.
+          Lengths count characters, not bytes. No value may contain a NUL
+          character.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartRequest"
+      responses:
+        "201":
+          description: Pairing started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartResponse"
+        "400":
+          description: "`invalid_input`: not a JSON object, over 4 KB, a non-string field, a value over its limit, or a NUL character"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: invalid_input }
+        "403":
+          $ref: "#/components/responses/UnknownHost"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/pairings/current:
+    get:
+      tags: [worker]
+      summary: Poll the pairing (step 2)
+      operationId: pollPairing
+      security:
+        - pollingKey: []
+      responses:
+        "200":
+          description: |
+            The status after expiry is applied. `tries_left` is present only
+            while `waiting_for_code`; `failure_reason` only when `failed`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PollResponse"
+        "401":
+          $ref: "#/components/responses/UnknownKey"
+        "403":
+          $ref: "#/components/responses/UnknownHost"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/pairings/current/code:
+    post:
+      tags: [worker]
+      summary: Submit the pairing code; receive the credential (steps 5–6)
+      operationId: submitCode
+      security:
+        - pollingKey: []
+      requestBody:
+        required: true
+        description: A JSON object of at most 4 KB. `-` and spaces in the code are ignored.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CodeRequest"
+      responses:
+        "200":
+          description: |
+            One `result`. A `rejected` or `failed` request answers
+            `not_waiting_for_code` with its status, however old it is.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CodeResult"
+        "400":
+          description: "`invalid_input`: not a JSON object, over 4 KB, or `code` missing or not a string"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: invalid_input }
+        "401":
+          $ref: "#/components/responses/UnknownKey"
+        "403":
+          $ref: "#/components/responses/UnknownHost"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/machines/current/acknowledgment:
+    post:
+      tags: [worker]
+      summary: Confirm the credential was saved (step 7b)
+      operationId: acknowledgeMachine
+      description: No body. Safe to repeat.
+      security:
+        - credential: []
+      responses:
+        "200":
+          description: |
+            | Machine | `result` |
+            | --- | --- |
+            | `pending`, not expired | `ok` (now `active`) |
+            | `active` | `ok`, nothing changes |
+            | `failed` | `failed` |
+            | `expired`, or `pending` past its deadline | `expired` |
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [result]
+                properties:
+                  result:
+                    type: string
+                    enum: [ok, failed, expired]
+        "401":
+          $ref: "#/components/responses/UnknownCredential"
+        "403":
+          $ref: "#/components/responses/UnknownHost"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/machines/current/save-failure:
+    post:
+      tags: [worker]
+      summary: Report that saving the credential failed (step 7a)
+      operationId: reportSaveFailure
+      description: No body.
+      security:
+        - credential: []
+      responses:
+        "200":
+          description: |
+            | Machine | `result` |
+            | --- | --- |
+            | `pending`, not expired | `ok` (now `failed`) |
+            | `active` | `active`, nothing changes |
+            | `failed` | `failed` |
+            | `expired`, or `pending` past its deadline | `expired` |
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [result]
+                properties:
+                  result:
+                    type: string
+                    enum: [ok, active, failed, expired]
+        "401":
+          $ref: "#/components/responses/UnknownCredential"
+        "403":
+          $ref: "#/components/responses/UnknownHost"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /pair/{approval_key}:
+    get:
+      tags: [browser]
+      summary: The approval page (HTML)
+      operationId: approvalPage
+      description: |
+        Always answers the same page; the page reads the key from its own
+        address and sends it to the approval API as a header. The page never
+        sends its address to other sites (`Referrer-Policy: no-referrer`).
+      security: []
+      parameters:
+        - name: approval_key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The page
+          content:
+            text/html:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/UnknownHost"
+
+  /api/v1/approvals/current:
+    get:
+      tags: [browser]
+      summary: The approval page's data, also used for polling (step 3)
+      operationId: readApproval
+      security:
+        - approvalKey: []
+      responses:
+        "200":
+          description: The current state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Approval"
+        "403":
+          $ref: "#/components/responses/UnknownHost"
+        "404":
+          $ref: "#/components/responses/InvalidLink"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/approvals/current/accept:
+    post:
+      tags: [browser]
+      summary: The Accept button (step 4)
+      operationId: acceptApproval
+      description: |
+        `already_decided: true` means another click decided first; the rest
+        of the answer is the real state. An expired request answers
+        `expired` with `already_decided: false`.
+      security:
+        - approvalKey: []
+      responses:
+        "200":
+          description: The state after the click
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Approval"
+        "403":
+          $ref: "#/components/responses/UnknownHost"
+        "404":
+          $ref: "#/components/responses/InvalidLink"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/approvals/current/reject:
+    post:
+      tags: [browser]
+      summary: The Reject button (step 4)
+      operationId: rejectApproval
+      description: Same answers as accept.
+      security:
+        - approvalKey: []
+      responses:
+        "200":
+          description: The state after the click
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Approval"
+        "403":
+          $ref: "#/components/responses/UnknownHost"
+        "404":
+          $ref: "#/components/responses/InvalidLink"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  securitySchemes:
+    pollingKey:
+      type: http
+      scheme: bearer
+      description: The polling key from the start answer. Held by the worker, in memory, for one attempt.
+    approvalKey:
+      type: http
+      scheme: bearer
+      description: The part of `approval_url` after `/pair/`.
+    credential:
+      type: http
+      scheme: bearer
+      description: The machine credential from the code answer. Saved by the worker in the OS secret store.
+
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum:
+            [invalid_input, unknown_key, unknown_credential, invalid_link, unknown_host, internal_error]
+
+    PairingStatus:
+      type: string
+      description: The status after expiry is applied.
+      enum: [waiting_for_approval, waiting_for_code, finishing, paired, rejected, failed, expired]
+
+    FailureReason:
+      type: string
+      enum: [wrong_codes, not_saved, not_confirmed]
+
+    StartRequest:
+      type: object
+      properties:
+        hostname:
+          type: string
+          maxLength: 64
+        os_name:
+          type: string
+          maxLength: 64
+        os_version:
+          type: string
+          maxLength: 32
+      example:
+        hostname: bert-desktop
+        os_name: Ubuntu
+        os_version: "24.04"
+
+    StartResponse:
+      type: object
+      additionalProperties: false
+      required: [polling_key, approval_url, expires_in_seconds]
+      properties:
+        polling_key:
+          type: string
+          description: 43 characters, base64url. Secret.
+        approval_url:
+          type: string
+          format: uri
+          description: "`TERVI_PUBLIC_URL` + `/pair/` + the approval key"
+        expires_in_seconds:
+          type: integer
+          enum: [600]
+
+    PollResponse:
+      type: object
+      additionalProperties: false
+      required: [status, expires_in_seconds]
+      properties:
+        status:
+          $ref: "#/components/schemas/PairingStatus"
+        expires_in_seconds:
+          type: integer
+          minimum: 0
+        tries_left:
+          type: integer
+          minimum: 1
+          maximum: 5
+          description: Only while `waiting_for_code`.
+        failure_reason:
+          $ref: "#/components/schemas/FailureReason"
+      example:
+        status: waiting_for_code
+        expires_in_seconds: 412
+        tries_left: 5
+
+    CodeRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          example: 4827-1934
+
+    CodeResult:
+      oneOf:
+        - type: object
+          title: accepted
+          additionalProperties: false
+          required: [result, credential, machine_id]
+          properties:
+            result: { type: string, enum: [accepted] }
+            credential:
+              type: string
+              description: 43 characters, base64url. Secret; the server keeps only its hash.
+            machine_id:
+              type: string
+              format: uuid
+        - type: object
+          title: wrong_code
+          additionalProperties: false
+          required: [result, tries_left]
+          properties:
+            result: { type: string, enum: [wrong_code] }
+            tries_left:
+              type: integer
+              minimum: 1
+              maximum: 4
+        - type: object
+          title: failed
+          additionalProperties: false
+          required: [result]
+          properties:
+            result: { type: string, enum: [failed] }
+        - type: object
+          title: expired
+          additionalProperties: false
+          required: [result]
+          properties:
+            result: { type: string, enum: [expired] }
+        - type: object
+          title: not_waiting_for_code
+          additionalProperties: false
+          required: [result, status]
+          properties:
+            result: { type: string, enum: [not_waiting_for_code] }
+            status:
+              $ref: "#/components/schemas/PairingStatus"
+      discriminator:
+        propertyName: result
+
+    Approval:
+      type: object
+      additionalProperties: false
+      required: [status, hostname, os_name, os_version, already_decided]
+      properties:
+        status:
+          $ref: "#/components/schemas/PairingStatus"
+        hostname:
+          type: string
+        os_name:
+          type: string
+        os_version:
+          type: string
+        already_decided:
+          type: boolean
+        pairing_code:
+          type: string
+          description: Only while `waiting_for_code`. 8 digits shown as `1234-5678`.
+        failure_reason:
+          $ref: "#/components/schemas/FailureReason"
+        display_name:
+          type: string
+          description: Only when `paired`.
+
+  responses:
+    UnknownHost:
+      description: "`unknown_host`: the `Host` header names a host that is not allowed"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: unknown_host }
+    UnknownKey:
+      description: "`unknown_key`: the polling key is missing or unknown"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: unknown_key }
+    UnknownCredential:
+      description: "`unknown_credential`: the credential is missing or unknown"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: unknown_credential }
+    InvalidLink:
+      description: "`invalid_link`: the approval key is missing or unknown"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: invalid_link }
+    InternalError:
+      description: "`internal_error`: an unexpected server failure"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: internal_error }
