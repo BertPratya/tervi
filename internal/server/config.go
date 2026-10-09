@@ -21,10 +21,8 @@ type Config struct {
 
 // LoadConfig loads .env from the working directory and validates server settings.
 func LoadConfig() (Config, error) {
-	if err := godotenv.Load(); err != nil {
-		if !os.IsNotExist(err) {
-			return Config{}, fmt.Errorf("load .env: %w", err)
-		}
+	if err := loadEnvironment(); err != nil {
+		return Config{}, err
 	}
 
 	addr := os.Getenv("SERVER_ADDR")
@@ -56,4 +54,23 @@ func LoadConfig() (Config, error) {
 		PublicURL:   publicURL,
 		DatabaseURL: databaseURL,
 	}, nil
+}
+
+// LoadDatabaseURL loads .env from the working directory and returns DATABASE_URL.
+func LoadDatabaseURL() (string, error) {
+	if err := loadEnvironment(); err != nil {
+		return "", err
+	}
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		return "", fmt.Errorf("DATABASE_URL is required")
+	}
+	return databaseURL, nil
+}
+
+func loadEnvironment() error {
+	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("load .env: %w", err)
+	}
+	return nil
 }

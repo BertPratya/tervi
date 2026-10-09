@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,21 @@ import (
 // New creates a uniquely named database, migrates it, and drops it at test cleanup.
 func New(t *testing.T) *pgxpool.Pool {
 	t.Helper()
+	pool, _ := newDatabase(t, false)
+	if _, err := db.Migrate(context.Background(), pool); err != nil {
+		t.Fatalf("migrate test database: %v", err)
+	}
+	return pool
+}
 
+// NewEmpty creates a uniquely named database with no tables and drops it at test cleanup.
+// Its URL points directly at that database.
+func NewEmpty(t *testing.T) (pool *pgxpool.Pool, databaseURL string) {
+	t.Helper()
+	return newDatabase(t, true)
+}
+
+func newDatabase(t *testing.T, needURL bool) (*pgxpool.Pool, string) {
 	moduleRoot, err := findModuleRootFromWorkingDirectory()
 	if err != nil {
 		t.Fatalf("find module root: %v", err)
@@ -54,6 +69,14 @@ func New(t *testing.T) *pgxpool.Pool {
 		adminPool.Close()
 		t.Fatalf("create random test database name: %v", err)
 	}
+	testDatabaseURL := ""
+	if needURL {
+		testDatabaseURL, err = databaseURLFor(databaseURL, name)
+		if err != nil {
+			adminPool.Close()
+			t.Fatal(err)
+		}
+	}
 	if _, err := adminPool.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
 		adminPool.Close()
 		t.Fatalf("create test database: %v", err)
@@ -80,10 +103,17 @@ func New(t *testing.T) *pgxpool.Pool {
 	if err := pool.Ping(ctx); err != nil {
 		t.Fatalf("cannot reach PostgreSQL host %q for test database: %v", host, err)
 	}
-	if err := db.Migrate(ctx, pool); err != nil {
-		t.Fatalf("migrate test database: %v", err)
+	return pool, testDatabaseURL
+}
+
+func databaseURLFor(databaseURL, name string) (string, error) {
+	parsed, err := url.Parse(databaseURL)
+	if err != nil || (!strings.EqualFold(parsed.Scheme, "postgres") && !strings.EqualFold(parsed.Scheme, "postgresql")) {
+		return "", fmt.Errorf("DATABASE_URL must be a postgres:// URL to create an empty test database")
 	}
-	return pool
+	parsed.Path = "/" + name
+	parsed.RawPath = ""
+	return parsed.String(), nil
 }
 
 func dropDatabase(pool *pgxpool.Pool, name string) {

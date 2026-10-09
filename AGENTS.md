@@ -7,7 +7,9 @@ PostgreSQL.
 ## Commands
 
 ```bash
-docker compose up -d    # local PostgreSQL
+docker compose up -d           # local PostgreSQL
+go run ./cmd/server migrate    # apply database migrations (the server never does)
+go run ./cmd/server            # start the server
 go vet ./...
 go test ./...
 ```

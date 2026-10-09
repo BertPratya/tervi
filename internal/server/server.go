@@ -27,7 +27,7 @@ func New(cfg Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handler {
 	return requireKnownHost(cfg, mux)
 }
 
-// Run opens the database, applies migrations, and serves until ctx is cancelled.
+// Run opens the database, checks its migration version, and serves until ctx is cancelled.
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if logger == nil {
 		logger = slog.Default()
@@ -39,8 +39,8 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	}
 	defer pool.Close()
 
-	if err := db.Migrate(ctx, pool); err != nil {
-		return fmt.Errorf("migrate database: %w", err)
+	if err := db.CheckVersion(ctx, pool); err != nil {
+		return err
 	}
 	pairing.StartCleanup(ctx, pool, logger)
 

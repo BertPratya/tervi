@@ -68,7 +68,7 @@ func TestMigrateIsRepeatable(t *testing.T) {
 	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM goose_db_version`).Scan(&before); err != nil {
 		t.Fatalf("count migration records before second run: %v", err)
 	}
-	if err := db.Migrate(context.Background(), pool); err != nil {
+	if _, err := db.Migrate(context.Background(), pool); err != nil {
 		t.Fatalf("second Migrate() error = %v", err)
 	}
 	var after int
