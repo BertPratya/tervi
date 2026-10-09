@@ -550,7 +550,7 @@ func TestCtrlCBeforeSaving(t *testing.T) {
 	})
 }
 
-func TestNoSecretInOutput(t *testing.T) {
+func TestPollingKeyNotPrinted(t *testing.T) {
 	server := startThenRejectServer(t, nil)
 	defer server.Close()
 	var stdout bytes.Buffer
@@ -664,7 +664,12 @@ func intPointer(value int) *int { return &value }
 
 func serverURL(r *http.Request) string { return "http://" + r.Host }
 
-func safeOutput(value string) string { return strings.ReplaceAll(value, testPollingKey, "[redacted]") }
+func safeOutput(value string) string {
+	for _, secretValue := range []string{testPollingKey, testCode, testCredential} {
+		value = strings.ReplaceAll(value, secretValue, "[redacted]")
+	}
+	return value
+}
 
 func withComputerReaders(t *testing.T, hostname func() (string, error), osRelease func() ([]byte, error)) {
 	t.Helper()

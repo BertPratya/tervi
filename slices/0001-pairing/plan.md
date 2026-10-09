@@ -842,7 +842,7 @@ The worker saves the standard form in its secret store entry.
 | 04 | [Server: code, credential, finishing](tasks/04-code-and-credential.md) | 02 | core | done |
 | 05 | [Worker: command and local state](tasks/05-worker-local.md) | 01 | core | done |
 | 06 | [Worker: start and polling](tasks/06-worker-start-and-poll.md) | 02, 05 | core | done |
-| 07 | [Worker: code, saving, and confirmation](tasks/07-worker-code-and-confirm.md) | 04, 06 | core | todo |
+| 07 | [Worker: code, saving, and confirmation](tasks/07-worker-code-and-confirm.md) | 04, 06 | core | done |
 | 08 | [End-to-end test](tasks/08-end-to-end.md) | 03, 07 | normal | todo |
 
 ```text

@@ -24,6 +24,9 @@ const (
 	defaultPollInterval   = 2 * time.Second
 	startPath             = "/api/v1/pairings"
 	pollPath              = "/api/v1/pairings/current"
+	codePath              = "/api/v1/pairings/current/code"
+	acknowledgmentPath    = "/api/v1/machines/current/acknowledgment"
+	saveFailurePath       = "/api/v1/machines/current/save-failure"
 	maxResponseSize       = 1 << 20
 )
 
@@ -70,10 +73,7 @@ func newFlow(opts Options) *pairingFlow {
 			},
 		},
 	}
-	f.codePhase = func(_ context.Context, env local.Env, _ string, _ secret.Value, _ int, _ time.Time, _ time.Time) int {
-		fmt.Fprintln(output(env), "Code entry is not available yet.")
-		return 1
-	}
+	f.codePhase = f.runCodePhase
 	return f
 }
 
@@ -134,12 +134,13 @@ func (f *pairingFlow) StartNew(ctx context.Context, env local.Env, server string
 	return f.poll(ctx, env, server, pollingKey, deadline, shownExpiry)
 }
 
-func (f *pairingFlow) FinishEarlier(ctx context.Context, env local.Env, _ local.Entry) int {
-	if ctx != nil && ctx.Err() != nil {
-		return cancelPairing(env)
+func (f *pairingFlow) FinishEarlier(ctx context.Context, env local.Env, entry local.Entry) int {
+	ctx = normalizeContext(ctx)
+	if ctx.Err() != nil {
+		return cancelAfterSaving(env, entry.Server)
 	}
-	fmt.Fprintln(output(env), "Finishing is not available yet.")
-	return 1
+	fmt.Fprintf(output(env), "Finishing the earlier pairing with %s...\n", entry.Server)
+	return f.confirm(ctx, env, entry, true)
 }
 
 func (f *pairingFlow) printStartScreen(env local.Env, server string, details computerInfo, approvalURL string, shownExpiry time.Time) {
