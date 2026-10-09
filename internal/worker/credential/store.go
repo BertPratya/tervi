@@ -1,3 +1,5 @@
+// Package credential stores verified pairing credentials and provides backends
+// for secret storage.
 package credential
 
 import (

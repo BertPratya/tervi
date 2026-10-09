@@ -1,4 +1,3 @@
-// Package credential adapts the operating system keyring to the worker store.
 package credential
 
 import (

@@ -81,11 +81,11 @@ func (f *pairingFlow) saveFailed(ctx context.Context, env cli.Env, entry credent
 	return 1
 }
 
-func (f *pairingFlow) reportSaveFailure(ctx context.Context, server string, credential secret.Value) {
+func (f *pairingFlow) reportSaveFailure(ctx context.Context, server string, machineCredential secret.Value) {
 	if ctx.Err() != nil {
 		return
 	}
-	_ = f.request(ctx, http.MethodPost, server+saveFailurePath, credential.Reveal(), nil)
+	_ = f.request(ctx, http.MethodPost, server+saveFailurePath, machineCredential.Reveal(), nil)
 }
 
 func (f *pairingFlow) confirm(ctx context.Context, env cli.Env, entry credential.Entry, earlier bool) int {
