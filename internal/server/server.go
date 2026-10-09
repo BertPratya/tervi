@@ -7,13 +7,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
-	"github.com/bertpratya/tervi/internal/db"
-	"github.com/bertpratya/tervi/internal/pairing"
-	"github.com/bertpratya/tervi/internal/web"
+	"github.com/bertpratya/tervi/internal/server/db"
+	"github.com/bertpratya/tervi/internal/server/pairing"
+	"github.com/bertpratya/tervi/internal/server/web"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -26,37 +24,7 @@ func New(cfg Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handler {
 	pairing.Register(mux, pairing.Deps{Pool: pool, PublicURL: cfg.PublicURL, Logger: logger})
 	web.Register(mux)
 
-	allowedHosts := map[string]struct{}{
-		"localhost": {},
-		"127.0.0.1": {},
-		"::1":       {},
-	}
-	if publicURL, err := url.Parse(cfg.PublicURL); err == nil {
-		if host := strings.ToLower(publicURL.Hostname()); host != "" {
-			allowedHosts[host] = struct{}{}
-		}
-	}
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host := strings.ToLower(requestHostName(r.Host))
-		if _, ok := allowedHosts[host]; !ok {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(`{"error": "unknown_host"}`))
-			return
-		}
-		mux.ServeHTTP(w, r)
-	})
-}
-
-func requestHostName(host string) string {
-	if name, _, err := net.SplitHostPort(host); err == nil {
-		return name
-	}
-	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		return host[1 : len(host)-1]
-	}
-	return host
+	return requireKnownHost(cfg, mux)
 }
 
 // Run opens the database, applies migrations, and serves until ctx is cancelled.

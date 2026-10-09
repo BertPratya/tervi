@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/bertpratya/tervi/internal/db"
-	"github.com/bertpratya/tervi/internal/db/dbtest"
+	"github.com/bertpratya/tervi/internal/server/db"
+	"github.com/bertpratya/tervi/internal/server/db/dbtest"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )

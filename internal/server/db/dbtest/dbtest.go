@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bertpratya/tervi/internal/db"
+	"github.com/bertpratya/tervi/internal/server/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
