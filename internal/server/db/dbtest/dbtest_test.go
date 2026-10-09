@@ -2,13 +2,58 @@ package dbtest
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestDatabaseURLFor(t *testing.T) {
+	tests := []struct {
+		name        string
+		databaseURL string
+		wantSSLMode string
+	}{
+		{
+			name:        "plain URL",
+			databaseURL: "postgres://user:pass@localhost/original",
+		},
+		{
+			name:        "dbname query parameter",
+			databaseURL: "postgres://user:pass@localhost/original?dbname=tervi&sslmode=disable",
+			wantSSLMode: "disable",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const wantDatabase = "tervi_test"
+			got, err := databaseURLFor(tt.databaseURL, wantDatabase)
+			if err != nil {
+				t.Fatalf("databaseURLFor() error = %v", err)
+			}
+			config, err := pgx.ParseConfig(got)
+			if err != nil {
+				t.Fatalf("parse returned database URL: %v", err)
+			}
+			if config.Database != wantDatabase {
+				t.Fatalf("parsed database = %q, want %q", config.Database, wantDatabase)
+			}
+			if tt.wantSSLMode != "" {
+				parsed, err := url.Parse(got)
+				if err != nil {
+					t.Fatalf("parse returned URL: %v", err)
+				}
+				if gotSSLMode := parsed.Query().Get("sslmode"); gotSSLMode != tt.wantSSLMode {
+					t.Fatalf("sslmode query parameter = %q, want %q", gotSSLMode, tt.wantSSLMode)
+				}
+			}
+		})
+	}
+}
 
 func TestDBTestFindsURL(t *testing.T) {
 	root := t.TempDir()

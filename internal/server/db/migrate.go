@@ -46,6 +46,13 @@ func CheckVersion(ctx context.Context, pool *pgxpool.Pool) error {
 	if !versionTableExists {
 		return ErrNotMigrated
 	}
+	var versionCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM goose_db_version`).Scan(&versionCount); err != nil {
+		return fmt.Errorf("count database migration versions: %w", err)
+	}
+	if versionCount == 0 {
+		return ErrNotMigrated
+	}
 
 	provider, err := newProvider(pool, false)
 	if err != nil {

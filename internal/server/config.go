@@ -44,9 +44,9 @@ func LoadConfig() (Config, error) {
 	}
 	publicURL = strings.TrimRight(publicURL, "/")
 
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		return Config{}, fmt.Errorf("DATABASE_URL is required")
+	databaseURL, err := databaseURLFromEnvironment()
+	if err != nil {
+		return Config{}, err
 	}
 
 	return Config{
@@ -61,6 +61,10 @@ func LoadDatabaseURL() (string, error) {
 	if err := loadEnvironment(); err != nil {
 		return "", err
 	}
+	return databaseURLFromEnvironment()
+}
+
+func databaseURLFromEnvironment() (string, error) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		return "", fmt.Errorf("DATABASE_URL is required")

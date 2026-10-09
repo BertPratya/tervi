@@ -35,6 +35,7 @@ internal/
 │   │   └── migrations/
 │   ├── pairing/
 │   └── web/
+│       └── static/
 └── worker/
     ├── cli/
     ├── credential/

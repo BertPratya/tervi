@@ -37,6 +37,7 @@ func NewEmpty(t *testing.T) (pool *pgxpool.Pool, databaseURL string) {
 }
 
 func newDatabase(t *testing.T, needURL bool) (*pgxpool.Pool, string) {
+	t.Helper()
 	moduleRoot, err := findModuleRootFromWorkingDirectory()
 	if err != nil {
 		t.Fatalf("find module root: %v", err)
@@ -113,7 +114,20 @@ func databaseURLFor(databaseURL, name string) (string, error) {
 	}
 	parsed.Path = "/" + name
 	parsed.RawPath = ""
-	return parsed.String(), nil
+	query := parsed.Query()
+	query.Del("dbname")
+	query.Del("database")
+	parsed.RawQuery = query.Encode()
+
+	result := parsed.String()
+	config, err := pgx.ParseConfig(result)
+	if err != nil {
+		return "", fmt.Errorf("parse test database URL: %w", err)
+	}
+	if config.Database != name {
+		return "", fmt.Errorf("test database URL selects database %q, want %q", config.Database, name)
+	}
+	return result, nil
 }
 
 func dropDatabase(pool *pgxpool.Pool, name string) {

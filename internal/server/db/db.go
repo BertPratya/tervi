@@ -1,4 +1,4 @@
-// Package db opens PostgreSQL connections for the server.
+// Package db opens PostgreSQL connections and manages the schema version.
 package db
 
 import (

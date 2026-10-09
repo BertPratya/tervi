@@ -80,6 +80,17 @@ func TestCheckVersion(t *testing.T) {
 		}
 	})
 
+	t.Run("empty version table", func(t *testing.T) {
+		pool := dbtest.New(t)
+		if _, err := pool.Exec(context.Background(), `DELETE FROM goose_db_version`); err != nil {
+			t.Fatalf("delete migration versions: %v", err)
+		}
+		err := db.CheckVersion(context.Background(), pool)
+		if !errors.Is(err, db.ErrNotMigrated) {
+			t.Fatalf("CheckVersion() error = %v, want ErrNotMigrated", err)
+		}
+	})
+
 	t.Run("newer database", func(t *testing.T) {
 		pool := dbtest.New(t)
 		if _, err := pool.Exec(context.Background(), `INSERT INTO goose_db_version (version_id, is_applied) VALUES (2, true)`); err != nil {
