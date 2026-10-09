@@ -37,12 +37,15 @@ func (deps Deps) readApproval(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, approvalBody(row, false))
 }
+
 func (deps Deps) accept(w http.ResponseWriter, r *http.Request) {
 	deps.decide(w, r, true)
 }
+
 func (deps Deps) reject(w http.ResponseWriter, r *http.Request) {
 	deps.decide(w, r, false)
 }
+
 func (deps Deps) decide(w http.ResponseWriter, r *http.Request, accept bool) {
 	proof, ok := bearerProof(r)
 	if !ok {
@@ -92,6 +95,7 @@ func (deps Deps) decide(w http.ResponseWriter, r *http.Request, accept bool) {
 	}
 	writeJSON(w, http.StatusOK, approvalBody(row, row.status != "expired"))
 }
+
 func queryApproval(ctx context.Context, pool *pgxpool.Pool, approvalHash []byte) (approvalRow, error) {
 	var row approvalRow
 	err := pool.QueryRow(ctx, `SELECT `+effectiveStatus+`,
@@ -104,6 +108,7 @@ func queryApproval(ctx context.Context, pool *pgxpool.Pool, approvalHash []byte)
 		&row.status, &row.hostname, &row.osName, &row.osVersion, &row.pairingCode, &row.failureReason, &row.displayName)
 	return row, err
 }
+
 func approvalBody(row approvalRow, alreadyDecided bool) map[string]any {
 	body := map[string]any{
 		"status":          row.status,

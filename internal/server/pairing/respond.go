@@ -13,12 +13,15 @@ func bearerProof(r *http.Request) (string, bool) {
 	}
 	return parts[1], true
 }
+
 func writeInternalError(w http.ResponseWriter) {
 	writeError(w, http.StatusInternalServerError, "internal_error")
 }
+
 func writeError(w http.ResponseWriter, status int, code string) {
 	writeJSON(w, status, map[string]string{"error": code})
 }
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

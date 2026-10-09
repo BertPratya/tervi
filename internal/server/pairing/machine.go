@@ -12,9 +12,11 @@ import (
 func (deps Deps) acknowledge(w http.ResponseWriter, r *http.Request) {
 	deps.changeMachine(w, r, true)
 }
+
 func (deps Deps) saveFailure(w http.ResponseWriter, r *http.Request) {
 	deps.changeMachine(w, r, false)
 }
+
 func (deps Deps) changeMachine(w http.ResponseWriter, r *http.Request, acknowledgment bool) {
 	proof, ok := bearerProof(r)
 	if !ok {

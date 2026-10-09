@@ -8,9 +8,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// StartCleanup starts pairing cleanup work.
 func StartCleanup(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) {
 	startCleanup(ctx, pool, logger, time.Minute)
 }
+
 func startCleanup(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, interval time.Duration) {
 	if interval <= 0 {
 		interval = time.Minute
@@ -33,6 +35,7 @@ func startCleanup(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, 
 		}
 	}()
 }
+
 func cleanupPass(ctx context.Context, pool *pgxpool.Pool) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {

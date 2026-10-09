@@ -15,6 +15,7 @@ type startInput struct {
 	OSName    string
 	OSVersion string
 }
+
 type startResponse struct {
 	PollingKey       string `json:"polling_key"`
 	ApprovalURL      string `json:"approval_url"`
@@ -58,6 +59,7 @@ func (deps Deps) start(w http.ResponseWriter, r *http.Request) {
 		ExpiresInSeconds: 600,
 	})
 }
+
 func decodeStartInput(w http.ResponseWriter, r *http.Request) (startInput, bool) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodyBytes+1))
 	if err != nil || len(body) > maxRequestBodyBytes {

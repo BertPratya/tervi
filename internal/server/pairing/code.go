@@ -81,6 +81,7 @@ func (deps Deps) submitCode(w http.ResponseWriter, r *http.Request) {
 	}
 	deps.writeCodeUnavailable(w, r, requestID)
 }
+
 func decodeCodeInput(r *http.Request) (codeInput, bool) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodyBytes+1))
 	if err != nil || len(body) > maxRequestBodyBytes {
@@ -100,6 +101,7 @@ func decodeCodeInput(r *http.Request) (codeInput, bool) {
 	}
 	return input, true
 }
+
 func (deps Deps) issueCredential(w http.ResponseWriter, r *http.Request, requestID string) {
 	tx, err := deps.Pool.Begin(r.Context())
 	if err != nil {
@@ -149,6 +151,7 @@ func (deps Deps) issueCredential(w http.ResponseWriter, r *http.Request, request
 		"machine_id": machineID,
 	})
 }
+
 func (deps Deps) writeCodeUnavailable(w http.ResponseWriter, r *http.Request, requestID string) {
 	var status string
 	err := deps.Pool.QueryRow(r.Context(), `SELECT `+effectiveStatus+`
