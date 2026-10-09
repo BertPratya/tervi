@@ -1,15 +1,12 @@
-// Package db opens PostgreSQL connections and applies embedded migrations.
+// Package db opens PostgreSQL connections and manages the schema version.
 package db
 
 import (
 	"context"
 	"embed"
 	"fmt"
-	"io/fs"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
 )
 
 //go:embed migrations/*.sql
@@ -30,23 +27,4 @@ func Open(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("connect to PostgreSQL: %w", err)
 	}
 	return pool, nil
-}
-
-// Migrate applies the embedded PostgreSQL migrations.
-func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
-	database := stdlib.OpenDB(*pool.Config().ConnConfig)
-	defer database.Close()
-
-	migrations, err := fs.Sub(migrationFiles, "migrations")
-	if err != nil {
-		return fmt.Errorf("open embedded migrations: %w", err)
-	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, database, migrations, goose.WithVerbose(false))
-	if err != nil {
-		return fmt.Errorf("create migration provider: %w", err)
-	}
-	if _, err := provider.Up(ctx); err != nil {
-		return fmt.Errorf("apply database migrations: %w", err)
-	}
-	return nil
 }

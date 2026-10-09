@@ -702,7 +702,7 @@ The worker saves the standard form in its secret store entry.
 | 08 | [End-to-end test](tasks/08-end-to-end.md) | 03, 07 | normal | done |
 | 09 | [Server layout](tasks/09-server-layout.md) | 01–08 | normal | done |
 | 10 | [Worker layout](tasks/10-worker-layout.md) | 09 | normal | done |
-| 11 | [The migrate command](tasks/11-migrate-command.md) | 09, 10 | core | todo |
+| 11 | [The migrate command](tasks/11-migrate-command.md) | 09, 10 | core | done |
 | 12 | [Contract test and API docs page](tasks/12-contract-test-and-docs.md) | 09, 10, 11 | normal | todo |
 
 Tasks 09–12 come from the user's review of tasks 01–08, and the user chose to
