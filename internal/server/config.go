@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -68,7 +69,7 @@ func apiDocsFromEnvironment(value string) (bool, error) {
 	case "on":
 		return true, nil
 	default:
-		return false, fmt.Errorf(`TERVI_API_DOCS must be "on" or "off"`)
+		return false, errors.New(`TERVI_API_DOCS must be "on" or "off"`)
 	}
 }
 

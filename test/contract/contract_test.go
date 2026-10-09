@@ -28,6 +28,7 @@ var bodyDecoderOnce sync.Once
 
 func registerBodyDecoders() {
 	bodyDecoderOnce.Do(func() {
+		openapi3.SchemaErrorDetailsDisabled = true
 		openapi3filter.RegisterBodyDecoder("text/html", openapi3filter.PlainBodyDecoder)
 	})
 }
@@ -153,20 +154,27 @@ func TestServerMatchesContract(t *testing.T) {
 	expectJSONField(t, response, "error", "invalid_input")
 	response = client.call(t, http.MethodGet, "/api/v1/pairings/current", "", nil, callOptions{})
 	expectStatus(t, response, http.StatusUnauthorized)
+	expectJSONField(t, response, "error", "unknown_key")
 	response = client.call(t, http.MethodPost, "/api/v1/pairings/current/code", jsonBody(map[string]string{"code": "1234-5678"}), nil, callOptions{headers: jsonHeaders()})
 	expectStatus(t, response, http.StatusUnauthorized)
+	expectJSONField(t, response, "error", "unknown_key")
 	unknownCredential := bearerHeaders("unknown-credential")
 	response = client.call(t, http.MethodPost, "/api/v1/machines/current/acknowledgment", "", unknownCredential, callOptions{})
 	expectStatus(t, response, http.StatusUnauthorized)
+	expectJSONField(t, response, "error", "unknown_credential")
 	response = client.call(t, http.MethodPost, "/api/v1/machines/current/save-failure", "", unknownCredential, callOptions{})
 	expectStatus(t, response, http.StatusUnauthorized)
+	expectJSONField(t, response, "error", "unknown_credential")
 	unknownApproval := bearerHeaders("unknown-approval-key")
 	response = client.call(t, http.MethodGet, "/api/v1/approvals/current", "", unknownApproval, callOptions{})
 	expectStatus(t, response, http.StatusNotFound)
+	expectJSONField(t, response, "error", "invalid_link")
 	response = client.call(t, http.MethodPost, "/api/v1/approvals/current/accept", "", unknownApproval, callOptions{})
 	expectStatus(t, response, http.StatusNotFound)
+	expectJSONField(t, response, "error", "invalid_link")
 	response = client.call(t, http.MethodPost, "/api/v1/approvals/current/reject", "", unknownApproval, callOptions{})
 	expectStatus(t, response, http.StatusNotFound)
+	expectJSONField(t, response, "error", "invalid_link")
 
 	// Host filtering runs before route handlers; send every operation through it.
 	for _, request := range []struct {
@@ -190,6 +198,7 @@ func TestServerMatchesContract(t *testing.T) {
 		t.Run("unknown_host_"+request.operation, func(t *testing.T) {
 			response := client.call(t, request.method, request.path, request.body, request.headers, callOptions{host: "evil.example"})
 			expectStatus(t, response, http.StatusForbidden)
+			expectJSONField(t, response, "error", "unknown_host")
 		})
 	}
 
@@ -342,7 +351,7 @@ func (c *contractClient) startPairing(t *testing.T, hostname string) startRespon
 		t.Fatalf("decode startPairing response: %v", err)
 	}
 	if started.PollingKey == "" || started.ApprovalURL == "" {
-		t.Fatalf("startPairing response omitted required secrets: %#v", started)
+		t.Fatal("startPairing response omitted required secrets")
 	}
 	return started
 }
@@ -388,7 +397,13 @@ func jsonBody(value any) string {
 func expectStatus(t *testing.T, response contractResponse, expected int) {
 	t.Helper()
 	if response.status != expected {
-		t.Fatalf("status = %d, want %d; body = %s", response.status, expected, response.body)
+		var body struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(response.body, &body); err != nil {
+			t.Fatalf("status = %d, want %d; error = <unavailable>", response.status, expected)
+		}
+		t.Fatalf("status = %d, want %d; error = %q", response.status, expected, body.Error)
 	}
 }
 
