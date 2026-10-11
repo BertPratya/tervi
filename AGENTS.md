@@ -68,9 +68,9 @@ people and by agents:
 | Role | Who | Job |
 | --- | --- | --- |
 | User | The human owner | Writes specs, makes decisions, reviews and merges every pull request |
-| Architect | The main Claude Code session | Plans, dispatches work, commits, opens pull requests, records every review. The only role that talks to the others. |
+| Architect | The main Claude Code session | Plans, dispatches work, commits, merges finished tasks into the slice branch, opens pull requests, records every review. The only role that talks to the others. |
 | Worker | Codex (`gpt-6-luna`, effort `xhigh`) through the Codex plugin, launched by `scripts/run-worker.sh` | Builds one task inside its worktree |
-| Reviewer | `.claude/agents/reviewer.md` (`claude-opus-5-5`, effort `high`) | Reviews a plan or a task. Read-only. |
+| Reviewer | `.claude/agents/reviewer.md` (`claude-opus-5-5`, effort `high`) | Reviews a plan, a task, or a whole slice. Read-only. |
 
 The worker and the reviewer see files and diffs only, never each other's words.
 
@@ -79,31 +79,47 @@ Formats for every file, message, report, and pull request are in
 
 ## Workflow: a slice
 
-1. **Spec.** The user writes `slices/NNNN-name/spec.md` while the architect asks
-   questions. The user approves it, and it is merged through a pull request.
-2. **Plan.** The architect writes `plan.md` and `tasks/*.md` on branch
-   `plan/NNNN-name`. A slice has 4–8 tasks; a plan that needs more than 8
-   means the slice is too big, so the architect proposes splitting it. Each
-   task's pull request must be reviewable in 20–40 minutes: roughly 300–400
-   changed lines, not counting tests.
+A slice reaches `main` through two pull requests: the **plan pull request**
+(what to build) and the **slice pull request** (the built slice). Tasks have no
+pull requests of their own.
+
+1. **Spec.** The user writes `slices/NNNN-name/spec.md` on branch
+   `plan/NNNN-name` while the architect asks questions. The user approves it
+   in chat.
+2. **Plan.** The architect adds `plan.md`, `tasks/*.md`, and the contract and
+   data model changes on the same branch. A slice has 4–8 tasks; a plan that
+   needs more than 8 means the slice is too big, so the architect proposes
+   splitting it. Each task changes roughly 300–400 lines, not counting tests,
+   so that one review can check it closely.
 3. **Plan review.** The reviewer checks the spec, plan, and task files. The
    architect fixes findings marked `Architect`, up to 2 fix rounds. Findings
    marked `User` go to the user.
 4. **Plan pull request.** The architect opens it with one comment per review
    round, and sets the slice to `in progress` in `slices/index.md` in the same
    pull request. The user answers open questions and merges.
-5. **Tasks.** Built one by one, in dependency order (next section).
-6. **Done.** When every task is merged, the architect and the user run the
-   slice end to end. The architect sets the slice to `done` and tags the commit
-   `slice-NNNN-done`.
+5. **Slice branch.** The architect creates `slice/NNNN-name` from `main`.
+6. **Tasks.** Built in dependency order on the slice branch (next section).
+   After the first task is merged into the slice branch, the architect opens
+   the slice pull request as a draft, so the user can follow and try the
+   work as it lands.
+7. **Slice review.** When every task is in, the reviewer reviews the whole
+   slice once (`git diff main...slice/NNNN-name`), looking for problems that
+   no single task shows. Findings are fixed like a task's, up to 2 fix rounds.
+8. **Try it.** The architect and the user run the slice end to end. What the
+   user wants changed goes back as findings (see "How the user asks for
+   changes").
+9. **Done.** The architect sets the slice to `done` in `slices/index.md` on
+   the slice branch and marks the pull request ready. The user merges. The
+   architect tags the merge commit `slice-NNNN-done`, and the user and the
+   architect go through the slice together.
 
 ## Workflow: a task
 
-1. **Start** a task when every task it depends on is merged. To keep working
-   while the user is away, build on the unmerged branch of the task below it
-   instead (a stack). A stack holds at most one day of work, 3–4 pull requests.
+1. **Start** a task when every task it depends on is merged into the slice
+   branch. Tasks that do not depend on each other may be built at the same
+   time.
 2. **Worktree.** The architect runs
-   `git worktree add ../tervi-task-NNNN-NN -b task/NNNN-NN-name <base>`.
+   `git worktree add ../tervi-task-NNNN-NN -b task/NNNN-NN-name slice/NNNN-name`.
 3. **Build.** The architect saves the worker message to a file and runs
    `scripts/run-worker.sh <worktree> <message file>` as a background command;
    Claude Code notifies the architect when Codex finishes, and the command's
@@ -114,25 +130,29 @@ Formats for every file, message, report, and pull request are in
 5. **Review.** The architect sends the code review message to the reviewer.
 6. **Fix.** If the reviewer reports `changes needed`, the architect sends the
    findings to the worker and repeats steps 3–5. After 2 fix rounds without a
-   pass, the architect opens the pull request marked `Needs you`.
-7. **Pull request.** On `pass`, the architect pushes the branch, opens the
-   pull request with one comment per review round, and removes the worktree:
+   pass, the task stops and the open findings go to the user as a decision
+   (see "When the user must decide").
+7. **Merge into the slice branch.** On `pass`, the architect merges the task
+   branch into `slice/NNNN-name` with `git merge --no-ff`, so each task stays
+   one visible merge, and pushes the slice branch. The slice branch is not
+   `main`, so the architect may merge into it. The architect posts the task
+   comment on the slice pull request, then removes the worktree:
    `scripts/stop-codex.sh <worktree>` first, then `git worktree remove <worktree>`.
    The script stops the Codex plugin's background process for that folder,
    which would otherwise outlive the folder and break any later worktree at
    the same path.
-8. **User review.** The user reviews. Change requests go to the worker as
-   findings, followed by a new review round and a new comment. See
-   "How the user asks for changes" below.
-9. **After merge.** The architect updates local `main`, rebases any stacked
-   branches onto it, and starts the next task.
+
+**Fixes after a task is in.** A change the user asks for, or a slice review
+finding, is built like a task: a worktree on branch `fix/NNNN-N` (N counts
+fixes in the slice) from the slice branch, the worker's fix, a code review,
+and a merge into the slice branch with one comment.
 
 ## How the user asks for changes
 
-- **A change** is a comment on the pull request, on the line it concerns. The
-  user then tells the architect, for example "PR #5 has comments"; the
-  architect does not watch GitHub on its own. Each comment becomes a finding
-  for the worker.
+- **A change** is a comment on the pull request, on the line it concerns, or
+  a message in chat while trying the slice. For a comment, the user tells the
+  architect, for example "PR #5 has comments"; the architect does not watch
+  GitHub on its own. Each change becomes a finding for a fix.
 - **A question** ("why is this written this way?") goes in chat. If the answer
   shows something should change, it becomes a comment.
 - **Unsure what to change:** the user and the architect discuss it in chat
@@ -148,8 +168,8 @@ Formats for every file, message, report, and pull request are in
 
 - A worker question, or a reviewer finding marked `User`, stops that task and
   every task that depends on it. Independent tasks continue.
-- The architect opens a draft pull request titled `… (needs your decision)`
-  with the question, the options, and a suggestion.
+- The architect asks in chat, and posts the same question, options, and
+  suggestion as a comment on the slice pull request so it is on record.
 - After the user answers, the architect writes the decision down: into
   `spec.md` for behavior, into the task file for how to build it. The user
   sees the diff before the commit.
@@ -158,7 +178,9 @@ Formats for every file, message, report, and pull request are in
 
 ## Rules for every role
 
-- `main` changes only through pull requests that the user merges. Agents never merge.
+- `main` changes only through pull requests that the user merges. Agents
+  never merge into `main`; only the architect merges, and only task and fix
+  branches into a slice branch.
 - Change only the files your task allows.
 - When anything is unclear, stop and ask. A guess silently changes the spec.
 - Keep secrets out of logs, error messages, test output, and commit messages.

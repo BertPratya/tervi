@@ -15,7 +15,7 @@ slices/
     spec.md                # what to build. Written by the user.
     plan.md                # how to build it, and the task list. Drafted by the architect, approved by the user.
     tasks/
-      NN-name.md           # one file per task and pull request. Drafted by the architect, approved by the user.
+      NN-name.md           # one file per task. Drafted by the architect, approved by the user.
 ```
 
 `NNNN` is a four-digit slice number and `NN` a two-digit task number, both in
@@ -23,11 +23,12 @@ creation order: `0001-pairing`, `tasks/02-start-pairing.md`.
 
 ## Branches
 
-| Branch | Holds |
-| --- | --- |
-| `slice/NNNN-name` | The spec |
-| `plan/NNNN-name` | The plan and task files |
-| `task/NNNN-NN-name` | One task's code |
+| Branch | Holds | Merged into |
+| --- | --- | --- |
+| `plan/NNNN-name` | The spec, plan, task files, and contract changes | `main`, by the user (plan pull request) |
+| `slice/NNNN-name` | The built slice: every task and fix | `main`, by the user (slice pull request) |
+| `task/NNNN-NN-name` | One task's code | `slice/NNNN-name`, by the architect |
+| `fix/NNNN-N` | One fix after its task is in | `slice/NNNN-name`, by the architect |
 
 ## Who reads what
 
@@ -123,9 +124,9 @@ Task status:
 | Status | Meaning |
 | --- | --- |
 | todo | Not started |
-| done | Merged. The task's own pull request changes its row to `done`, so the row is true once merged. |
+| done | Merged into the slice branch. The task's own branch changes its row to `done`, so the row is true once merged. |
 
-Work in progress is visible as open pull requests on GitHub, not in this table.
+Work in progress is visible on the slice pull request, not in this table.
 
 ## Task file: `tasks/NN-name.md`
 
@@ -164,7 +165,7 @@ Stop and report the question. Do not guess.
 
 A task file is complete when a worker holding only this file and the code
 could finish it. After approval, the instructions do not change; reports and
-reviews go on the pull request.
+reviews go on the slice pull request.
 
 ## backlog.md
 
@@ -173,7 +174,7 @@ reviews go on the pull request.
 
 | # | Item | Why later | Found in | Status |
 | --- | --- | --- | --- | --- |
-| B1 | <what to do> | <reason> | <PR #N, review round N> | open |
+| B1 | <what to do> | <reason> | <PR #N, task NN review round N> | open |
 ```
 
 Status is `open`, `planned → NNNN` (included in that slice's spec), or `done`.
@@ -205,6 +206,10 @@ Answer in the worker report format from slices/README.md.
 In later rounds, the message lists the findings to fix, word for word from the
 reviewer or the user, and ends with: "Fix only these. Leave everything else
 as it is."
+
+A fix after its task is in (branch `fix/NNNN-N`) uses the same message. It
+names the task file the fix belongs to, or every task file it touches, and
+lists the findings from the start.
 
 ## Worker report (worker → architect)
 
@@ -244,7 +249,7 @@ Review the code for task NN of slice NNNN-name. This is code review round N.
 
 Worktree: <absolute path>
 Task file: slices/NNNN-name/tasks/NN-name.md
-Changes: git diff <base>...task/NNNN-NN-name
+Changes: git diff slice/NNNN-name...task/NNNN-NN-name
 
 Requirements (copied from the spec):
 - RN. <full text>
@@ -255,12 +260,32 @@ Answer in the review report format from slices/README.md.
 From round 2, the message adds the earlier findings (the reviewer's own table,
 unchanged) and the command for the changes since the last round:
 `git diff <last reviewed commit>..task/NNNN-NN-name`. The worker's reports are
-never included.
+never included. A fix branch is reviewed the same way, with `fix/NNNN-N` in
+place of the task branch.
+
+## Slice review message (architect → reviewer)
+
+```text
+Review the whole of slice NNNN-name. This is slice review round N.
+
+Worktree: <absolute path, checked out on slice/NNNN-name>
+Read: slices/NNNN-name/spec.md, slices/NNNN-name/plan.md, every file in
+slices/NNNN-name/tasks/, api/, and design/data-model.md.
+Changes: git diff main...slice/NNNN-name
+
+Each task already passed its own review. Look for what only the whole slice
+shows.
+
+Answer in the review report format from slices/README.md.
+```
+
+From round 2, it adds the earlier findings and the changes since the last
+round, as for a code review.
 
 ## Review report (reviewer → architect)
 
 ```markdown
-## <Plan | Code> review round N — pass | changes needed | needs user
+## <Plan | Code | Slice> review round N — pass | changes needed | needs user
 
 Checks run: <command> → <result>
 
@@ -285,8 +310,10 @@ Title: `Plan for slice NNNN <name>`
 ```markdown
 ## Plan for slice NNNN (<name>)
 
+- `spec.md`: approved in chat
 - `plan.md`: <one line>
 - `tasks/`: <number> task files
+- Contracts: <what changed in api/ and design/data-model.md; or "None">
 
 ### Needs your decision
 <numbered questions with lettered options and the architect's suggestion; or "None">
@@ -295,49 +322,69 @@ Title: `Plan for slice NNNN <name>`
 <number> rounds of plan review; reports are in the comments.
 
 ### How to check
-Read plan.md, then the task files. Check the "Definition of done" of every core task.
+Read spec.md and plan.md. Then read the "Definition of done" of every core task.
 ```
 
-## Task pull request
+## Slice pull request
 
-Title: `Task NN — <name> (slice NNNN)`
+From `slice/NNNN-name` into `main`. It opens as a draft after the first task
+is in, and the architect updates the description as tasks land.
+
+Title: `Slice NNNN — <name>`
 
 ````markdown
-## Task NN — <name>
+## Slice NNNN — <name>
 
-Slice: NNNN-name · Task file: `slices/NNNN-name/tasks/NN-name.md`
-Covers: RN, RN · Risk: <risk> · Stacked on: <#PR, or main>
+Spec: `slices/NNNN-name/spec.md` · Plan: `slices/NNNN-name/plan.md`
 
-### What was built
-- `<path>`: <one line>
+### Tasks
+| # | Task | Covers | Risk | Status |
+(Status: todo | building | in | stopped: needs you)
 
-### Tests
-| Test | Proves |
+### What you can try now
+```bash
+<commands, for what is in so far>
+```
+
+### Needs your decision
+<open questions; or "None">
 
 ### Decisions the worker made — please check
-- <decision> — <why>
+- Task NN: <decision> — <why>
 
 ### For you to decide (not blocking)
 <"outside this task" notes from the reviewer; or "None">
 
-### How to check it yourself
-```bash
-<commands>
-```
-
 ### Review history
-<number> rounds; reports are in the comments.
+One comment per task, fix, and slice review round.
 ````
 
-When the review did not pass after 2 fix rounds, the title ends with
-`(needs you)` and the description starts with the open findings.
+When the slice is ready, the architect marks the pull request ready and adds
+"Slice review: passed in <number> rounds" and "Tried end to end: <date>".
 
-## Decision pull request
+## Task comment on the slice pull request
 
-A draft pull request. Title: `Task NN — <name> (needs your decision)`
+One comment when a task or a fix is merged into the slice branch.
 
 ```markdown
-## Needs your decision
+### Task NN — <name> is in   (or: Fix N — <one line> is in)
+
+Task file: `slices/NNNN-name/tasks/NN-name.md` · Covers: RN, RN · Risk: <risk>
+
+- `<path>`: <one line>
+
+| Test | Proves |
+
+<number> review rounds. Reports below.
+```
+
+The reviewer's reports follow in the same comment, one per round, unchanged,
+in round order.
+
+## Decision comment on the slice pull request
+
+```markdown
+## Needs your decision — task NN
 <the question>
 
 Options:
@@ -350,10 +397,10 @@ Architect's suggestion: <option> — <why>
 Tasks <numbers> wait. Independent tasks continue.
 ```
 
-## Review comment on a pull request
+## Review comment on the plan pull request
 
-One comment per review round: the reviewer's report, unchanged. The architect
-adds them in round order.
+One comment per plan review round: the reviewer's report, unchanged. The
+architect adds them in round order.
 
 ---
 
@@ -363,5 +410,5 @@ adds them in round order.
 | --- | --- |
 | draft | The spec is being written |
 | approved | The spec is approved; planning can start |
-| in progress | The plan is merged; tasks are being built and merged |
-| done | Every requirement is met and the slice was demonstrated end to end |
+| in progress | The plan is merged; tasks are being built on the slice branch |
+| done | Every requirement is met and the slice was demonstrated end to end. Set on the slice branch, so it is true once the slice pull request is merged. |
