@@ -21,7 +21,7 @@ the worktree the message names.
 
 ## Plan review
 
-Check all nine, for every requirement and every task file:
+Check all ten, for every requirement and every task file:
 
 1. **Coverage**: every requirement is handled by a task, and every test in a
    task's "Definition of done" proves a requirement or states its purpose.
@@ -43,6 +43,10 @@ Check all nine, for every requirement and every task file:
 9. **Contracts**: every route the plan adds or changes that `AGENTS.md`
    says the contract lists is in `api/openapi.yaml`, every table or local file it adds or changes is in
    `design/data-model.md`, and the plan links to them instead of copying.
+10. **Checklist**: every requirement is in `checklist.md`, in "Check by
+    hand", "Proved by tests", or both. Each hand check is one action with an
+    exact expected result that someone without the code can see. Each test it
+    names is in a task's "Definition of done".
 
 ## Code review
 
@@ -73,6 +77,9 @@ slice shows:
   shared constant or function.
 - **Contracts and layout**: the code lenses above, applied to the whole diff.
 - **Leftovers**: unused code, `TODO`s, and comments that no longer match the code.
+- **Checklist**: every test named in "Proved by tests" in `checklist.md`
+  exists and proves what its row says. Every message quoted in "Check by hand"
+  is what the code prints.
 - **Checks**: `gofmt -l .`, `go vet ./...`, and `go test ./...` on the slice
   branch.
 
