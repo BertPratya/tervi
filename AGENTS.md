@@ -86,8 +86,10 @@ pull requests of their own.
 1. **Spec.** The user writes `slices/NNNN-name/spec.md` on branch
    `plan/NNNN-name` while the architect asks questions. The user approves it
    in chat.
-2. **Plan.** The architect adds `plan.md`, `tasks/*.md`, and the contract and
-   data model changes on the same branch. A slice has 4–8 tasks; a plan that
+2. **Plan.** The architect adds `plan.md`, `tasks/*.md`, `checklist.md`, and
+   the contract and data model changes on the same branch. The checklist is
+   how the user will test the slice: steps to do by hand, and the tests that
+   prove what cannot be seen by hand. A slice has 4–8 tasks; a plan that
    needs more than 8 means the slice is too big, so the architect proposes
    splitting it. Each task changes roughly 300–400 lines, not counting tests,
    so that one review can check it closely.
@@ -105,11 +107,14 @@ pull requests of their own.
 7. **Slice review.** When every task is in, the reviewer reviews the whole
    slice once (`git diff main...slice/NNNN-name`), looking for problems that
    no single task shows. Findings are fixed like a task's, up to 2 fix rounds.
-8. **Try it.** The architect and the user run the slice end to end. What the
-   user wants changed goes back as findings (see "How the user asks for
-   changes").
-9. **Done.** The architect sets the slice to `done` in `slices/index.md` on
-   the slice branch and marks the pull request ready. The user merges. The
+8. **Try it.** The user goes through `checklist.md` on the slice branch, with
+   the architect guiding, and marks each hand check pass or fail. The
+   architect runs the tests and fills in the automatic part. A failed row,
+   and anything else the user wants changed, becomes a fix (see "How the user
+   asks for changes"); after the fix, the user checks that row again.
+9. **Done.** When every row passes, the architect commits the filled-in
+   checklist, sets the slice to `done` in `slices/index.md` on the slice
+   branch, and marks the pull request ready. The user merges. The
    architect tags the merge commit `slice-NNNN-done`, and the user and the
    architect go through the slice together.
 

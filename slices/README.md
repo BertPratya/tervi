@@ -14,6 +14,7 @@ slices/
   NNNN-name/
     spec.md                # what to build. Written by the user.
     plan.md                # how to build it, and the task list. Drafted by the architect, approved by the user.
+    checklist.md           # how the user tests the slice, and the results. Drafted by the architect, filled in by the user.
     tasks/
       NN-name.md           # one file per task. Drafted by the architect, approved by the user.
 ```
@@ -34,7 +35,7 @@ creation order: `0001-pairing`, `tasks/02-start-pairing.md`.
 
 | Role | Reads | Writes |
 | --- | --- | --- |
-| User | Everything | `spec.md`; decisions; approves everything else |
+| User | Everything | `spec.md`; decisions; the hand-check results in `checklist.md`; approves everything else |
 | Architect | Everything | `plan.md`, task files, `backlog.md`, `index.md`, commits, pull requests and their comments |
 | Worker | Its worker message, its task file, the code, `AGENTS.md`, `api/`, `design/` | Code and tests, in its worktree |
 | Reviewer | Only what the review message lists | Nothing; it reports to the architect |
@@ -167,6 +168,48 @@ A task file is complete when a worker holding only this file and the code
 could finish it. After approval, the instructions do not change; reports and
 reviews go on the slice pull request.
 
+## checklist.md
+
+How the user tests the slice before merging it, and the record that every
+check passed.
+
+```markdown
+# NNNN Name — checklist
+
+Spec: [spec.md](spec.md)
+Tried on: <date> · Commit: <short commit id>
+
+## Before you start
+<the commands to run first, and what each terminal or browser tab is for>
+
+## Check by hand
+Do the rows in order: each one can depend on the state the row before left.
+
+| # | Requirement | Do this | You should see | Result |
+| --- | --- | --- | --- | --- |
+| 1 | RN | <one action> | <exactly what appears, quoting messages> | ⬜ |
+
+## Proved by tests
+What hand checks cannot cover: things that take minutes to happen, failures
+that are hard to cause, or what only the database or the code can show.
+
+| Requirement | What the tests prove | Tests | Result |
+| --- | --- | --- | --- |
+| RN | <one line> | `TestName`, `TestName` | ⬜ |
+
+Tests run: `go test ./...` on <commit> → <result>
+```
+
+- **Every requirement appears in at least one part.** A requirement that hand
+  checks cover only partly appears in both, and the "What the tests prove"
+  column says which part the tests cover.
+- **Result** is `⬜` (not done), `✅` (pass), or `❌ fix N` (failed; see fix N
+  on the slice pull request). After the fix, the row is checked again and
+  becomes `✅`.
+- Each test named in "Proved by tests" is in a task's "Definition of done".
+- The user fills in "Check by hand". The architect fills in "Proved by tests"
+  from a test run on the same commit.
+
 ## backlog.md
 
 ```markdown
@@ -236,8 +279,8 @@ Suggested commit message: <what changed>
 ```text
 Review the plan for slice NNNN-name. This is plan review round N.
 
-Read only: slices/NNNN-name/spec.md, slices/NNNN-name/plan.md, and every file
-in slices/NNNN-name/tasks/.
+Read only: slices/NNNN-name/spec.md, slices/NNNN-name/plan.md,
+slices/NNNN-name/checklist.md, and every file in slices/NNNN-name/tasks/.
 
 Answer in the review report format from slices/README.md.
 ```
@@ -322,7 +365,9 @@ Title: `Plan for slice NNNN <name>`
 <number> rounds of plan review; reports are in the comments.
 
 ### How to check
-Read spec.md and plan.md. Then read the "Definition of done" of every core task.
+Read spec.md and plan.md. Then read checklist.md: is any requirement missing,
+or any check you would want to do yourself? Then read the "Definition of done"
+of every core task.
 ```
 
 ## Slice pull request
@@ -411,4 +456,4 @@ architect adds them in round order.
 | draft | The spec is being written |
 | approved | The spec is approved; planning can start |
 | in progress | The plan is merged; tasks are being built on the slice branch |
-| done | Every requirement is met and the slice was demonstrated end to end. Set on the slice branch, so it is true once the slice pull request is merged. |
+| done | Every row of `checklist.md` passed. Set on the slice branch, so it is true once the slice pull request is merged. |
