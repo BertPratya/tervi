@@ -16,7 +16,7 @@ slices/
     plan.md                # how to build it, and the task list. Drafted by the architect, approved by the user.
     checklist.md           # how the user tests the slice, and the results. Drafted by the architect, filled in by the user.
     tasks/
-      NN-name.md           # one file per task. Drafted by the architect, approved by the user.
+      NN-name.md           # one file per task. Drafted by the architect, checked by the reviewer. The user does not read them.
 ```
 
 `NNNN` is a four-digit slice number and `NN` a two-digit task number, both in
@@ -35,7 +35,7 @@ creation order: `0001-pairing`, `tasks/02-start-pairing.md`.
 
 | Role | Reads | Writes |
 | --- | --- | --- |
-| User | Everything | `spec.md`; decisions; the hand-check results in `checklist.md`; approves everything else |
+| User | `spec.md`, `plan.md`, `checklist.md`, the contracts (`api/`, `design/`), and the running slice. Not task files or code | `spec.md`; decisions; the hand-check results in `checklist.md`; approves the plan and the slice |
 | Architect | Everything | `plan.md`, task files, `backlog.md`, `index.md`, commits, pull requests and their comments |
 | Worker | Its worker message, its task file, the code, `AGENTS.md`, `api/`, `design/` | Code and tests, in its worktree |
 | Reviewer | Only what the review message lists | Nothing; it reports to the architect |
@@ -108,6 +108,10 @@ what it applies to, which requirements it covers, and how it works.
 
 ## Technical decisions
 - <decision> — <one-line why>
+(Every choice the user would care about: libraries, files kept on the user's
+computer, and any behavior the user can notice that the spec leaves open.
+Such a choice is written here, never only in a task file, because the user
+does not read task files.)
 
 ## Requirement coverage
 | Requirement | Tasks |
@@ -366,8 +370,8 @@ Title: `Plan for slice NNNN <name>`
 
 ### How to check
 Read spec.md and plan.md. Then read checklist.md: is any requirement missing,
-or any check you would want to do yourself? Then read the "Definition of done"
-of every core task.
+or any check you would want to do yourself? Then read the contract changes.
+The reviewer checked the task files; you don't need to read them.
 ```
 
 ## Slice pull request

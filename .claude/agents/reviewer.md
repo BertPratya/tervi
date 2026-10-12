@@ -21,7 +21,7 @@ the worktree the message names.
 
 ## Plan review
 
-Check all ten, for every requirement and every task file:
+Check all eleven, for every requirement and every task file:
 
 1. **Coverage**: every requirement is handled by a task, and every test in a
    task's "Definition of done" proves a requirement or states its purpose.
@@ -47,6 +47,11 @@ Check all ten, for every requirement and every task file:
     hand", "Proved by tests", or both. Each hand check is one action with an
     exact expected result that someone without the code can see. Each test it
     names is in a task's "Definition of done".
+11. **Choices in the plan**: the user reads `plan.md` but not the task
+    files. Every choice the user would care about (a library, a file kept on
+    the user's computer, behavior the user can notice that the spec leaves
+    open) is in `plan.md` under "Technical decisions". Such a choice found
+    only in a task file is a finding.
 
 ## Code review
 
