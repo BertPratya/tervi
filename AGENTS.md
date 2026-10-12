@@ -98,7 +98,9 @@ pull requests of their own.
    marked `User` go to the user.
 4. **Plan pull request.** The architect opens it with one comment per review
    round, and sets the slice to `in progress` in `slices/index.md` in the same
-   pull request. The user answers open questions and merges.
+   pull request. The user reads the spec, `plan.md`, `checklist.md`, and the
+   contract changes, answers open questions, and merges. The user does not
+   read the task files; the reviewer checks them in step 3.
 5. **Slice branch.** The architect creates `slice/NNNN-name` from `main`.
 6. **Tasks.** Built in dependency order on the slice branch (next section).
    After the first task is merged into the slice branch, the architect opens
