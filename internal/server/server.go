@@ -12,6 +12,7 @@ import (
 	"github.com/bertpratya/tervi/internal/server/apidocs"
 	"github.com/bertpratya/tervi/internal/server/connection"
 	"github.com/bertpratya/tervi/internal/server/db"
+	"github.com/bertpratya/tervi/internal/server/machines"
 	"github.com/bertpratya/tervi/internal/server/pairing"
 	"github.com/bertpratya/tervi/internal/server/web"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -31,6 +32,7 @@ func New(cfg Config, pool *pgxpool.Pool, logger *slog.Logger, connections *conne
 		Pool: pool, Logger: logger, List: connections,
 		CheckInterval: cfg.CheckInterval, ConnectionTimeout: cfg.ConnectionTimeout,
 	})
+	machines.Register(mux, machines.Deps{Pool: pool, Logger: logger, List: connections})
 	web.Register(mux)
 	if cfg.APIDocs {
 		apidocs.Register(mux)

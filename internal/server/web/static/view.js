@@ -1,4 +1,4 @@
-function shown(value) {
+export function shown(value) {
   return typeof value === 'string' && value.length > 0 ? value : 'unknown';
 }
 
