@@ -335,22 +335,51 @@ func TestConnectNotPaired(t *testing.T) {
 }
 
 func TestConnectStartsStoppedService(t *testing.T) {
-	runner := &commandRunner{}
-	client := &commandControl{
-		statuses: []statusResult{
-			{err: control.ErrNotRunning},
-			{answer: control.StatusAnswer{State: "reconnecting", Server: "http://localhost:8080"}},
+	for _, tc := range []struct {
+		name           string
+		currentService bool
+		statuses       []statusResult
+		answer         string
+		wantCalls      [][]string
+	}{
+		{
+			name:     "missing service is set up and started",
+			statuses: []statusResult{{err: control.ErrNotRunning}},
+			answer:   "connected",
+			wantCalls: [][]string{
+				{"systemctl", "--user", "daemon-reload"},
+				{"systemctl", "--user", "enable", "tervi"},
+				{"systemctl", "--user", "restart", "tervi"},
+			},
 		},
-		connect: control.ConnectAnswer{Result: "already_connected"},
-	}
-	env, _, stdout, stderr := commandEnv(t, runner, client, true)
-	writeCurrentServiceFile(t, env)
-	if code := Run(context.Background(), []string{"connect"}, env, nil); code != 0 {
-		t.Fatalf("Run(connect) = %d, want 0", code)
-	}
-	wantCalls := [][]string{{"systemctl", "--user", "enable", "--now", "tervi"}}
-	if stdout.String() != "✓ Connected.\n" || stderr.Len() != 0 || fmt.Sprint(runner.calls) != fmt.Sprint(wantCalls) || client.connectCalls != 1 {
-		t.Errorf("stdout=%q stderr=%q calls=%v connect calls=%d", stdout.String(), stderr.String(), runner.calls, client.connectCalls)
+		{
+			name:           "stopped current service is started",
+			currentService: true,
+			statuses: []statusResult{
+				{err: control.ErrNotRunning},
+				{answer: control.StatusAnswer{State: "reconnecting", Server: "http://localhost:8080"}},
+			},
+			answer:    "already_connected",
+			wantCalls: [][]string{{"systemctl", "--user", "enable", "--now", "tervi"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &commandRunner{}
+			client := &commandControl{
+				statuses: tc.statuses,
+				connect:  control.ConnectAnswer{Result: tc.answer},
+			}
+			env, _, stdout, stderr := commandEnv(t, runner, client, true)
+			if tc.currentService {
+				writeCurrentServiceFile(t, env)
+			}
+			if code := Run(context.Background(), []string{"connect"}, env, nil); code != 0 {
+				t.Fatalf("Run(connect) = %d, want 0", code)
+			}
+			if stdout.String() != "✓ Connected.\n" || stderr.Len() != 0 || fmt.Sprint(runner.calls) != fmt.Sprint(tc.wantCalls) || client.connectCalls != 1 {
+				t.Errorf("stdout=%q stderr=%q calls=%v connect calls=%d", stdout.String(), stderr.String(), runner.calls, client.connectCalls)
+			}
+		})
 	}
 }
 
