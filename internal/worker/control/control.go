@@ -22,10 +22,9 @@ var (
 	ErrRuntimeDirNotSet = errors.New("XDG_RUNTIME_DIR is not set")
 )
 
-const (
-	statusTimeout  = 5 * time.Second
-	connectTimeout = 35 * time.Second
-)
+const statusTimeout = 5 * time.Second
+
+var connectTimeout = 35 * time.Second
 
 // Engine is the daemon interface exposed through the control socket.
 type Engine interface {
@@ -36,20 +35,40 @@ type Engine interface {
 
 // StatusAnswer is the JSON representation returned by GET /status.
 type StatusAnswer struct {
-	State            string  `json:"state"`
-	Server           string  `json:"server,omitempty"`
-	Since            string  `json:"since,omitempty"`
-	Try              int     `json:"try,omitempty"`
-	NextTryInSeconds int     `json:"next_try_in_seconds,omitempty"`
-	LastError        *string `json:"last_error,omitempty"`
-	StopReason       *string `json:"stop_reason,omitempty"`
+	State            string
+	Server           string
+	Since            string
+	Try              int
+	NextTryInSeconds int
+	LastError        *string
+	StopReason       *string
 }
 
 // ConnectAnswer is the JSON representation returned by POST /connect.
 type ConnectAnswer struct {
-	Result    string  `json:"result"`
-	LastError *string `json:"last_error,omitempty"`
-	Path      string  `json:"path,omitempty"`
+	Result    string
+	LastError *string
+	Path      string
+}
+
+// statusAnswerJSON is the single definition of status answer field names used
+// by both encoding and decoding.
+type statusAnswerJSON struct {
+	State            string   `json:"state"`
+	Server           *string  `json:"server,omitempty"`
+	Since            *string  `json:"since,omitempty"`
+	Try              *int     `json:"try,omitempty"`
+	NextTryInSeconds *int     `json:"next_try_in_seconds,omitempty"`
+	LastError        **string `json:"last_error,omitempty"`
+	StopReason       **string `json:"stop_reason,omitempty"`
+}
+
+// connectAnswerJSON is the single definition of connect answer field names
+// used by both encoding and decoding.
+type connectAnswerJSON struct {
+	Result    string   `json:"result"`
+	LastError **string `json:"last_error,omitempty"`
+	Path      *string  `json:"path,omitempty"`
 }
 
 // RuntimeDir returns the tervi directory below this session's runtime folder.
@@ -81,31 +100,47 @@ func statusAnswer(status daemon.Status) StatusAnswer {
 }
 
 func (answer StatusAnswer) MarshalJSON() ([]byte, error) {
+	wire := statusAnswerJSON{State: answer.State}
 	switch answer.State {
 	case "connected":
-		return json.Marshal(struct {
-			State  string `json:"state"`
-			Server string `json:"server"`
-			Since  string `json:"since"`
-		}{answer.State, answer.Server, answer.Since})
+		wire.Server = &answer.Server
+		wire.Since = &answer.Since
 	case "reconnecting":
-		return json.Marshal(struct {
-			State            string  `json:"state"`
-			Server           string  `json:"server"`
-			Try              int     `json:"try"`
-			NextTryInSeconds int     `json:"next_try_in_seconds"`
-			LastError        *string `json:"last_error"`
-		}{answer.State, answer.Server, answer.Try, answer.NextTryInSeconds, answer.LastError})
+		wire.Server = &answer.Server
+		wire.Try = &answer.Try
+		wire.NextTryInSeconds = &answer.NextTryInSeconds
+		wire.LastError = nullableString(answer.LastError)
 	case "not_connecting":
-		return json.Marshal(struct {
-			State      string  `json:"state"`
-			StopReason *string `json:"stop_reason"`
-		}{answer.State, answer.StopReason})
-	default:
-		return json.Marshal(struct {
-			State string `json:"state"`
-		}{answer.State})
+		wire.StopReason = nullableString(answer.StopReason)
 	}
+	return json.Marshal(wire)
+}
+
+func (answer *StatusAnswer) UnmarshalJSON(data []byte) error {
+	var wire statusAnswerJSON
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*answer = StatusAnswer{State: wire.State}
+	if wire.Server != nil {
+		answer.Server = *wire.Server
+	}
+	if wire.Since != nil {
+		answer.Since = *wire.Since
+	}
+	if wire.Try != nil {
+		answer.Try = *wire.Try
+	}
+	if wire.NextTryInSeconds != nil {
+		answer.NextTryInSeconds = *wire.NextTryInSeconds
+	}
+	if wire.LastError != nil {
+		answer.LastError = *wire.LastError
+	}
+	if wire.StopReason != nil {
+		answer.StopReason = *wire.StopReason
+	}
+	return nil
 }
 
 func connectAnswer(result daemon.ConnectResult) ConnectAnswer {
@@ -120,23 +155,32 @@ func connectAnswer(result daemon.ConnectResult) ConnectAnswer {
 }
 
 func (answer ConnectAnswer) MarshalJSON() ([]byte, error) {
+	wire := connectAnswerJSON{Result: answer.Result}
 	switch answer.Result {
 	case "still_trying":
-		return json.Marshal(struct {
-			Result    string  `json:"result"`
-			LastError *string `json:"last_error"`
-		}{answer.Result, answer.LastError})
+		wire.LastError = nullableString(answer.LastError)
 	case "failed":
-		return json.Marshal(struct {
-			Result string `json:"result"`
-			Path   string `json:"path"`
-		}{answer.Result, answer.Path})
-	default:
-		return json.Marshal(struct {
-			Result string `json:"result"`
-		}{answer.Result})
+		wire.Path = &answer.Path
 	}
+	return json.Marshal(wire)
 }
+
+func (answer *ConnectAnswer) UnmarshalJSON(data []byte) error {
+	var wire connectAnswerJSON
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*answer = ConnectAnswer{Result: wire.Result}
+	if wire.LastError != nil {
+		answer.LastError = *wire.LastError
+	}
+	if wire.Path != nil {
+		answer.Path = *wire.Path
+	}
+	return nil
+}
+
+func nullableString(value *string) **string { return &value }
 
 func optionalText(value string) *string {
 	if value == "" {

@@ -18,10 +18,6 @@ func runDaemon(ctx context.Context, env Env) int {
 		fmt.Fprintln(env.Stdout, "✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).")
 		return 1
 	}
-	if err != nil {
-		fmt.Fprintln(env.Stderr, "✗ Can't use this session's runtime folder.")
-		return 1
-	}
 	engine := daemon.New(daemon.Options{
 		StateDir: env.StateDir,
 		Store:    env.Store,
@@ -33,7 +29,7 @@ func runDaemon(ctx context.Context, env Env) int {
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintln(env.Stderr, "✗ The tervi daemon stopped unexpectedly.")
+		fmt.Fprintf(env.Stdout, "✗ tervi stopped unexpectedly: %v\n", err)
 		return 1
 	}
 	return 0

@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
+	"time"
 )
 
 // Run takes the per-user lock, serves the control socket, and runs the engine
@@ -51,18 +53,28 @@ func Run(ctx context.Context, runtimeDir string, engine Engine) (runErr error) {
 		return fmt.Errorf("secure daemon socket: %w", err)
 	}
 
-	server := &http.Server{Handler: handler(engine)}
+	handlers := &handlerTracker{next: handler(engine)}
+	server := &http.Server{Handler: handlers}
 	peerListener := &sameUserListener{Listener: listener, uid: uint32(os.Getuid())}
 	engineCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	serveDone := make(chan error, 1)
+	serveExited := make(chan struct{})
 	engineDone := make(chan error, 1)
-	go func() { serveDone <- server.Serve(peerListener) }()
+	go func() {
+		defer close(serveExited)
+		serveDone <- server.Serve(peerListener)
+	}()
 	go func() { engineDone <- engine.Run(engineCtx) }()
 
 	stopServer := func() {
 		cancel()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
+		_ = server.Shutdown(shutdownCtx)
+		shutdownCancel()
 		_ = server.Close()
+		<-serveExited
+		handlers.stopAndWait()
 	}
 	select {
 	case <-ctx.Done():
@@ -103,6 +115,32 @@ func Run(ctx context.Context, runtimeDir string, engine Engine) (runErr error) {
 		}
 		return errors.New("daemon control server stopped unexpectedly")
 	}
+}
+
+type handlerTracker struct {
+	mu       sync.Mutex
+	active   sync.WaitGroup
+	stopping bool
+	next     http.Handler
+}
+
+func (tracker *handlerTracker) ServeHTTP(w http.ResponseWriter, request *http.Request) {
+	tracker.mu.Lock()
+	if tracker.stopping {
+		tracker.mu.Unlock()
+		return
+	}
+	tracker.active.Add(1)
+	tracker.mu.Unlock()
+	defer tracker.active.Done()
+	tracker.next.ServeHTTP(w, request)
+}
+
+func (tracker *handlerTracker) stopAndWait() {
+	tracker.mu.Lock()
+	tracker.stopping = true
+	tracker.mu.Unlock()
+	tracker.active.Wait()
 }
 
 func acquireLock(path string) (*os.File, error) {

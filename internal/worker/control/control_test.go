@@ -39,7 +39,7 @@ func TestSecondDaemonExits(t *testing.T) {
 	if !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("second Run() error = %v, want ErrAlreadyRunning", err)
 	}
-	if _, err := Status(context.Background(), runtimeDir); err != nil {
+	if _, err := (Client{RuntimeDir: runtimeDir}).Status(context.Background()); err != nil {
 		t.Fatalf("first daemon stopped answering: %v", err)
 	}
 
@@ -62,7 +62,7 @@ func TestLockReleasedWhenDaemonEnds(t *testing.T) {
 	secondCtx, stopSecond := context.WithCancel(context.Background())
 	secondDone := startDaemon(t, secondCtx, runtimeDir, &fakeEngine{status: daemon.Status{State: "not_paired"}})
 	waitForSocket(t, filepath.Join(runtimeDir, "daemon.sock"))
-	if _, err := Status(context.Background(), runtimeDir); err != nil {
+	if _, err := (Client{RuntimeDir: runtimeDir}).Status(context.Background()); err != nil {
 		t.Fatalf("new daemon did not answer after lock release: %v", err)
 	}
 	stopSecond()
@@ -77,14 +77,25 @@ func TestOldSocketFileReplaced(t *testing.T) {
 		t.Fatal(err)
 	}
 	socketPath := filepath.Join(runtimeDir, "daemon.sock")
-	if err := os.WriteFile(socketPath, []byte("stale"), 0600); err != nil {
+	stale, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.(*net.UnixListener).SetUnlinkOnClose(false)
+	if err := stale.Close(); err != nil {
 		t.Fatal(err)
 	}
 	ctx, stop := context.WithCancel(context.Background())
 	done := startDaemon(t, ctx, runtimeDir, &fakeEngine{status: daemon.Status{State: "not_paired"}})
-	waitForSocket(t, socketPath)
-	if _, err := Status(context.Background(), runtimeDir); err != nil {
-		t.Fatalf("replacement socket did not answer: %v", err)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := (Client{RuntimeDir: runtimeDir}).Status(context.Background()); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("replacement socket did not answer")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	stop()
 	if err := <-done; err != nil {
@@ -134,6 +145,26 @@ func TestOtherUserRefused(t *testing.T) {
 	}
 	if !peerAllowed(100, 100) {
 		t.Error("peer with the daemon uid was refused")
+	}
+
+	runtimeDir := t.TempDir()
+	listener, err := net.Listen("unix", filepath.Join(runtimeDir, "daemon.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: handler(&fakeEngine{status: daemon.Status{State: "not_paired"}})}
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- server.Serve(&sameUserListener{Listener: listener, uid: uint32(os.Getuid()) + 1})
+	}()
+	if _, err := rawRequest(t, runtimeDir, "GET", "/status"); err == nil {
+		t.Fatal("request through listener with another uid was accepted")
+	} else if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("request timed out instead of being refused: %v", err)
+	}
+	_ = server.Close()
+	if err := <-serveDone; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		t.Fatalf("Serve() error = %v", err)
 	}
 }
 
@@ -204,7 +235,7 @@ func TestConnectOverSocket(t *testing.T) {
 
 func TestClientNotRunning(t *testing.T) {
 	t.Run("missing socket", func(t *testing.T) {
-		_, err := Status(context.Background(), t.TempDir())
+		_, err := (Client{RuntimeDir: t.TempDir()}).Status(context.Background())
 		if !errors.Is(err, ErrNotRunning) {
 			t.Fatalf("Status() error = %v, want ErrNotRunning", err)
 		}
@@ -216,7 +247,7 @@ func TestClientNotRunning(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = listener.Close()
-		_, err = Status(context.Background(), dir)
+		_, err = (Client{RuntimeDir: dir}).Status(context.Background())
 		if !errors.Is(err, ErrNotRunning) {
 			t.Fatalf("Status() error = %v, want ErrNotRunning", err)
 		}
@@ -238,7 +269,7 @@ func TestClientNotRunning(t *testing.T) {
 			}
 		}()
 		started := time.Now()
-		_, err = Status(context.Background(), dir)
+		_, err = (Client{RuntimeDir: dir}).Status(context.Background())
 		if !errors.Is(err, ErrNotRunning) {
 			t.Fatalf("Status() error = %v, want ErrNotRunning", err)
 		}
@@ -246,6 +277,150 @@ func TestClientNotRunning(t *testing.T) {
 			t.Errorf("Status() took %s, want at most 5.5s", time.Since(started))
 		}
 	})
+}
+
+func TestClientCancelAndSlowConnect(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(Client, context.Context) error
+	}{
+		{"status", func(client Client, ctx context.Context) error { _, err := client.Status(ctx); return err }},
+		{"connect", func(client Client, ctx context.Context) error { _, err := client.Connect(ctx); return err }},
+	} {
+		t.Run("cancel "+tc.name, func(t *testing.T) {
+			runtimeDir := t.TempDir()
+			listener, err := net.Listen("unix", filepath.Join(runtimeDir, "daemon.sock"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			accepted := make(chan struct{})
+			serveDone := make(chan struct{})
+			go func() {
+				defer close(serveDone)
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				close(accepted)
+				<-ctx.Done()
+			}()
+
+			clientDone := make(chan error, 1)
+			go func() { clientDone <- tc.call(Client{RuntimeDir: runtimeDir}, ctx) }()
+			select {
+			case <-accepted:
+			case <-time.After(time.Second):
+				cancel()
+				t.Fatal("client did not reach socket")
+			}
+			cancel()
+			select {
+			case err := <-clientDone:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("client error = %v, want context.Canceled", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("client did not return after cancellation")
+			}
+			<-serveDone
+		})
+	}
+	t.Run("socket reached but no answer", func(t *testing.T) {
+		runtimeDir := t.TempDir()
+		listener, err := net.Listen("unix", filepath.Join(runtimeDir, "daemon.sock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listener.Close()
+
+		accepted := make(chan struct{})
+		release := make(chan struct{})
+		serveDone := make(chan struct{})
+		go func() {
+			defer close(serveDone)
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			close(accepted)
+			<-release
+		}()
+
+		oldTimeout := connectTimeout
+		connectTimeout = 100 * time.Millisecond
+		defer func() { connectTimeout = oldTimeout }()
+		answer, err := (Client{RuntimeDir: runtimeDir}).Connect(context.Background())
+		if err != nil {
+			t.Fatalf("Connect() error = %v, want still_trying answer", err)
+		}
+		select {
+		case <-accepted:
+		default:
+			t.Fatal("client returned before reaching the socket")
+		}
+		if answer.Result != "still_trying" || answer.LastError != nil {
+			t.Errorf("Connect() answer = %+v, want still_trying with no last error", answer)
+		}
+		close(release)
+		<-serveDone
+	})
+}
+
+type delayedConnectEngine struct {
+	started  chan struct{}
+	finished chan struct{}
+}
+
+func (engine *delayedConnectEngine) Run(ctx context.Context) error {
+	<-ctx.Done()
+	return nil
+}
+
+func (engine *delayedConnectEngine) Status() daemon.Status {
+	return daemon.Status{State: "not_paired"}
+}
+
+func (engine *delayedConnectEngine) Connect(ctx context.Context) daemon.ConnectResult {
+	close(engine.started)
+	<-ctx.Done()
+	time.Sleep(150 * time.Millisecond)
+	close(engine.finished)
+	return daemon.ConnectResult{Result: "still_trying"}
+}
+
+func TestRunWaitsForHandlersOnShutdown(t *testing.T) {
+	runtimeDir := filepath.Join(t.TempDir(), "tervi")
+	ctx, stop := context.WithCancel(context.Background())
+	engine := &delayedConnectEngine{started: make(chan struct{}), finished: make(chan struct{})}
+	done := startDaemon(t, ctx, runtimeDir, engine)
+	waitForSocket(t, filepath.Join(runtimeDir, "daemon.sock"))
+	requestDone := make(chan struct{})
+	requestCtx, cancelRequest := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelRequest()
+	go func() {
+		defer close(requestDone)
+		_, _ = (Client{RuntimeDir: runtimeDir}).Connect(requestCtx)
+	}()
+	select {
+	case <-engine.started:
+	case <-time.After(2 * time.Second):
+		stop()
+		t.Fatal("connect handler did not start")
+	}
+	stop()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	select {
+	case <-engine.finished:
+	default:
+		t.Fatal("Run() returned while the connect handler was still running")
+	}
+	<-requestDone
 }
 
 func TestDaemonCommandStops(t *testing.T) {

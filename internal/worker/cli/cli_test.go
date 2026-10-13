@@ -170,7 +170,7 @@ func TestSecondDaemonExits(t *testing.T) {
 	go func() { firstDone <- Run(firstCtx, []string{"daemon"}, firstEnv, nil) }()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		if _, err := control.Status(context.Background(), mustRuntimeDir(t)); err == nil {
+		if _, err := (control.Client{RuntimeDir: mustRuntimeDir(t)}).Status(context.Background()); err == nil {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -189,7 +189,7 @@ func TestSecondDaemonExits(t *testing.T) {
 		cancelFirst()
 		t.Errorf("second daemon stdout=%q stderr=%q, want %q and empty", secondStdout.String(), secondStderr.String(), want)
 	}
-	if _, err := control.Status(context.Background(), mustRuntimeDir(t)); err != nil {
+	if _, err := (control.Client{RuntimeDir: mustRuntimeDir(t)}).Status(context.Background()); err != nil {
 		cancelFirst()
 		t.Fatalf("second daemon affected first daemon: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestDaemonCommandStops(t *testing.T) {
 	go func() { done <- Run(ctx, []string{"daemon"}, env, nil) }()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		if _, err := control.Status(context.Background(), mustRuntimeDir(t)); err == nil {
+		if _, err := (control.Client{RuntimeDir: mustRuntimeDir(t)}).Status(context.Background()); err == nil {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -228,7 +228,7 @@ func TestDaemonCommandStops(t *testing.T) {
 	if stdout.Len() != 0 || stderr.Len() != 0 {
 		t.Errorf("stdout=%q stderr=%q, want empty", stdout.String(), stderr.String())
 	}
-	if _, err := control.Status(context.Background(), mustRuntimeDir(t)); !errors.Is(err, control.ErrNotRunning) {
+	if _, err := (control.Client{RuntimeDir: mustRuntimeDir(t)}).Status(context.Background()); !errors.Is(err, control.ErrNotRunning) {
 		t.Errorf("Status() after stop error = %v, want ErrNotRunning", err)
 	}
 }
@@ -244,7 +244,7 @@ func TestDaemonPrintsLogLines(t *testing.T) {
 	go func() { done <- Run(ctx, []string{"daemon"}, env, nil) }()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		answer, err := control.Status(context.Background(), mustRuntimeDir(t))
+		answer, err := (control.Client{RuntimeDir: mustRuntimeDir(t)}).Status(context.Background())
 		if err == nil && answer.LastError != nil {
 			break
 		}
@@ -275,6 +275,25 @@ func TestNoRuntimeFolder(t *testing.T) {
 	want := "✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).\n"
 	if stdout.String() != want || stderr.Len() != 0 {
 		t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
+	}
+}
+
+func TestDaemonUnexpectedFailure(t *testing.T) {
+	runtimeBase := filepath.Join(t.TempDir(), strings.Repeat("r", 110))
+	if err := os.MkdirAll(runtimeBase, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtimeBase)
+	env, _, _, stdout, stderr := usageEnv(t)
+	if code := Run(context.Background(), []string{"daemon"}, env, nil); code != 1 {
+		t.Fatalf("Run() = %d, want 1", code)
+	}
+	got := stdout.String()
+	if !strings.HasPrefix(got, "✗ tervi stopped unexpectedly: ") || !strings.Contains(got, "listen on daemon socket") {
+		t.Errorf("stdout = %q, want unexpected failure with socket error reason", got)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
 	}
 }
 
