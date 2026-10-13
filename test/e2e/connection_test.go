@@ -156,8 +156,8 @@ func rejectAndPairAgain(t *testing.T, f *connectedFixture) (livePair, livePair) 
 		t.Errorf("second fake daemon exit = %d, want 0", code)
 	}
 	waitFor(t, f.daemonLogs, "tervi is already running in the background.", connectionWait)
-	if !f.runner.daemonDoneIsEmpty(0) {
-		t.Error("first fake daemon done channel was not empty after re-pair")
+	if !f.runner.daemonRunning(0) {
+		t.Error("first fake daemon stopped running after re-pair")
 	}
 	assertReconnectedAfterRejection(t, f.daemonLogs, f.serverURL)
 	f.machinesPage(t)
@@ -168,12 +168,8 @@ func assertRePairCalls(t *testing.T, calls []backgroundCall) {
 	t.Helper()
 	var starts []string
 	for _, call := range calls {
-		if call.name != "systemctl" {
-			continue
-		}
-		command := strings.Join(call.args, " ")
-		if command == "--user restart tervi" || command == "--user enable --now tervi" {
-			starts = append(starts, command)
+		if call.name == "systemctl" && isDaemonStart(call.args) {
+			starts = append(starts, strings.Join(call.args, " "))
 		}
 	}
 	if len(starts) != 2 || starts[0] != "--user restart tervi" || starts[1] != "--user enable --now tervi" {

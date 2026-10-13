@@ -56,7 +56,6 @@ type connectedFixture struct {
 }
 
 type backgroundDaemon struct {
-	done     chan int
 	finished chan struct{}
 	exitCode int
 }
@@ -84,13 +83,12 @@ func (runner *fakeBackgroundRunner) Run(ctx context.Context, name string, args .
 		return "", ctx.Err()
 	}
 	if startDaemon {
-		daemon := &backgroundDaemon{done: make(chan int, 1), finished: make(chan struct{})}
+		daemon := &backgroundDaemon{finished: make(chan struct{})}
 		runner.mu.Lock()
 		runner.daemons = append(runner.daemons, daemon)
 		runner.mu.Unlock()
 		go func() {
 			daemon.exitCode = cli.Run(runner.ctx, []string{"daemon"}, runner.env, nil)
-			daemon.done <- daemon.exitCode
 			close(daemon.finished)
 		}()
 	}
@@ -139,7 +137,7 @@ func (runner *fakeBackgroundRunner) waitForDaemonExit(t *testing.T, index int, t
 	}
 }
 
-func (runner *fakeBackgroundRunner) daemonDoneIsEmpty(index int) bool {
+func (runner *fakeBackgroundRunner) daemonRunning(index int) bool {
 	runner.mu.Lock()
 	if index >= len(runner.daemons) {
 		runner.mu.Unlock()
@@ -151,7 +149,7 @@ func (runner *fakeBackgroundRunner) daemonDoneIsEmpty(index int) bool {
 	case <-daemon.finished:
 		return false
 	default:
-		return len(daemon.done) == 0
+		return true
 	}
 }
 
