@@ -301,6 +301,7 @@ quote. `<…>` is filled in.
 | --- | --- |
 | `tervi daemon` without a desktop session's runtime folder | `✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).` |
 | `tervi logs` cannot read the log | `✗ Can't read the log: <reason>` |
+| `tervi daemon` fails unexpectedly (for example, it cannot open its socket) | `✗ tervi stopped unexpectedly: <reason>`; exit `1` |
 | tervi was built without one of its internal settings | `✗ tervi is missing an internal setting (<field name>).` |
 | `tervi status` or `tervi connect` cannot read the secret store entry, or it is damaged | Slice 1's `✗ Can't read the secret store entry.` and its hint line; exit `1` |
 | `tervi status` or `tervi connect` cannot read `state.json` | Slice 1's `✗ Can't read <path>.`; exit `1` |
