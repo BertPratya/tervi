@@ -149,6 +149,38 @@ func TestServiceFileRewrittenWhenPathChanges(t *testing.T) {
 	}
 }
 
+func TestEnsureRunningReportsStoppedDaemonStarted(t *testing.T) {
+	dir := t.TempDir()
+	program := "/usr/bin/true"
+	resolvedProgram, err := filepath.EvalSymlinks(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, serviceFile), serviceContents(resolvedProgram), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &serviceTestRunner{}
+	client := &serviceTestClient{
+		answers: []control.StatusAnswer{{State: "reconnecting"}},
+		errors:  []error{control.ErrNotRunning},
+	}
+
+	started, err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background())
+	if err != nil {
+		t.Fatalf("EnsureRunning() error = %v", err)
+	}
+	if !started {
+		t.Error("EnsureRunning() started = false, want true for a stopped daemon")
+	}
+	wantCalls := [][]string{{"systemctl", "--user", "enable", "--now", "tervi"}}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Errorf("systemctl calls = %#v, want %#v", runner.calls, wantCalls)
+	}
+	if client.calls != 2 {
+		t.Errorf("Status calls = %d, want 2 (stopped check and readiness wait)", client.calls)
+	}
+}
+
 func TestEnsureRunningSteps(t *testing.T) {
 	dir := t.TempDir()
 	events := []string{}
@@ -176,19 +208,31 @@ func TestEnsureRunningSteps(t *testing.T) {
 
 func TestEnsureRunningFailures(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		outputs map[string]string
-		errors  map[string]error
-		client  *serviceTestClient
-		want    string
+		name           string
+		currentService bool
+		outputs        map[string]string
+		errors         map[string]error
+		client         *serviceTestClient
+		want           string
 	}{
 		{name: "systemctl output", outputs: map[string]string{"systemctl --user daemon-reload": "systemd says no\n"}, errors: map[string]error{"systemctl --user daemon-reload": errors.New("exit status 1")}, client: &serviceTestClient{}, want: "systemd says no"},
 		{name: "systemd missing", errors: map[string]error{"systemctl --user daemon-reload": errors.New("exec: systemctl: executable file not found in $PATH")}, client: &serviceTestClient{}, want: "exec: systemctl: executable file not found in $PATH"},
+		{name: "enable now output with current service", currentService: true, outputs: map[string]string{"systemctl --user enable --now tervi": "systemd says no\n"}, errors: map[string]error{"systemctl --user enable --now tervi": errors.New("exit status 1")}, client: &serviceTestClient{}, want: "systemd says no"},
 		{name: "socket timeout", client: &serviceTestClient{errors: []error{control.ErrNotRunning, control.ErrNotRunning, control.ErrNotRunning, control.ErrNotRunning, control.ErrNotRunning, control.ErrNotRunning, control.ErrNotRunning, control.ErrNotRunning, control.ErrNotRunning, control.ErrNotRunning}}, want: "the daemon did not start within 10 seconds"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runner := &serviceTestRunner{outputs: tc.outputs, errors: tc.errors}
-			options := serviceTestOptions(t.TempDir(), "/usr/bin/true", runner, tc.client)
+			dir := t.TempDir()
+			options := serviceTestOptions(dir, "/usr/bin/true", runner, tc.client)
+			if tc.currentService {
+				programPath, err := filepath.EvalSymlinks(options.ProgramPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, serviceFile), serviceContents(programPath), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if tc.name == "socket timeout" {
 				options.StartupTimeout = 3 * time.Millisecond
 			}

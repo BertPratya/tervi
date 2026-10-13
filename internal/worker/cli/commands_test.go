@@ -153,6 +153,9 @@ func TestInstalledCheck(t *testing.T) {
 			client := &commandControl{statuses: []statusResult{{answer: control.StatusAnswer{State: "connected", Server: "http://localhost:8080", Since: time.Now().Format(time.RFC3339)}}}, connect: control.ConnectAnswer{Result: "already_connected"}}
 			env, _, stdout, stderr := commandEnv(t, runner, client, true)
 			env.ProgramPath = tc.program
+			if !tc.blocked {
+				writeCurrentServiceFile(t, env)
+			}
 			code := Run(context.Background(), []string{"connect"}, env, nil)
 			if tc.blocked {
 				want := "tervi must be installed to run in the background. Install it with: go install ./cmd/tervi\n"
@@ -162,7 +165,7 @@ func TestInstalledCheck(t *testing.T) {
 				if len(runner.calls) != 0 || client.statusCalls != 0 {
 					t.Errorf("temporary executable did work: runner=%v status calls=%d", runner.calls, client.statusCalls)
 				}
-			} else if code != 0 || stdout.String() != "✓ Connected.\n" || stderr.Len() != 0 || client.connectCalls != 1 {
+			} else if code != 0 || stdout.String() != "Already connected.\n" || stderr.Len() != 0 || client.connectCalls != 1 {
 				t.Errorf("installed Run(connect) = %d, stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 			}
 		})
@@ -332,21 +335,51 @@ func TestConnectNotPaired(t *testing.T) {
 }
 
 func TestConnectStartsStoppedService(t *testing.T) {
-	runner := &commandRunner{}
-	client := &commandControl{
-		statuses: []statusResult{
-			{err: control.ErrNotRunning},
-			{answer: control.StatusAnswer{State: "reconnecting", Server: "http://localhost:8080"}},
+	for _, tc := range []struct {
+		name           string
+		currentService bool
+		statuses       []statusResult
+		answer         string
+		wantCalls      [][]string
+	}{
+		{
+			name:     "missing service is set up and started",
+			statuses: []statusResult{{err: control.ErrNotRunning}},
+			answer:   "connected",
+			wantCalls: [][]string{
+				{"systemctl", "--user", "daemon-reload"},
+				{"systemctl", "--user", "enable", "tervi"},
+				{"systemctl", "--user", "restart", "tervi"},
+			},
 		},
-		connect: control.ConnectAnswer{Result: "connected"},
-	}
-	env, _, stdout, stderr := commandEnv(t, runner, client, true)
-	if code := Run(context.Background(), []string{"connect"}, env, nil); code != 0 {
-		t.Fatalf("Run(connect) = %d, want 0", code)
-	}
-	wantCalls := [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
-	if stdout.String() != "✓ Connected.\n" || stderr.Len() != 0 || fmt.Sprint(runner.calls) != fmt.Sprint(wantCalls) || client.connectCalls != 1 {
-		t.Errorf("stdout=%q stderr=%q calls=%v connect calls=%d", stdout.String(), stderr.String(), runner.calls, client.connectCalls)
+		{
+			name:           "stopped current service is started",
+			currentService: true,
+			statuses: []statusResult{
+				{err: control.ErrNotRunning},
+				{answer: control.StatusAnswer{State: "reconnecting", Server: "http://localhost:8080"}},
+			},
+			answer:    "already_connected",
+			wantCalls: [][]string{{"systemctl", "--user", "enable", "--now", "tervi"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &commandRunner{}
+			client := &commandControl{
+				statuses: tc.statuses,
+				connect:  control.ConnectAnswer{Result: tc.answer},
+			}
+			env, _, stdout, stderr := commandEnv(t, runner, client, true)
+			if tc.currentService {
+				writeCurrentServiceFile(t, env)
+			}
+			if code := Run(context.Background(), []string{"connect"}, env, nil); code != 0 {
+				t.Fatalf("Run(connect) = %d, want 0", code)
+			}
+			if stdout.String() != "✓ Connected.\n" || stderr.Len() != 0 || fmt.Sprint(runner.calls) != fmt.Sprint(tc.wantCalls) || client.connectCalls != 1 {
+				t.Errorf("stdout=%q stderr=%q calls=%v connect calls=%d", stdout.String(), stderr.String(), runner.calls, client.connectCalls)
+			}
+		})
 	}
 }
 

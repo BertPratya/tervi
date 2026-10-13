@@ -56,7 +56,8 @@ func New(options Options) *Service { return &Service{options: options} }
 
 // EnsureRunning writes or refreshes the systemd user service, enables and
 // starts it, and waits for the daemon control socket to answer. It reports
-// whether the service file was rewritten and the daemon restarted.
+// whether it restarted the daemon after rewriting the service file or started
+// a daemon that was stopped before enablement.
 func (service *Service) EnsureRunning(ctx context.Context) (bool, error) {
 	if service == nil {
 		return false, errors.New("service options are missing")
@@ -91,6 +92,7 @@ func (service *Service) EnsureRunning(ctx context.Context) (bool, error) {
 	if !rewrite && serviceExecStart(contents) != programPath+" daemon" {
 		rewrite = true
 	}
+	startedOrRestarted := rewrite
 	if rewrite {
 		if err := writeServiceFile(options.ServiceDir, path, serviceContents(programPath)); err != nil {
 			return false, err
@@ -100,13 +102,17 @@ func (service *Service) EnsureRunning(ctx context.Context) (bool, error) {
 				return false, err
 			}
 		}
-	} else if err := runSystemctl(ctx, options.Runner, "enable", "--now", serviceName); err != nil {
-		return false, err
+	} else {
+		_, statusErr := options.Client.Status(ctx)
+		startedOrRestarted = errors.Is(statusErr, control.ErrNotRunning)
+		if err := runSystemctl(ctx, options.Runner, "enable", "--now", serviceName); err != nil {
+			return false, err
+		}
 	}
 	if err := service.waitForDaemon(ctx, options); err != nil {
 		return false, err
 	}
-	return rewrite, nil
+	return startedOrRestarted, nil
 }
 
 func (service *Service) waitForDaemon(ctx context.Context, options Options) error {
