@@ -147,8 +147,11 @@ The daemon obeys it at all times.
   that terminal and print its log lines there, until the user presses Ctrl+C.
   If a daemon is already running for this user account, it shall print
   `tervi is already running in the background.` and exit.
-- R9. Between reconnect tries, the daemon shall wait 1, 2, 4, 8 ... seconds,
-  at most 30 seconds, then keep trying every 30 seconds.
+- R9. Between reconnect tries, the daemon shall wait about 1, 2, 4, 8 ...
+  seconds, at most about 30 seconds, then keep trying about every 30
+  seconds. Each wait shall be that value, made longer or shorter at random by
+  up to 20%, so that workers that lost the server at the same moment do not
+  all try again at the same moment.
 
 **Pairing connects**
 

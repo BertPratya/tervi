@@ -84,6 +84,88 @@ A program from another user account is refused before any operation runs
 that systemd (which restarts only after a failure) does not keep starting
 it again while the user runs one by hand.
 
+## Mechanisms
+
+### Checks and timeout
+
+Applies to every connection. Covers R12–R14. The rules are in
+[`api/asyncapi.yaml`](../../api/asyncapi.yaml): the server sends `hello`
+with the interval and the timeout (defaults 10 and 30 seconds, set in the
+server's settings); the worker sends `ping` every interval, counted from its
+previous `ping`; the server answers `pong`; each side closes the connection
+after the timeout with no message of any kind from the other side. A close
+by either side on purpose is noticed at once, because the WebSocket close
+reaches the other side.
+
+### Reconnecting
+
+Applies to the daemon whenever `connect` is true and it has no connection.
+Covers R2, R9, R19. The waits between tries are 1, 2, 4, 8, 16, then 30
+seconds, each made longer or shorter at random by up to 20%. The count
+starts again from 1 once a connection succeeds, which means `hello`
+arrived. Every failure leads to another try except a `401` (next
+mechanism). Each try's request waits at most 10 seconds, as in slice 1.
+
+### Rejection
+
+Covers R18–R20. A `401 unknown_credential` answer to the opening request
+makes the daemon stop trying, set `connect` to false and `stop_reason` to
+`credential_rejected`, and log it. `POST /connect` sets `connect` back to
+true, reads the pairing again, and makes one try; a second `401` stops it
+the same way.
+
+### One connection per machine
+
+Covers R15, R23. The server keeps the open connections in memory, one per
+machine. When a machine connects while it already has a connection, the
+server closes the old one with code `4000`, keeps the new one, and logs a
+warning naming the machine. A machine is Online exactly while it has an
+entry. When a connection ends, the server removes the machine's entry only
+if the entry is still that same connection, so closing a replaced
+connection never marks a connected machine Offline. `GET /api/v1/machines`
+reads each machine's name, OS, and `last_seen_at` from the database, and
+asks the in-memory list whether it is Online. The in-memory list stays
+correct when many connections are added, replaced, removed, and read at the
+same moment.
+
+### Last seen
+
+Covers R24. The server writes `last_seen_at` when a machine connects, when
+a message arrives and the last write was a minute or more ago, and when the
+connection ends (the time of the last message received).
+
+### Server stopping
+
+Covers R12. On Ctrl+C, the server closes every connection with code `1001`
+before it exits, so each worker notices at once and starts reconnecting.
+
+### Starting the background service
+
+Applies to `tervi pair` after pairing and to `tervi connect`. Covers R4,
+R5, R10, R11, R28, R29, R31. The steps, each with a limit inside the 30
+seconds of R11:
+
+1. Check that tervi is installed: the running program's path must not be
+   inside the system's temporary folder, where `go run` builds programs
+   (R28). `tervi pair` does this before contacting the server.
+2. If the service file is missing or names another program path, write it
+   (as in [`design/data-model.md`](../../design/data-model.md)) and run
+   `systemctl --user daemon-reload`.
+3. Run `systemctl --user enable --now tervi`.
+4. Wait for the daemon's socket to answer.
+5. Call `POST /connect` and print the result.
+
+A failure in steps 2–4 prints the reason and `Try again with: tervi connect`
+(R29); the pairing stays saved. After the last line, the command exits
+(R31).
+
+### One daemon per account
+
+Covers R7, R30. A starting daemon first takes the lock on
+`$XDG_RUNTIME_DIR/tervi/daemon.lock`, then creates the socket. A daemon
+that cannot get the lock prints that tervi is already running and exits
+with `0`.
+
 ## Technical decisions
 
 - Only the daemon writes `connect` and `stop_reason` in `state.json`;
@@ -174,3 +256,20 @@ it again while the user runs one by hand.
   would no longer approve the contract before it is built; accepting failing
   tests until the slice is merged — real failures would hide among the
   expected ones.
+- Each reconnect wait (R9) is made longer or shorter at random by up to 20%
+  — when the server stops or restarts, every worker notices in the same
+  instant, and with exact waits every worker would try again in the same
+  instant; the most common restart is a short one, so every wait needs it,
+  not only the later ones.
+  Not chosen: exact waits — every worker arrives at once after a restart;
+  randomness only from the sixth try, then exactly 30 seconds — the
+  offsets would last, but a restart shorter than the first five tries would
+  still bring every worker at once.
+- tervi gives instructions to systemd by running its commands
+  (`systemctl --user daemon-reload`, `systemctl --user enable --now tervi`,
+  `journalctl --user -u tervi`) — no new library, the steps are the ones a
+  user would type, systemd's own error messages can be shown as they are,
+  and `tervi logs` shows exactly what `journalctl` would.
+  Not chosen: `github.com/coreos/go-systemd` over D-Bus — a new library and
+  more code, and reading the journal with it needs C code (cgo), which
+  complicates building.
