@@ -112,8 +112,11 @@ Screen readers (decided by the user during the slice review): only the
 on that line alone), so a screen reader does not read the whole list aloud
 on every 5-second refresh. That line is one element written in
 `machines.html`, outside the part each refresh rebuilds; a refresh only sets
-its text (the failure message, or empty). A live region created together
-with its text is often not announced at all (added in fix 2).
+its text (the failure message, or empty), and only when the text changes,
+so an outage is announced once, not every 5 seconds. A live region created
+together with its text is often not announced at all (added in fix 2). The
+line stays in the page's centered column, under the `Machines` heading,
+as before.
 
 ### Contract
 
