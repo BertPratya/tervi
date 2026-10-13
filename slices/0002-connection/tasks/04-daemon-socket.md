@@ -70,14 +70,16 @@ Serve HTTP over the socket with `net/http`:
 | `POST /connect` | `{"result": "connected"}`, `already_connected`, `rejected`, `not_paired`, or `{"result": "still_trying", "last_error": "…"}` — from `Daemon.Connect` |
 
 `next_try_in_seconds` is rounded to the nearest whole second, at least 0.
+`last_error` is `null` before any try has failed (see task 03's `Status`).
 
 ### The client
 
 In `internal/worker/control`, a client used by the commands:
 `Status(ctx) (StatusAnswer, error)` and `Connect(ctx) (ConnectAnswer, error)`.
 When the socket file is missing or nothing answers, they return a
-recognisable `ErrNotRunning`. `Connect` allows up to 35 seconds for the
-answer.
+recognisable `ErrNotRunning`. `Status` allows 5 seconds for the answer and
+returns `ErrNotRunning` when none comes (a frozen daemon must not make
+`tervi status` hang). `Connect` allows up to 35 seconds for the answer.
 
 ### `tervi daemon` (R30)
 
@@ -125,11 +127,11 @@ secret store) through `cli.Env` or a similar existing pattern.
 | `TestOtherUserRefused` — the peer check refuses a different user id and accepts the same one | R26 |
 | `TestStatusOverSocket` — each state's JSON | R3 |
 | `TestConnectOverSocket` — each result's JSON | R3 |
-| `TestClientNotRunning` — missing socket and refused socket give `ErrNotRunning` | R16 support |
+| `TestClientNotRunning` — missing socket, refused socket, and a daemon that does not answer `Status` within 5 s give `ErrNotRunning` | R16 support |
 | `TestDaemonCommandStops` — cancelling the context makes `tervi daemon` exit `0` and remove the socket | R30 |
 | `TestDaemonPrintsLogLines` — the engine's lines appear on standard output | R8, R30 |
 | `TestNoRuntimeFolder` — the message and exit `1` | R30 |
-| `TestUsage` — the new usage text; wrong usage of `daemon` exits `2` | — |
+| `TestUsage` — the usage text lists every command of this slice, and wrong usage of `daemon` prints it and exits `2` (purpose: the user can discover the commands) | usage |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md` changes
 to `done`.

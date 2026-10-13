@@ -46,7 +46,7 @@ Status: approved
      Last error: connection refused
 
    $ tervi logs
-   10:55:13 ✗ Connection lost: the server closed the connection
+   10:55:13 ✗ Connection lost: the server is stopping
    10:55:14 … Reconnecting (try 1)
    10:55:14 ✗ Connection refused. Next try in 2 seconds
    ```
@@ -254,6 +254,8 @@ quote. `<…>` is filled in.
 | Paired, but not connected within 30 seconds (R11) | `Paired, but not connected yet: <last error>. tervi keeps trying in the background.` then `Check with: tervi status` |
 | The background service cannot start (R29) | `✗ Can't start tervi in the background: <reason>` then `Try again with: tervi connect` |
 | Ctrl+C while connecting after pairing | `Pairing finished. Connecting was cancelled; tervi keeps trying in the background.` |
+| The background service started, but asking it to connect failed | `✗ Can't reach tervi in the background: <reason>` then `Check with: tervi status` (exit `1`) |
+| Ctrl+C while `tervi connect` waits for the connection | `Connecting was cancelled; tervi keeps trying in the background.` (exit `130`; Ctrl+C stops only the waiting, never the daemon) |
 
 **`tervi status`** (R16)
 

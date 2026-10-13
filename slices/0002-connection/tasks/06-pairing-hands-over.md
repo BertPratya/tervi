@@ -56,6 +56,10 @@ rejected pair again.
 - `internal/worker/control`: `Client.Connect(ctx)` with results
   `connected`, `already_connected`, `still_trying` (with the last error),
   `rejected`, `not_paired`.
+- `internal/worker/cli` (task 05): `cli.Env` carries the program path, the
+  systemd `Runner`, and the control client, so tests set fakes; functions
+  that print the two R29 lines and the two rejected lines. Reuse those
+  functions; do not print the same messages a second way.
 - `tervi pair` is handled in `internal/worker/cli` (step zero and the
   already-paired check), and the network part in `internal/worker/pair`,
   which prints `✓ Paired successfully.` and returns `0` on success, both for
@@ -95,7 +99,7 @@ is, and the printed `Try again with: tervi connect` is how the user finishes.
 | `connected`, `already_connected` | `✓ Connected.` | `0` |
 | `still_trying` | `Paired, but not connected yet: <last error>. tervi keeps trying in the background.` then `Check with: tervi status` | `0` |
 | `rejected` | `✗ The server doesn't accept this computer's credential.` then `Pair again with: tervi pair --server <server>` | `1` |
-| a control error | `✗ Can't reach tervi in the background: <reason>` then `Check with: tervi status` | `1` |
+| a control error | `✗ Can't reach tervi in the background: <reason>` then `Check with: tervi status` (task 05's function) | `1` |
 
    The whole hand-over takes at most 30 seconds plus the start step's 10
    seconds. Then the command exits; it never stops the daemon (R31).
@@ -107,8 +111,12 @@ and exits `130`. The pairing stays saved.
 
 - May create or change: `internal/worker/cli/`, `internal/worker/pair/`
   only if the hand-over needs a small hook, their tests, and
-  `test/e2e/pairing_test.go` only to give the existing slice-1 end-to-end
-  test a fake background service, so it never calls real systemd.
+  `test/e2e/pairing_test.go`. In every existing test that runs `tervi pair`
+  (in `internal/worker/cli/cli_test.go`, `internal/worker/pair/`, and
+  `test/e2e/pairing_test.go`), you may set a fake installed program path, a
+  fake systemd `Runner`, and a fake control client in `cli.Env`: the test
+  binary itself lives inside `os.TempDir()`, so without fakes the installed
+  check would stop it, and the hand-over would call real `systemctl`.
 - Must not change: `internal/worker/daemon/`, `internal/worker/control/`,
   `internal/worker/service/`, `internal/worker/state/`,
   `internal/worker/credential/`, `internal/server/`, `api/`, `design/`,
@@ -131,8 +139,8 @@ and exits `130`. The pairing stays saved.
 | `TestHandOverCtrlC` — the message, exit `130`, pairing kept | R31 |
 | `TestNoCredentialInPairOutput` — the output of every test above has no credential | R25 |
 
-Existing slice-1 tests keep passing; change them only where the new
-hand-over lines now follow `✓ Paired successfully.`.
+Existing slice-1 tests keep passing; change them only to add the fakes
+above, and where the new hand-over lines now follow `✓ Paired successfully.`.
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md` changes
 to `done`.

@@ -36,9 +36,11 @@ for offline machines, refreshing every 5 seconds.
 ### What exists (task 01)
 
 `internal/server/connection` keeps the in-memory list of open connections
-and exports `Online(machineID string) bool` and `OnlineIDs() map[string]bool`.
-`server.Run` creates the list and passes it to `server.New`.
-`machines.last_seen_at` exists (migration `0002`).
+(`*connection.List`) and exports `Online(machineID string) bool` and
+`OnlineIDs() map[string]bool`. `server.New(cfg, pool, logger, connections)`
+receives the list. `machines.last_seen_at` exists (migration `0002`).
+`internal/server/httpapi` has `WriteJSON`, `WriteError`, and
+`WriteInternalError`; use them for every answer.
 
 ### The list: `internal/server/machines`
 
@@ -74,7 +76,8 @@ page (`Cache-Control: no-store`, `Referrer-Policy: no-referrer`). Add
 scripts under `/static/` like `app.js`; the test file answers `404`.
 
 The page reads `/api/v1/machines` when it opens and every 5 seconds after,
-counted from the end of the previous request. It shows a heading `Machines`
+counted from the end of the previous request. `machines-view.js` exports the
+wait as `REFRESH_MS = 5000`, and `machines.js` uses that constant. It shows a heading `Machines`
 and one row per machine:
 
 | Machine | Row |
@@ -109,8 +112,9 @@ return `200` and `403`, with at least one machine in the answer.
   (Go and `static/`), `internal/server/server.go` (register the new routes),
   their tests, `test/contract/contract_test.go`, `api/openapi.yaml` (only the
   two `x-planned` lines).
-- Must not change: `internal/server/connection/` (use its exported
-  functions), `internal/protocol/`, anything under `internal/worker/`,
+- Must not change: `internal/server/connection/` and
+  `internal/server/httpapi/` (use their exported functions),
+  `internal/protocol/`, anything under `internal/worker/`,
   `design/`, `slices/` except this task's row in `plan.md`.
 
 ## Definition of done
@@ -123,7 +127,7 @@ return `200` and `403`, with at least one machine in the answer.
 | `TestListHasNoCredential` — the answer has no credential or hash | R25 |
 | `TestMachinesPageServed` — `/machines` and its scripts answer with the right types and headers; the test file answers `404` | R21 |
 | `machines-view.test.js` — each row form, every `<time ago>` boundary (59, 60, 3599, 3600, 86399, 86400), the empty state, the failure line, and that a name with `<b>` is shown as text | R21, R22 |
-| `machines.js` uses a 5-second wait counted from the end of the previous request (checked in `machines-view.test.js` through an exported constant or by review) | R22 |
+| `machines-view.test.js` — `REFRESH_MS` is `5000` | R22 |
 | Contract test — `listMachines` and `machinesPage` return `200` and `403`; no `x-planned` left on them | contract |
 
 `go vet ./...`, `go test ./...`, and `node --test internal/server/web/static/`

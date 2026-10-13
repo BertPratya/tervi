@@ -73,10 +73,24 @@ StopReason *string `json:"stop_reason"`
 ```
 
 A missing `connect` reads as `false`; `stop_reason` is written as `null` or
-`"credential_rejected"`. Only the daemon writes these two fields (see
+`"credential_rejected"`. Only the daemon changes these two fields (see
 `design/data-model.md`): it reads `state.json`, changes them, and writes the
 whole record back, keeping `machine_id`, `credential_saved`, and `confirmed`
 exactly as they were.
+
+### "Is this computer paired?": `internal/worker/credential`
+
+Add one function used by the daemon here and by the commands in task 05:
+
+```go
+// Paired reports whether this computer is paired: state.json exists with
+// confirmed true, and the secret store entry exists and is usable.
+func Paired(stateDir string, store *Store) (entry Entry, record state.State, paired bool, err error)
+```
+
+`err` is set when `state.json` or the secret store cannot be read, or the
+entry is damaged (`ErrDamaged`); `paired` is then false. A missing file or a
+missing entry is not an error: `paired` is false and `err` is nil.
 
 ### The package: `internal/worker/daemon`
 
@@ -87,7 +101,8 @@ type Options struct {
     Log      io.Writer        // one line per connection change
     Now      func() time.Time // nil: time.Now
     Rand     func() float64   // nil: math/rand/v2; returns [0,1)
-    Dial     ...              // optional, for tests; default uses coder/websocket
+    // Dial opens the WebSocket; nil uses websocket.Dial from coder/websocket.
+    Dial func(ctx context.Context, url string, opts *websocket.DialOptions) (*websocket.Conn, *http.Response, error)
 }
 func New(opts Options) *Daemon
 func (d *Daemon) Run(ctx context.Context) error   // until ctx ends
@@ -95,11 +110,16 @@ func (d *Daemon) Status() Status
 func (d *Daemon) Connect(ctx context.Context) ConnectResult
 ```
 
-`Run` reads `state.json` and the secret store entry, then loops:
+`Run` reads `state.json`, then loops:
 
-- `connect` false, or not paired (no confirmed `state.json` or no entry):
-  stay idle until `Connect` is called or `ctx` ends. No network at all.
-- `connect` true: try to connect, as below.
+- `connect` false, or no confirmed `state.json`: stay idle until `Connect`
+  is called or `ctx` ends. No network at all.
+- `connect` true: try to connect, as below. Each try reads the secret store
+  entry again (through `credential.Paired`). A store that cannot be read, a
+  damaged entry, or a missing entry is a **failed try**: it gets the log
+  line and the R9 wait like any other failure, and never sets `connect` to
+  false. This matters at login: systemd may start the daemon before GNOME
+  Keyring is unlocked, and the next try then succeeds.
 - When `ctx` ends: close an open connection with `1000` and return `nil`.
 
 ### One try
@@ -122,9 +142,24 @@ func (d *Daemon) Connect(ctx context.Context) ConnectResult
 
 ### Waits between tries (R9)
 
-Base waits 1, 2, 4, 8, 16, then 30 seconds for every later try. Each actual
-wait is `base × (0.8 + 0.4 × Rand())`. The count goes back to the first wait
-after a connection succeeded (`hello` arrived). There is no limit on tries.
+Tries are numbered from 1. The base wait before try *n* is:
+
+| Try | 1 | 2 | 3 | 4 | 5 | 6 and later |
+| --- | --- | --- | --- | --- | --- | --- |
+| Base wait before it | 1 s | 2 s | 4 s | 8 s | 16 s | 30 s |
+
+Each actual wait is `base × (0.8 + 0.4 × Rand())`.
+
+- **After a lost connection:** wait before try 1, then log
+  `… Reconnecting (try 1)` and try.
+- **The first try after `Run` starts, or after `Connect`:** it is try 1,
+  with no wait and no "Reconnecting" line.
+- **When try *n* fails:** log the failure line, whose "Next try in" is the
+  wait chosen for try *n*+1; wait it; log `… Reconnecting (try <n+1>)`; try.
+- **When `hello` arrives:** the next loss starts again from try 1.
+
+So the first announced wait is at least 1.6 seconds and rounds to 2 or more.
+There is no limit on tries.
 
 ### Rejection (R18, R20)
 
@@ -140,9 +175,9 @@ picked up. Then:
 
 | Situation | Result |
 | --- | --- |
-| Not paired | `not_paired` |
+| No confirmed `state.json`, or no secret store entry | `not_paired` |
 | Already connected | `already_connected` (nothing changes) |
-| Otherwise | Writes `connect: true`, `stop_reason: null`; wakes the loop; waits until connected (`connected`), rejected (`rejected`), or 30 seconds or `ctx` end (`still_trying`, with the last error) |
+| Otherwise (including a secret store that cannot be read, or a damaged entry) | Writes `connect: true`, `stop_reason: null`; wakes the loop; waits until connected (`connected`), rejected (`rejected`), or 30 seconds or `ctx` end (`still_trying`, with the last error, for example `can't read the secret store`) |
 
 ### `Status()`
 
@@ -152,6 +187,33 @@ picked up. Then:
 | `reconnecting` | server, try number, time of the next try, last error |
 | `not_connecting` | stop reason (`credential_rejected` or none) |
 | `not_paired` | — |
+
+`reconnecting` covers every moment `connect` is true and no connection is
+open, including a try that is under way and the time before any try has
+failed:
+
+- **try number:** the try under way, or the next one while waiting.
+- **time of the next try:** while waiting, when the wait ends; while a try
+  is under way, the current time (so `next_try_in_seconds` is `0`).
+- **last error:** the most recent failure since the last connection, or
+  none before any try has failed.
+
+`server` is read from the secret store entry, never from `state.json`.
+
+### Error texts
+
+The same error has one text, written in two ways:
+
+| Failure | `last error` (in `Status`, `Connect`, and mid-sentence) | In a log line, after `✗ ` |
+| --- | --- | --- |
+| Connection refused | `connection refused` | `Connection refused` |
+| No answer within 10 s, or no `hello` within 30 s | `no answer from the server` | `No answer from the server` |
+| An HTTP answer other than `101` and the rejection | `the server answered <status code>` | `The server answered <status code>` |
+| The secret store cannot be read | `can't read the secret store` | `Can't read the secret store` |
+| The secret store entry is damaged | `the secret store entry is damaged` | `The secret store entry is damaged` |
+| Any other network error | Go's error text, first letter lower-case | the same, first letter upper-case |
+
+The log form is the `last error` form with its first letter upper-case.
 
 ### Log lines (R8)
 
@@ -167,12 +229,12 @@ Each line starts with the local time `15:04:05` and a space. Exact texts:
 
 `<reason>`: `the server is stopping` (1001), `replaced by a newer connection`
 (4000), `no answer from the server for <timeout> seconds` (timeout),
-`the server closed the connection` (any other close), or the network error.
-`<error>`: `Connection refused`, `No answer from the server`, `The server answered <status code>`,
-or the error text. `<s>` is the wait rounded to the nearest whole second
-(at least 1). Nothing is logged for `ping`, `pong`, or `hello`. The first try
-after start or after `Connect` logs no "Reconnecting" line; only tries after
-a loss or a failure do.
+`the server closed the connection` (any other close), or the network error
+in its `last error` form. `<error>` is the log form from "Error texts".
+`<s>` is the wait rounded to the nearest whole second; by the waits above it
+is always 2 or more. Nothing is logged for `ping`, `pong`, or `hello`. The
+first try after start or after `Connect` logs no "Reconnecting" line; only
+tries after a loss or a failure do.
 
 ### Secrets
 
@@ -181,7 +243,8 @@ Never write the credential to the log, an error, `Status`, or `state.json`.
 ## Boundaries
 
 - May create or change: `internal/worker/daemon/`, `internal/worker/state/`
-  (the two fields and their tests), their tests.
+  (the two fields and their tests), `internal/worker/credential/` (only the
+  `Paired` function and its tests), their tests.
 - Must not change: `internal/worker/cli/`, `internal/worker/pair/`,
   `internal/server/`, `internal/protocol/` (report a missing piece instead),
   `cmd/`, `api/`, `design/`, `slices/` except this task's row in `plan.md`.
@@ -197,13 +260,17 @@ injected clock and `Rand`, and short test timings.
 | `TestUsesServerTiming` — different `hello` values change the ping interval and the timeout | R14 |
 | `TestServerCloseNoticedAtOnce` — a server close starts reconnecting without waiting for the timeout | R12 |
 | `TestServerSilenceTimesOut` — no message for the timeout closes with `4001` and reconnects | R13 |
-| `TestReconnectWaits` — base waits 1, 2, 4, 8, 16, 30, 30; with `Rand` 0 and almost 1 each wait is within 0.8–1.2 × base; the count resets after `hello` | R9 |
+| `TestReconnectWaits` — after a loss: wait before try 1, then 2, 4, 8, 16, 30, 30 s as bases; the first try after start has no wait; the logged "Next try in" is the wait before the next try; with `Rand` 0 and almost 1 each wait is within 0.8–1.2 × base; the count resets after `hello` | R9, R8 |
+| `TestStoreUnreadableIsFailedTry` — while `connect` is true, an unreadable store, a damaged entry, and a missing entry each give a failed try with its log line and wait, `connect` stays true, and the next try reads the store again and connects | R2, R5 |
+| `TestStatusWhileTrying` — `Status` during a try under way (`next_try_in_seconds` 0) and before any failure (no last error) | R16 support |
+| `TestErrorTexts` — each failure's `last error` and log forms from the table | R8, R16 support |
+| `TestPaired` — `credential.Paired` for: paired; no `state.json`; not confirmed; no entry; unreadable store; damaged entry | R4, R16 support |
 | `TestKeepsTryingForever` — many failed tries never stop the loop or change `connect` | R2, R19 |
 | `TestOnlyUnknownCredentialStops` — `500`, `404`, other `401` bodies, refused connections, and timeouts all lead to another try | R19 |
 | `TestRejectionStops` — `401 unknown_credential` stops trying, writes `connect: false` and `stop_reason`, logs the line | R18 |
 | `TestConnectAfterRejection` — `Connect` tries again; a second rejection stops again | R20 |
 | `TestIdleWhileConnectFalse` — no network activity while `connect` is false; `Status` still answers | R3 |
-| `TestConnectResults` — `not_paired`, `already_connected`, `connected`, `rejected`, `still_trying` after 30 s (injected clock) | R3, R20 |
+| `TestDaemonConnectResults` — `not_paired`, `already_connected`, `connected`, `rejected`, `still_trying` after 30 s (injected clock) | R3, R20 |
 | `TestConnectReadsNewPairing` — after the pairing changes, `Connect` uses the new server and credential | R20 |
 | `TestStateKeepsPairingFields` — writing `connect` keeps the other fields; a file without `connect` reads as false | R1 data rule |
 | `TestLogLines` — the exact lines for each event, and no line for `ping`/`pong`/`hello` | R8 |

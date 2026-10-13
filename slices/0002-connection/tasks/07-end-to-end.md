@@ -64,8 +64,10 @@ a fake that runs the real daemon in the same test process.
 - `test/e2e/pairing_test.go`: the slice-1 end-to-end test, with a fixture
   that runs the real server (`internal/server`) on a test database
   (`dbtest`) and the real worker command (`cli.Run`) with an in-memory
-  secret store and a temporary state folder. Reuse its fixture and helpers;
-  move shared helpers into a `helpers_test.go` if both files need them.
+  secret store and a temporary state folder. Reuse its helpers (output
+  buffers, approving through the API, reading the code); move shared
+  helpers into a `helpers_test.go` if both files need them. Its proxy is
+  not used here (see below).
 - Task 05's `cli.Env` hooks let a test replace systemd and the program path.
 - Task 04's `tervi daemon` and `internal/worker/control` run the daemon with
   a runtime folder you choose (set `XDG_RUNTIME_DIR` to a temporary folder
@@ -79,31 +81,45 @@ goroutine, with the test's state folder, secret store, and runtime folder.
 The fake records that it was asked to start. The program path is a fake
 installed path outside `os.TempDir()`.
 
-### Server timing
+### How the test runs the server
 
-Run the server with a 1-second check interval and a 3-second timeout, so the
-test stays fast.
+The slice-1 fixture puts a proxy in front of the server that reads whole
+answers, so it cannot carry a WebSocket. For these tests, do not use the
+proxy: the worker pairs with, and the daemon dials, the server's own
+address.
 
-### Scenarios, in one test or several
+- Build the server with
+  `server.New(cfg, pool, logger, connections)`, where `connections` is a
+  `connection.NewList()` the test holds, and `cfg` has a 1-second check
+  interval, a 3-second timeout, and `PublicURL` set to the server's address.
+- Serve it with `httptest.NewUnstartedServer`, using a listener the test
+  opens on `127.0.0.1:0`, so the address is known before it starts.
+- **To stop the server:** `connections.CloseAll()`, then close the
+  `httptest` server. **To start it again:** open a new listener on the same
+  address, and serve a new `server.New(...)` with a new list, on the same
+  database.
+
+### Scenarios
 
 1. **Pair and connect.** Pair through the approval API and the code, as the
    slice-1 test does. The output ends with the R10 lines.
    `GET /api/v1/machines` shows the machine `online: true`. `tervi status`
-   shows `● Connected to <server>`, exit `0`.
-2. **The server restarts.** Stop the server (cancel its context). The daemon
-   notices at once (its log has `✗ Connection lost: the server is stopping`
-   within a second), and `tervi status` shows `○ Reconnecting`. Start a new
-   server on the same address and database. The daemon reconnects by itself,
-   and the list shows the machine Online again, with `last_seen_seconds_ago`
-   set. Before it reconnects, the new server lists it Offline.
+   shows `● Connected to <server>`, exit `0`. `state.json` has
+   `"connect": true` and `"stop_reason": null`, with the pairing fields as
+   before.
+2. **The server restarts.** Stop the server as above. The daemon notices at
+   once (its log has `✗ Connection lost: the server is stopping` within a
+   second), and `tervi status` shows `○ Reconnecting`. Start the server
+   again as above. The daemon reconnects by itself, and the list shows the
+   machine Online again, with `last_seen_seconds_ago` set.
 3. **Newest wins.** Open a second WebSocket with the same credential (read
    it from the in-memory secret store in the test). The daemon's connection
    is replaced (its log shows `replaced by a newer connection`), the server
    logs the warning with the machine id, and the machine stays Online. Close
    the extra connection; the daemon reconnects.
 4. **Rejection, then pairing again.** Set the machine's status to `failed`
-   in the database, then close its connection from the server side. The
-   daemon's next try gets `401`, it stops, `state.json` has
+   in the database, then call `connections.CloseAll()` (the server keeps
+   running). The daemon's next try gets `401`, it stops, `state.json` has
    `connect: false` and `stop_reason: "credential_rejected"`, and
    `tervi status` shows the R16 rejection lines. `tervi pair` then prints the
    R33 line and a new pairing completes and connects.
@@ -120,11 +136,11 @@ test stays fast.
 
 | Test | Proves |
 | --- | --- |
-| `TestPairConnectsEndToEnd` | R10, R16, R21, R23 |
-| `TestServerRestartEndToEnd` | R2, R12, R16, R23, R24 |
-| `TestNewestWinsEndToEnd` | R15 |
-| `TestRejectionAndPairAgainEndToEnd` | R16, R18, R33 |
-| `TestNoSecretsEndToEnd` (or a check inside each test above) | R25 |
+| `TestPairConnectsEndToEnd` — scenario 1 | R1, R10, R16, R21, R23 |
+| `TestServerRestartEndToEnd` — scenario 2 | R2, R12, R16, R23, R24 |
+| `TestNewestWinsEndToEnd` — scenario 3 | R15 |
+| `TestRejectionAndPairAgainEndToEnd` — scenario 4 | R16, R18, R33 |
+| `TestNoSecretsEndToEnd` — runs scenarios 1 and 4 and checks every output, log, answer, and `state.json` for the credential | R25 |
 
 The slice-1 end-to-end tests still pass. `go vet ./...` and `go test ./...`
 pass. This task's row in `plan.md` changes to `done`.

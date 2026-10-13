@@ -240,12 +240,21 @@ paths:
         and no WebSocket opens. That `401` is the only answer that means the
         worker must stop trying (spec R18, R19). After `101`, the messages
         are described in `asyncapi.yaml`. A new connection for a machine
-        that already has one replaces it (spec R15).
+        that already has one replaces it (spec R15). A request with a known
+        credential that is not a WebSocket opening request (no
+        `Upgrade: websocket`, or the wrong WebSocket version) gets `400`.
       security:
         - credential: []
       responses:
         "101":
           description: The WebSocket is open
+        "400":
+          description: "`invalid_input`: not a WebSocket opening request"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: invalid_input }
         "401":
           $ref: "#/components/responses/UnknownCredential"
         "403":

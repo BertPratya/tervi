@@ -77,9 +77,11 @@ exits, leaving the daemon running.
   daemon answers.
 - `internal/worker/cli`: one file per command; `connect`, `status`, and
   `logs` print `Not available yet.` — replace them.
-- `state.ReadState` and `credential.Store.Get` tell whether this computer is
-  paired: `state.json` exists with `confirmed: true` and the secret store
-  entry exists.
+- `credential.Paired(stateDir, store)` (task 03) tells whether this computer
+  is paired, and gives the secret store entry, whose `server` is the
+  `<server>` in every message below. Use it; do not write a second check.
+- The daemon's `last error` texts are already in the form the messages
+  below need (`connection refused`, lower-case).
 
 ### The package: `internal/worker/service`
 
@@ -88,13 +90,21 @@ systemd:
 
 ```go
 type Runner interface {
+    // Run runs a command to the end and returns its combined output.
     Run(ctx context.Context, name string, args ...string) (output string, err error)
+    // Stream runs a command with its standard output and standard error
+    // going to out as they are written, until it ends or ctx ends.
+    Stream(ctx context.Context, out io.Writer, name string, args ...string) error
 }
 ```
 
+The real `Runner` uses `os/exec`. `tervi logs` uses `Stream`; everything
+else uses `Run`.
+
 **Installed check (R28).** `os.Executable()`, with symbolic links resolved.
-If it lies inside `os.TempDir()` (where `go run` builds programs), the
-program is temporary: print
+If it lies inside `os.TempDir()`, or inside any folder named `go-build`
+(where `go run` builds programs, even when `GOTMPDIR` moves Go's temporary
+folder), the program is temporary: print
 `tervi must be installed to run in the background. Install it with: go install ./cmd/tervi`
 and exit `1`.
 
@@ -104,10 +114,12 @@ and exit `1`.
 
 **Start (the "Starting the background service" mechanism in `plan.md`):**
 
-1. If the service file is missing or its `ExecStart` names another path,
-   write it and run `systemctl --user daemon-reload`.
-2. Run `systemctl --user enable --now tervi`.
-3. Wait until `control.Client.Status` stops returning `ErrNotRunning`,
+1. If the service file is missing or its `ExecStart` names another path:
+   write it, then run `systemctl --user daemon-reload`,
+   `systemctl --user enable tervi`, and `systemctl --user restart tervi`
+   (a daemon still running an old program file is replaced, R5).
+   Otherwise run `systemctl --user enable --now tervi`.
+2. Wait until `control.Client.Status` stops returning `ErrNotRunning`,
    checking every 200 ms, at most 10 seconds.
 
 A failure in any step returns an error whose text is systemd's own message
@@ -117,9 +129,14 @@ when there is one (the command's output, trimmed), or
 `Try again with: tervi connect`.
 
 Export one function that the pairing (task 06) also uses:
-`EnsureRunning(ctx) error` doing steps 1–3. Put whatever the commands need
-from systemd, the program path, and the control client into `cli.Env` (or
-the existing dependency pattern) so tests can replace them.
+`EnsureRunning(ctx) error` doing steps 1–2. Put whatever the commands need
+from systemd (the `Runner`), the program path, and the control client into
+`cli.Env`, so tests can replace them. When a field is nil, `cmd/tervi`'s
+real value is used only if `main` sets it; tests set fakes.
+
+Put the printing of the shared messages (the two R29 lines, the two
+rejected lines, the not-paired line, the two control-error lines) in
+functions in `internal/worker/cli`, so task 06 reuses them.
 
 ### `tervi connect` (R4, R28, R29, R31)
 
@@ -136,14 +153,22 @@ the existing dependency pattern) so tests can replace them.
 | `still_trying` | `Not connected yet: <last error>. tervi keeps trying in the background.` then `Check with: tervi status` | `1` |
 | `rejected` | `✗ The server doesn't accept this computer's credential.` then `Pair again with: tervi pair --server <server>` | `1` |
 | `not_paired` | the not-paired line above | `1` |
+| a control error (the service started, but the call failed) | `✗ Can't reach tervi in the background: <reason>` then `Check with: tervi status` | `1` |
 
-`<server>` comes from the secret store entry. The command then exits; it
-never stops the daemon.
+Ctrl+C while waiting for the answer prints
+`Connecting was cancelled; tervi keeps trying in the background.` and exits
+`130`. Ctrl+C stops only the waiting, never the daemon.
+
+`<server>` comes from the secret store entry. In
+`Pair it with: tervi pair --server <url>`, `<url>` is printed exactly as
+written, because a computer that is not paired has no server address to fill
+in. The command then exits; it never stops the daemon.
 
 ### `tervi status` (R16, R17)
 
 1. Not paired → `✗ This computer isn't paired.` then
-   `  Pair it with: tervi pair --server <url>`, exit `1`.
+   `  Pair it with: tervi pair --server <url>` (`<url>` printed as is),
+   exit `1`. A daemon that answers `not_paired` gets the same two lines.
 2. `control.Client.Status`; `ErrNotRunning` →
    `✗ tervi isn't running in the background.` then
    `  Start it with: tervi connect`, exit `1`.
@@ -167,9 +192,22 @@ never stops the daemon.
 ```
 
 Machine is this computer's hostname (`os.Hostname`). `Since` is the local
-time `15:04`, then the time since: `less than a minute`, `1 minute`,
-`N minutes`, `1 hour`, `N hours`, `1 day`, `N days`. Exit `0` only when
-connected.
+time `15:04`, then the time since, rounded down:
+
+| Seconds since | Text |
+| --- | --- |
+| under 60 | `less than a minute` |
+| under 3600 | `1 minute`, `N minutes` |
+| under 86400 | `1 hour`, `N hours` |
+| otherwise | `1 day`, `N days` |
+
+Exit `0` only when connected. For the rejected lines, `<server>` comes from
+the secret store entry.
+
+**Open — waiting for the user's wording:** what `○ Reconnecting` shows while
+a try is under way (`next_try_in_seconds` is `0`) and before any try has
+failed (no last error). Until the user answers, build the two cases so the
+wording is one string each, easy to change.
 
 If the daemon answers `not_connecting` without a stop reason (a computer
 paired in slice 1 whose daemon was started by hand), print
@@ -178,7 +216,7 @@ paired in slice 1 whose daemon was started by hand), print
 ### `tervi logs` (R32)
 
 Run `journalctl --user -u tervi -o cat --no-pager`, adding `-f` for
-`tervi logs -f`, with its output going straight to standard output, until it
+`tervi logs -f`, through `Runner.Stream` with standard output, until it
 ends or the context ends (Ctrl+C). Exit `0`; `1` with
 `✗ Can't read the log: <reason>` if `journalctl` fails to start. Anything
 else after `logs` is wrong usage (exit `2`).
@@ -196,19 +234,21 @@ else after `logs` is wrong usage (exit `2`).
 
 | Test | Proves |
 | --- | --- |
-| `TestInstalledCheck` — a program inside `os.TempDir()` gets the message and exit `1`; one outside passes | R28 |
+| `TestInstalledCheck` — a program inside `os.TempDir()`, and one inside a `go-build` folder elsewhere, get the message and exit `1`; one in neither passes | R28 |
+| `TestConnectControlError` — the service starts but the call fails: the two lines, exit `1` | R4 |
+| `TestConnectCtrlC` — Ctrl+C while waiting: the message, exit `130`, and the fake daemon is still running | R4, R31 |
 | `TestServiceFileContents` — exactly the data model's file, with the absolute program path | R5, R6 |
-| `TestServiceFileRewrittenWhenPathChanges` — a different `ExecStart` is replaced and `daemon-reload` runs; the same path is left alone | R5 |
+| `TestServiceFileRewrittenWhenPathChanges` — a different `ExecStart` is replaced and `daemon-reload`, `enable`, `restart` run in that order; the same path is left alone and `enable --now` runs | R5 |
 | `TestEnsureRunningSteps` — the `systemctl` calls in order, then waiting for the socket | R5 |
 | `TestEnsureRunningFailures` — `systemctl` failing, systemd missing, and no socket after 10 s each give the reason | R29 |
-| `TestConnectResults` — every row of the result table, with output and exit code | R4 |
+| `TestConnectCommandResults` — every row of the result table, with output and exit code | R4 |
 | `TestConnectNotPaired` | R4 |
 | `TestConnectStartsStoppedService` — with no daemon answering, `connect` runs the start steps, then connects | R4 |
 | `TestConnectServiceFails` — the two lines, exit `1`, `state.json` and the secret store entry unchanged | R29 |
 | `TestConnectReturnsAfterLastLine` — the command returns after printing; the fake daemon is still running | R31 |
-| `TestStatusOutputs` — each of the five R16 cases and the slice-1 case, with exit codes | R16, R17 |
-| `TestStatusSince` — each `Since` wording | R16 |
-| `TestLogsCommand` — the exact `journalctl` arguments with and without `-f`; failure message; wrong usage | R32 |
+| `TestStatusOutputs` — each of the five R16 cases, the slice-1 case, and a daemon answering `not_paired`, with exit codes | R16, R17 |
+| `TestStatusSince` — each `Since` wording at 0, 59, 60, 119, 120, 3599, 3600, 86399, 86400 seconds | R16 |
+| `TestLogsCommand` — the exact `journalctl` arguments with and without `-f`, passed to `Runner.Stream`; failure message; wrong usage | R32 |
 | `TestNoCredentialPrinted` — no command's output contains the credential | R25 |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md` changes

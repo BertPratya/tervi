@@ -7,16 +7,18 @@ Spec: [spec.md](spec.md)
 
 | Part | Location | Notes |
 | --- | --- | --- |
+| JSON answers and proofs | `internal/server/httpapi` | Shared by the server's route packages: reading the `Authorization: Bearer` proof and writing JSON answers and `{"error": …}` answers. Moved here from `internal/server/pairing` (task 01) |
 | Connection on the server | `internal/server/connection` | Accepts each worker's connection, checks its credential, keeps one connection per machine (newest wins), runs the checks that notice a lost worker, knows which machines are Online, and records "last seen"; `Register(mux, ...)` for its route |
 | Machines list | `internal/server/machines` | The list the Machines page shows: every paired machine with its name, OS, Online or Offline, and "last seen"; `Register(mux, ...)` for its route |
 | Machines page | `internal/server/web` | `/machines`, plain HTML and JavaScript next to the approval page, refreshing itself every 5 seconds |
 | Database | `internal/server/db` | A migration that adds "last seen" to machines |
 | Connection messages | `internal/protocol` | Shared by both sides: the messages sent over the connection, and the check timing the server sends the worker |
-| Daemon | `internal/worker/daemon` | The long-running program: obeys `connect`, connects, reconnects with growing waits, stops on a rejected credential, allows one daemon per user account, writes the log lines |
-| Talking to the daemon | `internal/worker/control` | How `tervi status` and `tervi connect` reach the running daemon, and its answers |
+| Daemon | `internal/worker/daemon` | The long-running engine: obeys `connect`, connects, reconnects with growing waits, stops on a rejected credential, writes the log lines |
+| Talking to the daemon | `internal/worker/control` | The runtime folder, the lock that allows one daemon per user account, the socket `tervi status` and `tervi connect` use to reach the running daemon, and its answers |
 | Background service | `internal/worker/service` | Sets up, starts, and enables the systemd user service; checks that tervi is installed (R28); reads the log for `tervi logs` |
 | Worker command line | `internal/worker/cli` | Adds `tervi connect`, `tervi status`, `tervi logs`, and `tervi daemon`; after pairing, starts the background service and waits for the connection |
 | Worker local record | `internal/worker/state` | Adds `connect` and the rejection reason to `state.json` |
+| Worker credential | `internal/worker/credential` | Adds one "is this computer paired?" check (a confirmed `state.json` and a secret store entry), used by the daemon and the commands |
 | End-to-end test | `test/e2e` | Adds the connection: pairing connects, the server stops and comes back, a rejected credential |
 | API contract | `api` | `openapi.yaml` gets the connection route and the machines list; a new `asyncapi.yaml` holds the messages sent over the connection |
 
@@ -64,8 +66,8 @@ worker's own commands call it, so it is described here, not in `api/`.
 
 | Operation | Called by | Answer |
 | --- | --- | --- |
-| `GET /status` | `tervi status` | The state: `connected` (server, machine name, connected since), `reconnecting` (try number, seconds until the next try, last error), or `not_connecting` (the stop reason) |
-| `POST /connect` | `tervi connect`, and `tervi pair` after pairing | Sets `connect` to true, reads the pairing again, and answers once the result is known or 30 seconds have passed: `connected`, `already_connected`, `still_trying` (with the last error), or `rejected` |
+| `GET /status` | `tervi status` | The state: `connected` (server, connected since), `reconnecting` (server, try number, seconds until the next try, last error), `not_connecting` (the stop reason), or `not_paired` |
+| `POST /connect` | `tervi connect`, and `tervi pair` after pairing | Sets `connect` to true, reads the pairing again, and answers once the result is known or 30 seconds have passed: `connected`, `already_connected`, `still_trying` (with the last error), `rejected`, or `not_paired` |
 
 A program from another user account is refused before any operation runs
 (R26).
@@ -100,19 +102,24 @@ reaches the other side.
 ### Reconnecting
 
 Applies to the daemon whenever `connect` is true and it has no connection.
-Covers R2, R9, R19. The waits between tries are 1, 2, 4, 8, 16, then 30
-seconds, each made longer or shorter at random by up to 20%. The count
-starts again from 1 once a connection succeeds, which means `hello`
-arrived. Every failure leads to another try except a `401` (next
-mechanism). Each try's request waits at most 10 seconds, as in slice 1.
+Covers R2, R9, R19. The base wait before try *n* is 1, 2, 4, 8, 16
+seconds for tries 1–5, and 30 seconds for every later try; each actual wait
+is made longer or shorter at random by up to 20%. After a lost connection,
+the daemon waits before try 1. The first try after the daemon starts, or
+after `POST /connect`, is try 1 with no wait. The count starts again from 1
+once a connection succeeds, which means `hello` arrived. Every failure
+leads to another try except a `401` (next mechanism); a secret store that
+cannot be read is a failed try too, read again on every try, so a keyring
+that unlocks a little after login still connects. Each try's request waits
+at most 10 seconds, as in slice 1.
 
 ### Rejection
 
 Covers R18–R20. A `401 unknown_credential` answer to the opening request
 makes the daemon stop trying, set `connect` to false and `stop_reason` to
 `credential_rejected`, and log it. `POST /connect` sets `connect` back to
-true, reads the pairing again, and makes one try; a second `401` stops it
-the same way.
+true, reads the pairing again, and tries as usual (R2); a `401` on its
+first try stops it again the same way (R20).
 
 ### One connection per machine
 
@@ -132,30 +139,39 @@ same moment.
 
 Covers R24. The server writes `last_seen_at` when a machine connects, when
 a message arrives and the last write was a minute or more ago, and when the
-connection ends (the time of the last message received).
+connection ends (the time of the last message received). The check
+interval is at most 60 seconds, so a connected machine sends a message, and
+gets a write, at least once a minute. Every write uses the database's
+clock: `now()`, or at the end `now()` minus the time since the last message
+as measured by the server. The machines list also computes "seconds ago"
+with the database's clock, so the two never disagree.
 
 ### Server stopping
 
-Covers R12. On Ctrl+C, the server closes every connection with code `1001`
-before it exits, so each worker notices at once and starts reconnecting.
+Covers R12, R24. On Ctrl+C, the server closes every connection with code
+`1001` and waits until each connection has written its final
+`last_seen_at`, before it stops serving and closes the database. Each worker
+notices at once and starts reconnecting.
 
 ### Starting the background service
 
 Applies to `tervi pair` after pairing and to `tervi connect`. Covers R4,
-R5, R10, R11, R28, R29, R31. The steps, each with a limit inside the 30
-seconds of R11:
+R5, R10, R11, R28, R29, R31. Steps 2–3 take at most 10 seconds; step 4
+waits at most 30 seconds (R11):
 
 1. Check that tervi is installed: the running program's path must not be
-   inside the system's temporary folder, where `go run` builds programs
-   (R28). `tervi pair` does this before contacting the server.
+   inside the system's temporary folder or a `go-build` folder, where
+   `go run` builds programs (R28). `tervi pair` does this before contacting the server.
 2. If the service file is missing or names another program path, write it
-   (as in [`design/data-model.md`](../../design/data-model.md)) and run
-   `systemctl --user daemon-reload`.
-3. Run `systemctl --user enable --now tervi`.
-4. Wait for the daemon's socket to answer.
-5. Call `POST /connect` and print the result.
+   (as in [`design/data-model.md`](../../design/data-model.md)), run
+   `systemctl --user daemon-reload`, `systemctl --user enable tervi`, and
+   `systemctl --user restart tervi`, so a daemon still running an old
+   program file is replaced by the new one (R5). Otherwise run
+   `systemctl --user enable --now tervi`.
+3. Wait for the daemon's socket to answer.
+4. Call `POST /connect` and print the result.
 
-A failure in steps 2–4 prints the reason and `Try again with: tervi connect`
+A failure in steps 2–3 prints the reason and `Try again with: tervi connect`
 (R29); the pairing stays saved. After the last line, the command exits
 (R31).
 
@@ -266,19 +282,35 @@ with `0`.
   offsets would last, but a restart shorter than the first five tries would
   still bring every worker at once.
 - tervi gives instructions to systemd by running its commands
-  (`systemctl --user daemon-reload`, `systemctl --user enable --now tervi`,
+  (`systemctl --user daemon-reload`, `enable`, `restart`, `enable --now`,
   `journalctl --user -u tervi`) — no new library, the steps are the ones a
   user would type, systemd's own error messages can be shown as they are,
   and `tervi logs` shows exactly what `journalctl` would.
   Not chosen: `github.com/coreos/go-systemd` over D-Bus — a new library and
   more code, and reading the journal with it needs C code (cgo), which
   complicates building.
+- `tervi daemon` exits with `0` when another daemon already runs — systemd
+  (`Restart=on-failure`) leaves a clean exit alone.
+  Not chosen: exit `1` plus `RestartPreventExitStatus=1` in the service file
+  — an extra special line; exit `1` alone — systemd would restart it every
+  5 seconds forever while the user runs one by hand.
+- A program counts as temporary (R28) when its resolved path is inside
+  `os.TempDir()` or inside a folder named `go-build` — catches `go run` even
+  when Go's temporary folder is moved (`GOTMPDIR`).
+  Not chosen: only inside `os.TempDir()` — misses a moved Go temporary
+  folder; "is it the `tervi` on `PATH`" — wrongly refuses a tervi installed
+  outside `PATH`.
+- `last_seen_at` is rewritten when a message arrives and the last write was
+  a minute or more ago, with the check interval capped at 60 seconds so the
+  minute always holds — no extra timer.
+  Not chosen: a timer per connection writing every minute — works with no
+  messages, but adds a timer for every machine.
 
 ## Requirement coverage
 
 | Requirement | Tasks |
 | --- | --- |
-| R1 | 03, 06 |
+| R1 | 03, 06, 07 |
 | R2 | 03, 07 |
 | R3 | 03, 04 |
 | R4 | 05 |
@@ -328,4 +360,11 @@ user finishes with `tervi connect` (R29).
 | 06 | [Worker: pairing hands over to the daemon](tasks/06-pairing-hands-over.md) | 05 | core | todo |
 | 07 | [End-to-end test of the connection](tasks/07-end-to-end.md) | 01–06 | normal | todo |
 
-Tasks 02 and 03 can be built at the same time.
+Tasks 02 and 03 can be built at the same time. Both change their own row
+in this table; the rows are next to each other, so the second merge into
+the slice branch has a one-line conflict, which the architect resolves.
+
+Task sizes are uneven: task 03 (the daemon's engine) is the largest, and
+tasks 06 and 07 are small. This is accepted: splitting task 03 would
+separate the connection loop from the methods that drive it, and task 07 is
+tests only.
