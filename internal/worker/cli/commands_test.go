@@ -153,6 +153,9 @@ func TestInstalledCheck(t *testing.T) {
 			client := &commandControl{statuses: []statusResult{{answer: control.StatusAnswer{State: "connected", Server: "http://localhost:8080", Since: time.Now().Format(time.RFC3339)}}}, connect: control.ConnectAnswer{Result: "already_connected"}}
 			env, _, stdout, stderr := commandEnv(t, runner, client, true)
 			env.ProgramPath = tc.program
+			if !tc.blocked {
+				writeCurrentServiceFile(t, env)
+			}
 			code := Run(context.Background(), []string{"connect"}, env, nil)
 			if tc.blocked {
 				want := "tervi must be installed to run in the background. Install it with: go install ./cmd/tervi\n"
@@ -162,7 +165,7 @@ func TestInstalledCheck(t *testing.T) {
 				if len(runner.calls) != 0 || client.statusCalls != 0 {
 					t.Errorf("temporary executable did work: runner=%v status calls=%d", runner.calls, client.statusCalls)
 				}
-			} else if code != 0 || stdout.String() != "✓ Connected.\n" || stderr.Len() != 0 || client.connectCalls != 1 {
+			} else if code != 0 || stdout.String() != "Already connected.\n" || stderr.Len() != 0 || client.connectCalls != 1 {
 				t.Errorf("installed Run(connect) = %d, stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 			}
 		})
@@ -338,13 +341,14 @@ func TestConnectStartsStoppedService(t *testing.T) {
 			{err: control.ErrNotRunning},
 			{answer: control.StatusAnswer{State: "reconnecting", Server: "http://localhost:8080"}},
 		},
-		connect: control.ConnectAnswer{Result: "connected"},
+		connect: control.ConnectAnswer{Result: "already_connected"},
 	}
 	env, _, stdout, stderr := commandEnv(t, runner, client, true)
+	writeCurrentServiceFile(t, env)
 	if code := Run(context.Background(), []string{"connect"}, env, nil); code != 0 {
 		t.Fatalf("Run(connect) = %d, want 0", code)
 	}
-	wantCalls := [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
+	wantCalls := [][]string{{"systemctl", "--user", "enable", "--now", "tervi"}}
 	if stdout.String() != "✓ Connected.\n" || stderr.Len() != 0 || fmt.Sprint(runner.calls) != fmt.Sprint(wantCalls) || client.connectCalls != 1 {
 		t.Errorf("stdout=%q stderr=%q calls=%v connect calls=%d", stdout.String(), stderr.String(), runner.calls, client.connectCalls)
 	}

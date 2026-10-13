@@ -149,6 +149,38 @@ func TestServiceFileRewrittenWhenPathChanges(t *testing.T) {
 	}
 }
 
+func TestEnsureRunningReportsStoppedDaemonStarted(t *testing.T) {
+	dir := t.TempDir()
+	program := "/usr/bin/true"
+	resolvedProgram, err := filepath.EvalSymlinks(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, serviceFile), serviceContents(resolvedProgram), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &serviceTestRunner{}
+	client := &serviceTestClient{
+		answers: []control.StatusAnswer{{State: "reconnecting"}},
+		errors:  []error{control.ErrNotRunning},
+	}
+
+	started, err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background())
+	if err != nil {
+		t.Fatalf("EnsureRunning() error = %v", err)
+	}
+	if !started {
+		t.Error("EnsureRunning() started = false, want true for a stopped daemon")
+	}
+	wantCalls := [][]string{{"systemctl", "--user", "enable", "--now", "tervi"}}
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Errorf("systemctl calls = %#v, want %#v", runner.calls, wantCalls)
+	}
+	if client.calls != 2 {
+		t.Errorf("Status calls = %d, want 2 (stopped check and readiness wait)", client.calls)
+	}
+}
+
 func TestEnsureRunningSteps(t *testing.T) {
 	dir := t.TempDir()
 	events := []string{}
