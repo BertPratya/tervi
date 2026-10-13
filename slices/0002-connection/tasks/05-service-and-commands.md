@@ -142,6 +142,21 @@ Export one function that the pairing (task 06) also uses:
 into `cli.Env`, so tests can replace them: the `Runner`, the program path,
 the service-file folder (`ServiceDir`), and the control client.
 
+Added during task 05 review:
+- In `internal/worker/cli`, one helper `ensureRunning(ctx, env) error`
+  builds the service's settings from `cli.Env` and calls `EnsureRunning`;
+  `tervi connect` and task 06's hand-over both use it.
+- The installed check lives in `internal/worker/service` as an exported
+  function, reusing the same path resolution as the service file; the
+  temporary folder's symbolic links are resolved too.
+- **No runtime folder** (decided by the user): when `XDG_RUNTIME_DIR` is not
+  set, `tervi status` and `tervi connect` print
+  `✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).`
+  and exit `1`, before doing anything else. They never look for the socket
+  in another folder.
+- **No program file** (decided by the user): when `os.Executable()` fails,
+  `main` prints `✗ Can't find tervi's program file.` and exits `1`.
+
 `main` in `cmd/tervi` sets all four to their real values. `cli.Run` never
 fills in a default: if `connect`, `status`, `logs`, or the pairing hand-over
 finds any of the four it needs empty or nil, it prints
@@ -205,7 +220,10 @@ in. The command then exits; it never stops the daemon.
    exit `1`. A daemon that answers `not_paired` gets the same two lines.
 2. `control.Client.Status`; `ErrNotRunning` →
    `✗ tervi isn't running in the background.` then
-   `  Start it with: tervi connect`, exit `1`.
+   `  Start it with: tervi connect`, exit `1`. Any other error (the daemon
+   answered, but the answer is broken) →
+   `✗ Can't reach tervi in the background: <reason>` alone, with no
+   `Check with` line, exit `1` (decided by the user during task 05).
 3. Otherwise:
 
 ```text
@@ -252,8 +270,12 @@ paired in slice 1 whose daemon was started by hand), print
 Run `journalctl --user -u tervi -o cat --no-pager`, adding `-f` for
 `tervi logs -f`, through `Runner.Stream` with standard output, until it
 ends or the context ends (Ctrl+C). Exit `0`; `1` with
-`✗ Can't read the log: <reason>` if `journalctl` fails to start. Anything
-else after `logs` is wrong usage (exit `2`).
+`✗ Can't read the log: <reason>` if `journalctl` fails to start. If
+`journalctl` starts but exits with an error, it has already printed its own
+message: exit `1` with no extra line (added during task 05 review). The
+output is passed through unchanged, line by line as it arrives; `tervi logs`
+never reads the secret store. Anything else after `logs` is wrong usage
+(exit `2`).
 
 ## Boundaries
 
@@ -280,9 +302,10 @@ else after `logs` is wrong usage (exit `2`).
 | `TestConnectStartsStoppedService` — with no daemon answering, `connect` runs the start steps, then connects | R4 |
 | `TestConnectServiceFails` — the two lines, exit `1`, `state.json` and the secret store entry unchanged | R29 |
 | `TestConnectReturnsAfterLastLine` — the command returns after printing; the fake daemon is still running | R31 |
-| `TestStatusOutputs` — each of the five R16 cases, the slice-1 case, and a daemon answering `not_paired`, with exit codes | R16, R17 |
+| `TestStatusOutputs` — each of the five R16 cases, the slice-1 case, a daemon answering `not_paired`, and a broken answer (the one `Can't reach` line), with exit codes | R16, R17 |
+| `TestNoRuntimeFolder` — extended: `tervi status` and `tervi connect` without `XDG_RUNTIME_DIR` print the runtime-folder line, exit `1`, and never call the control client or `systemctl` | R4, R16 |
 | `TestStatusSince` — each `Since` wording at 0, 59, 60, 119, 120, 3599, 3600, 86399, 86400 seconds | R16 |
-| `TestLogsCommand` — the exact `journalctl` arguments with and without `-f`, passed to `Runner.Stream`; failure message; wrong usage | R32 |
+| `TestLogsCommand` — the exact `journalctl` arguments with and without `-f`, passed to `Runner.Stream`; the output equals the stream, and a line is shown as soon as it arrives; the failure message when `journalctl` cannot start; exit `1` with no extra line when it exits with an error; wrong usage | R32 |
 | `TestNoCredentialPrinted` — no command's output contains the credential | R25 |
 | `TestPairingUnreadable` — for `connect` and `status`: an unreadable store, a damaged entry, and an unreadable `state.json` each print slice 1's message and exit `1`, with no `systemctl` call and no file written | R4, R16 |
 | `TestServiceDirRequired` — an empty `ServiceDir` makes `EnsureRunning` fail without writing anywhere; every test in this package uses `t.TempDir()` | R5 |
