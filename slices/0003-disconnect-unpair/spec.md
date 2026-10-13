@@ -99,7 +99,7 @@ page). It also lets the server recognize a computer that pairs again.
   after the computer restarts, until the user runs `tervi connect`.
 - R3. When `tervi disconnect` runs and tervi is not running in the
   background, the worker shall still record that it must not connect, print
-  `✓ Disconnected. tervi won't connect, including after you log in again.`
+  `✓ Disconnected. tervi won't connect, including after the computer restarts.`
   then `Connect again with: tervi connect`, and exit with `0`. It shall not
   start tervi in the background.
 - R4. When `tervi disconnect` runs on a computer the user already
@@ -132,8 +132,8 @@ page). It also lets the server recognize a computer that pairs again.
 - R11. When the user confirms, the worker shall first tell the server, which
   shall mark the machine unpaired and refuse its credential from then on.
   Then the worker shall stop tervi in the background, stop it from starting
-  at login, remove its service file, delete the credential from the secret
-  store, and delete `state.json`, print
+  at boot, remove its service file, delete `credential.json`, and delete
+  `state.json`, print
   `✓ Unpaired. This computer is no longer paired with <server>.`, and exit
   with `0`. The `tervi` program shall stay installed.
 - R12. If the server cannot be reached, then `tervi unpair` shall change
@@ -154,7 +154,7 @@ page). It also lets the server recognize a computer that pairs again.
   shall print `This computer isn't paired. Nothing was changed.` and exit
   with `1`.
 - R16. If removing something on the computer fails after the server was told
-  (for example, the secret store cannot be reached), then the worker shall
+  (for example, `credential.json` cannot be deleted), then the worker shall
   say what could not be removed and print `Finish with: tervi unpair --local-only`,
   and exit with `1`.
 
@@ -239,7 +239,10 @@ page). It also lets the server recognize a computer that pairs again.
 
 ## Open questions
 
-None.
+1. Should `tervi unpair` turn linger off again (`loginctl disable-linger`)?
+   Slice 2's fix 4 turns it on when pairing. Turning it off would also stop
+   any other user services that rely on it, which tervi cannot know about;
+   leaving it on keeps those running but leaves a setting tervi made.
 
 ## Decisions
 
@@ -256,7 +259,7 @@ None.
   daemon never connects again to repeat it, so a reason would sometimes be
   wrong. Tailscale's admin page does not show it either.
 - `tervi disconnect` with nothing running still records the wish (R3) — so
-  "disconnected" always means "stays off", and the next login cannot quietly
+  "disconnected" always means "stays off", and the next boot cannot quietly
   connect again.
 - `Already disconnected.` exits with `0` — the user's wish already holds;
   scripts should not fail on it, like `Already connected.` in slice 2.
