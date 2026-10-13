@@ -112,8 +112,10 @@ pull requests of their own.
       300–400 lines, not counting tests, so that one review can check it
       closely.
 3. **Plan review.** The reviewer checks the spec, plan, and task files. The
-   architect fixes findings marked `Architect`, up to 3 fix rounds; findings
-   still open after that go to the user. Findings marked `User` go to the
+   architect fixes findings marked `Architect`, up to 5 fix rounds; findings
+   still open after that go to the user. A plan gets more rounds than code
+   (3) because fixing a document is cheap, and every gap found here is one
+   the worker will not have to guess. Findings marked `User` go to the
    user.
 4. **Plan pull request.** The architect opens it with one comment per review
    round, and sets the slice to `in progress` in `slices/index.md` in the same
