@@ -61,21 +61,24 @@ func (d *Daemon) setStatusLocked(status Status) {
 	d.changed = make(chan struct{})
 }
 
+func (d *Daemon) knownServerLocked(server string) string {
+	if server != "" {
+		return server
+	}
+	return d.status.Server
+}
+
 func (d *Daemon) setTrying(try int, server string, now time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if server == "" {
-		server = d.status.Server
-	}
+	server = d.knownServerLocked(server)
 	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: try, NextTry: now, LastError: d.status.LastError})
 }
 
 func (d *Daemon) setRetry(try int, server, lastError string, next time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if server == "" {
-		server = d.status.Server
-	}
+	server = d.knownServerLocked(server)
 	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: try, NextTry: next, LastError: lastError})
 }
 

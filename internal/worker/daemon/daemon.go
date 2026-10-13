@@ -218,7 +218,7 @@ func (d *Daemon) refreshState() {
 	}
 	d.mu.Lock()
 	lastError := d.status.LastError
-	server := d.status.Server
+	server := d.knownServerLocked("")
 	d.enabled = true
 	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: 1, NextTry: d.opts.Now(), LastError: lastError})
 	d.mu.Unlock()
