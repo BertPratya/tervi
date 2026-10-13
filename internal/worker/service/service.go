@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -160,7 +161,7 @@ func serviceContents(programPath string) []byte {
 	return []byte("[Unit]\n" +
 		"Description=tervi worker\n\n" +
 		"[Service]\n" +
-		"ExecStart=" + programPath + " daemon\n" +
+		"ExecStart=\"" + escapeServicePath(programPath) + "\" daemon\n" +
 		"Restart=on-failure\n" +
 		"RestartSec=5\n\n" +
 		"[Install]\n" +
@@ -171,10 +172,29 @@ func serviceExecStart(contents []byte) string {
 	for _, line := range strings.Split(string(contents), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "ExecStart=") {
-			return strings.TrimPrefix(line, "ExecStart=")
+			return decodeServiceExecStart(strings.TrimPrefix(line, "ExecStart="))
 		}
 	}
 	return ""
+}
+
+func escapeServicePath(path string) string {
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "%", "%%", "$", "$$").Replace(path)
+}
+
+func decodeServiceExecStart(value string) string {
+	const suffix = `" daemon`
+	if !strings.HasPrefix(value, `"`) || !strings.HasSuffix(value, suffix) {
+		return ""
+	}
+	quotedPath := strings.TrimSuffix(strings.TrimPrefix(value, `"`), suffix)
+	path, err := strconv.Unquote(`"` + quotedPath + `"`)
+	if err != nil {
+		return ""
+	}
+	path = strings.ReplaceAll(path, "%%", "%")
+	path = strings.ReplaceAll(path, "$$", "$")
+	return path + " daemon"
 }
 
 func writeServiceFile(dir, path string, contents []byte) error {

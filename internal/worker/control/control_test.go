@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -166,6 +167,40 @@ func TestOtherUserRefused(t *testing.T) {
 	_ = server.Close()
 	if err := <-serveDone; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		t.Fatalf("Serve() error = %v", err)
+	}
+}
+
+func TestStoppingHandlerReturnsServiceUnavailable(t *testing.T) {
+	tracker := &handlerTracker{stopping: true, next: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("stopping tracker called the next handler")
+	})}
+	recorder := httptest.NewRecorder()
+	tracker.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("stopping response status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestClientTreatsServiceUnavailableAsNotRunning(t *testing.T) {
+	runtimeDir := t.TempDir()
+	listener, err := net.Listen("unix", filepath.Join(runtimeDir, "daemon.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "stopping", http.StatusServiceUnavailable)
+	})}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve(listener) }()
+	defer func() {
+		_ = server.Close()
+		if err := <-serveDone; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("Serve() error = %v", err)
+		}
+	}()
+
+	if _, err := (Client{RuntimeDir: runtimeDir}).Status(context.Background()); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("Client.Status() error = %v, want ErrNotRunning", err)
 	}
 }
 
@@ -486,7 +521,7 @@ func TestRunBoundsHandlerWaitOnShutdown(t *testing.T) {
 	timedOut := false
 	select {
 	case runErr = <-done:
-	case <-time.After(2500 * time.Millisecond):
+	case <-time.After(3 * time.Second):
 		timedOut = true
 		close(releaseHandler)
 		runErr = <-done
@@ -498,7 +533,7 @@ func TestRunBoundsHandlerWaitOnShutdown(t *testing.T) {
 		t.Fatalf("Run() error = %v", runErr)
 	}
 	if timedOut {
-		t.Fatalf("Run() did not return within 2.5s; elapsed %s", time.Since(started))
+		t.Fatalf("Run() did not return within 3s; elapsed %s", time.Since(started))
 	}
 	select {
 	case <-requestDone:

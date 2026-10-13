@@ -67,23 +67,32 @@ func serviceTestOptions(dir, program string, runner Runner, client *serviceTestC
 }
 
 func TestServiceFileContents(t *testing.T) {
-	dir := t.TempDir()
-	program, err := filepath.Abs("/usr/bin/true")
-	if err != nil {
-		t.Fatal(err)
-	}
-	runner := &serviceTestRunner{}
-	client := &serviceTestClient{answers: []control.StatusAnswer{{State: "connected"}}}
-	if err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
-		t.Fatalf("EnsureRunning() error = %v", err)
-	}
-	contents, err := os.ReadFile(filepath.Join(dir, "tervi.service"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "[Unit]\nDescription=tervi worker\n\n[Service]\nExecStart=" + program + " daemon\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
-	if string(contents) != want {
-		t.Errorf("service file = %q, want %q", contents, want)
+	for _, name := range []string{"tervi program", `tervi\path`, `tervi"quote`, "tervi%percent", "tervi$dollar"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			program := filepath.Join(dir, name)
+			if err := os.WriteFile(program, []byte("program"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			runner := &serviceTestRunner{}
+			client := &serviceTestClient{answers: []control.StatusAnswer{{State: "connected"}}}
+			if err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
+				t.Fatalf("EnsureRunning() error = %v", err)
+			}
+			resolved, err := filepath.EvalSymlinks(program)
+			if err != nil {
+				t.Fatal(err)
+			}
+			escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "%", "%%", "$", "$$").Replace(resolved)
+			contents, err := os.ReadFile(filepath.Join(dir, "tervi.service"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "[Unit]\nDescription=tervi worker\n\n[Service]\nExecStart=\"" + escaped + "\" daemon\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
+			if string(contents) != want {
+				t.Errorf("service file = %q, want %q", contents, want)
+			}
+		})
 	}
 }
 
@@ -95,7 +104,11 @@ func TestServiceFileRewrittenWhenPathChanges(t *testing.T) {
 	if err := os.WriteFile(path, []byte("[Service]\nExecStart=/old/tervi daemon\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := New(serviceTestOptions(dir, "/usr/bin/true", runner, client)).EnsureRunning(context.Background()); err != nil {
+	program := filepath.Join(dir, `tervi %\"$ program`)
+	if err := os.WriteFile(program, []byte("program"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
@@ -104,12 +117,35 @@ func TestServiceFileRewrittenWhenPathChanges(t *testing.T) {
 	}
 	runner.calls = nil
 	client.calls = 0
-	if err := New(serviceTestOptions(dir, "/usr/bin/true", runner, client)).EnsureRunning(context.Background()); err != nil {
+	if err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	want = [][]string{{"systemctl", "--user", "enable", "--now", "tervi"}}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Errorf("same path calls = %#v, want %#v", runner.calls, want)
+	}
+	resolvedProgram, err := filepath.EvalSymlinks(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[Service]\nExecStart="+resolvedProgram+" daemon\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner.calls = nil
+	client.calls = 0
+	if err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want = [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Errorf("same-path unquoted ExecStart calls = %#v, want %#v", runner.calls, want)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != string(serviceContents(resolvedProgram)) {
+		t.Errorf("rewritten service file = %q, want quoted contents %q", contents, serviceContents(resolvedProgram))
 	}
 }
 

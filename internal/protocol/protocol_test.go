@@ -29,6 +29,12 @@ func TestMessagesUseAsyncAPIFields(t *testing.T) {
 			t.Errorf("message = %s, want %s", got, message.want)
 		}
 	}
+	if got := string(PingMessage()); got != `{"type":"ping"}` {
+		t.Errorf("PingMessage() = %s, want {\"type\":\"ping\"}", got)
+	}
+	if got := string(PongMessage()); got != `{"type":"pong"}` {
+		t.Errorf("PongMessage() = %s, want {\"type\":\"pong\"}", got)
+	}
 }
 
 func TestReadType(t *testing.T) {

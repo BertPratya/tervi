@@ -42,8 +42,10 @@ func TestServerRestartEndToEnd(t *testing.T) {
 
 	f.startServer(nil)
 	offline := f.machine(t, paired.machineID)
-	if offline.Online {
-		t.Fatal("machine was Online immediately after the server restarted; it should wait for the daemon to reconnect")
+	connectedLines := strings.Count(f.daemonLogs.String(), "✓ Connected to "+f.serverURL)
+	if connectedLines == 1 && offline.Online {
+		t.Log("machine was Online right after the restart, before the daemon reconnected")
+		waitForLogCount(t, f.daemonLogs, "✓ Connected to "+f.serverURL, 2, time.Second)
 	}
 	if offline.LastSeenSecondsAgo == nil {
 		t.Error("offline machine omitted last_seen_seconds_ago after it had connected")

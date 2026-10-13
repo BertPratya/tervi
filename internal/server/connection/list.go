@@ -15,27 +15,31 @@ type entry struct {
 
 type closeable interface {
 	Close(websocket.StatusCode, string) error
+	CloseNow() error
 }
 
 // List is the server's in-memory set of machines with an open connection.
 type List struct {
-	mu       sync.Mutex
-	closeMu  sync.Mutex
-	entries  map[string]entry
-	handlers map[uint64]struct{}
-	changed  chan struct{}
-	nextID   uint64
-	closed   bool
-	logger   *slog.Logger
+	mu           sync.Mutex
+	closeMu      sync.Mutex
+	entries      map[string]entry
+	handlers     map[uint64]closeable
+	closePending map[closeable]struct{}
+	changed      chan struct{}
+	nextID       uint64
+	closed       bool
+	stopDeadline time.Time
+	logger       *slog.Logger
 }
 
 // NewList returns an empty connection list. A new server starts with every
 // machine Offline.
 func NewList() *List {
 	return &List{
-		entries:  make(map[string]entry),
-		handlers: make(map[uint64]struct{}),
-		changed:  make(chan struct{}),
+		entries:      make(map[string]entry),
+		handlers:     make(map[uint64]closeable),
+		closePending: make(map[closeable]struct{}),
+		changed:      make(chan struct{}),
 	}
 }
 
@@ -50,16 +54,24 @@ func (list *List) notifyLocked() {
 	list.changed = make(chan struct{})
 }
 
-func (list *List) trackHandler() func() {
+func (list *List) trackHandler() (func(closeable), func()) {
 	list.mu.Lock()
 	list.nextID++
 	id := list.nextID
-	list.handlers[id] = struct{}{}
+	list.handlers[id] = nil
 	list.notifyLocked()
 	list.mu.Unlock()
 
+	setConnection := func(conn closeable) {
+		list.mu.Lock()
+		if _, exists := list.handlers[id]; exists {
+			list.handlers[id] = conn
+			list.notifyLocked()
+		}
+		list.mu.Unlock()
+	}
 	var once sync.Once
-	return func() {
+	finish := func() {
 		once.Do(func() {
 			list.mu.Lock()
 			delete(list.handlers, id)
@@ -67,6 +79,7 @@ func (list *List) trackHandler() func() {
 			list.mu.Unlock()
 		})
 	}
+	return setConnection, finish
 }
 
 // add stores the new socket unless the list has been closed. It returns false
@@ -75,7 +88,7 @@ func (list *List) add(machineID string, conn closeable) bool {
 	list.mu.Lock()
 	if list.closed {
 		list.mu.Unlock()
-		_ = conn.Close(websocket.StatusCode(protocol.CloseServerStopping), "server stopping")
+		list.startTrackedClose(conn, websocket.StatusCode(protocol.CloseServerStopping), "server stopping")
 		return false
 	}
 	previous, replaced := list.entries[machineID]
@@ -128,29 +141,36 @@ func (list *List) OnlineIDs() map[string]bool {
 func (list *List) CloseAll() {
 	list.closeMu.Lock()
 	defer list.closeMu.Unlock()
-	deadline := time.Now().Add(5 * time.Second)
 
 	list.mu.Lock()
 	list.closed = true
+	if list.stopDeadline.IsZero() {
+		list.stopDeadline = time.Now().Add(5 * time.Second)
+	}
+	deadline := list.stopDeadline
 	connections := make([]closeable, 0, len(list.entries))
 	for _, current := range list.entries {
 		connections = append(connections, current.conn)
+		list.closePending[current.conn] = struct{}{}
 	}
 	list.entries = make(map[string]entry)
 	list.notifyLocked()
 	list.mu.Unlock()
 
 	for _, conn := range connections {
-		go func(conn closeable) {
-			_ = conn.Close(websocket.StatusCode(protocol.CloseServerStopping), "server stopping")
-		}(conn)
+		list.finishTrackedClose(conn, websocket.StatusCode(protocol.CloseServerStopping), "server stopping")
 	}
 
-	timer := time.NewTimer(time.Until(deadline))
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		list.forceCloseHandlers()
+		return
+	}
+	timer := time.NewTimer(remaining)
 	defer timer.Stop()
 	for {
 		list.mu.Lock()
-		if len(list.handlers) == 0 {
+		if len(list.handlers) == 0 && len(list.closePending) == 0 {
 			list.mu.Unlock()
 			return
 		}
@@ -159,7 +179,43 @@ func (list *List) CloseAll() {
 		select {
 		case <-changed:
 		case <-timer.C:
+			list.forceCloseHandlers()
 			return
 		}
+	}
+}
+
+func (list *List) startTrackedClose(conn closeable, code websocket.StatusCode, reason string) {
+	list.mu.Lock()
+	list.closePending[conn] = struct{}{}
+	list.notifyLocked()
+	list.mu.Unlock()
+	list.finishTrackedClose(conn, code, reason)
+}
+
+func (list *List) finishTrackedClose(conn closeable, code websocket.StatusCode, reason string) {
+	go func() {
+		_ = conn.Close(code, reason)
+		list.mu.Lock()
+		delete(list.closePending, conn)
+		list.notifyLocked()
+		list.mu.Unlock()
+	}()
+}
+
+func (list *List) forceCloseHandlers() {
+	list.mu.Lock()
+	connections := make(map[closeable]struct{}, len(list.handlers)+len(list.closePending))
+	for _, conn := range list.handlers {
+		if conn != nil {
+			connections[conn] = struct{}{}
+		}
+	}
+	for conn := range list.closePending {
+		connections[conn] = struct{}{}
+	}
+	list.mu.Unlock()
+	for conn := range connections {
+		_ = conn.CloseNow()
 	}
 }

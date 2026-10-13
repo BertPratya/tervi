@@ -590,6 +590,55 @@ func TestStatusWhileTrying(t *testing.T) {
 	})
 }
 
+func TestRefreshStateKeepsLastServer(t *testing.T) {
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	d := f.newDaemon(t, Options{})
+	d.setTrying(1, f.server.URL, time.Now())
+	d.refreshState()
+
+	status := d.Status()
+	if status.State != StateReconnecting || status.Server != f.server.URL {
+		t.Fatalf("Status() = %+v, want reconnecting with server %q", status, f.server.URL)
+	}
+}
+
+func TestStatusReconnectsWhenSecretStoreIsUnreadable(t *testing.T) {
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	f.backend.FailGet = true
+	d := f.newDaemon(t, Options{Rand: func() float64 { return 0 }})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("Run() = %v", err)
+		}
+	}()
+
+	waitFor(t, time.Second, func() bool {
+		return d.Status().LastError == "can't read the secret store"
+	}, "secret-store failure in daemon status")
+	status := d.Status()
+	if status.State != StateReconnecting || status.Server != "" || status.LastError != "can't read the secret store" {
+		t.Fatalf("Status() = %+v, want reconnecting without a known server and with the secret-store error", status)
+	}
+}
+
+func TestSecondsText(t *testing.T) {
+	for _, tc := range []struct {
+		seconds int
+		want    string
+	}{
+		{seconds: 1, want: "1 second"},
+		{seconds: 2, want: "2 seconds"},
+	} {
+		if got := SecondsText(tc.seconds); got != tc.want {
+			t.Errorf("SecondsText(%d) = %q, want %q", tc.seconds, got, tc.want)
+		}
+	}
+}
+
 func TestErrorTexts(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -974,6 +1023,30 @@ func TestDaemonConnectResults(t *testing.T) {
 			t.Fatalf("Connect() = %+v", got)
 		}
 		stop()
+	})
+	t.Run("cancelled while waiting for connect lock", func(t *testing.T) {
+		f := newDaemonFixture(t, false, 10, 30, nil)
+		d := f.newDaemon(t, Options{})
+		d.connectMu.Lock()
+		ctx, cancel := context.WithCancel(context.Background())
+		started := make(chan struct{})
+		result := make(chan ConnectResult, 1)
+		go func() {
+			close(started)
+			result <- d.Connect(ctx)
+		}()
+		<-started
+		cancel()
+		d.connectMu.Unlock()
+		if got := <-result; got.Result != "still_trying" {
+			t.Fatalf("Connect() = %+v, want still_trying", got)
+		}
+		if record, _, err := state.ReadState(f.dir); err != nil || record.Connect {
+			t.Fatalf("state after cancelled Connect = (%+v, %v), want connect false", record, err)
+		}
+		if d.isEnabled() {
+			t.Fatal("cancelled Connect enabled connection attempts")
+		}
 	})
 	t.Run("still trying after deadline", func(t *testing.T) {
 		f := newDaemonFixture(t, false, 10, 30, nil)

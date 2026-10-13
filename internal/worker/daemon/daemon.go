@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bertpratya/tervi/internal/protocol"
 	"github.com/bertpratya/tervi/internal/worker/credential"
 	"github.com/bertpratya/tervi/internal/worker/state"
 	"github.com/coder/websocket"
@@ -72,7 +73,7 @@ func New(opts Options) *Daemon {
 		wake:           make(chan struct{}, 1),
 		connectTimeout: connectWaitLimit,
 	}
-	d.status.State = "not_connecting"
+	d.status.State = StateNotConnecting
 	return d
 }
 
@@ -113,7 +114,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			try, announce = 1, false
 		case attemptFailed:
 			wait := reconnectWait(try+1, d.opts.Rand())
-			d.logLine("✗ %s. Next try in %d seconds", result.logError, wholeSeconds(wait))
+			d.logLine("✗ %s. Next try in %s", result.logError, SecondsText(wholeSeconds(wait)))
 			d.setRetry(try+1, result.server, result.lastError, d.opts.Now().Add(wait))
 			waited := d.wait(wait, ctx)
 			if waited == waitCancelled {
@@ -131,7 +132,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			lost := d.serveConnection(ctx, result.conn, result.hello)
 			if ctx.Err() != nil {
 				if !lost.closeStarted {
-					_ = result.conn.Close(websocket.StatusCode(1000), "daemon stopped")
+					_ = result.conn.Close(websocket.StatusCode(protocol.CloseNormal), "daemon stopped")
 				}
 				return nil
 			}
@@ -197,28 +198,29 @@ func (d *Daemon) refreshState() {
 	if err != nil {
 		d.mu.Lock()
 		d.enabled = false
-		d.setStatusLocked(Status{State: "not_connecting"})
+		d.setStatusLocked(Status{State: StateNotConnecting})
 		d.mu.Unlock()
 		return
 	}
 	if !exists || !record.Confirmed {
 		d.mu.Lock()
 		d.enabled = false
-		d.setStatusLocked(Status{State: "not_paired"})
+		d.setStatusLocked(Status{State: StateNotPaired})
 		d.mu.Unlock()
 		return
 	}
 	if !record.Connect {
 		d.mu.Lock()
 		d.enabled = false
-		d.setStatusLocked(Status{State: "not_connecting", StopReason: record.StopReason})
+		d.setStatusLocked(Status{State: StateNotConnecting, StopReason: record.StopReason})
 		d.mu.Unlock()
 		return
 	}
 	d.mu.Lock()
 	lastError := d.status.LastError
+	server := d.knownServerLocked("")
 	d.enabled = true
-	d.setStatusLocked(Status{State: "reconnecting", Try: 1, NextTry: d.opts.Now(), LastError: lastError})
+	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: 1, NextTry: d.opts.Now(), LastError: lastError})
 	d.mu.Unlock()
 }
 

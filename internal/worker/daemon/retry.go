@@ -1,6 +1,9 @@
 package daemon
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // reconnectWait returns the jittered wait before the numbered try.
 func reconnectWait(try int, random float64) time.Duration {
@@ -21,4 +24,12 @@ func reconnectWait(try int, random float64) time.Duration {
 		random = 0.999999999999
 	}
 	return time.Duration(float64(base) * (0.8 + 0.4*random))
+}
+
+// SecondsText formats a seconds count with singular wording for one second.
+func SecondsText(seconds int) string {
+	if seconds == 1 {
+		return "1 second"
+	}
+	return fmt.Sprintf("%d seconds", seconds)
 }

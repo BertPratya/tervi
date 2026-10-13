@@ -173,7 +173,7 @@ func (d *Daemon) serveConnection(ctx context.Context, conn *websocket.Conn, hell
 		select {
 		case <-ctx.Done():
 			_ = conn.Close(websocket.StatusCode(protocol.CloseNormal), "daemon stopped")
-			return lostResult{reason: "the server closed the connection", closeStarted: true}
+			return lostResult{closeStarted: true}
 		case <-timeoutTimer.C:
 			return closeForTimeout(conn, hello.TimeoutSeconds)
 		case <-pingTimer.C:
@@ -182,7 +182,7 @@ func (d *Daemon) serveConnection(ctx context.Context, conn *websocket.Conn, hell
 				return closeForTimeout(conn, hello.TimeoutSeconds)
 			}
 			writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
-			err := conn.Write(writeCtx, websocket.MessageText, []byte(`{"type":"ping"}`))
+			err := conn.Write(writeCtx, websocket.MessageText, protocol.PingMessage())
 			cancel()
 			if err != nil {
 				if isTimeoutError(err) && ctx.Err() == nil {

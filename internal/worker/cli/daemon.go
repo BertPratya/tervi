@@ -13,17 +13,16 @@ func runDaemon(ctx context.Context, env Env) int {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	runtimeDir, err := control.RuntimeDir()
-	if errors.Is(err, control.ErrRuntimeDirNotSet) {
-		fmt.Fprintln(env.Stdout, "✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).")
+	if !requireRuntimeFolder(env.Stdout) {
 		return 1
 	}
+	runtimeDir, _ := control.RuntimeDir()
 	engine := daemon.New(daemon.Options{
 		StateDir: env.StateDir,
 		Store:    env.Store,
 		Log:      env.Stdout,
 	})
-	err = control.Run(ctx, runtimeDir, engine)
+	err := control.Run(ctx, runtimeDir, engine)
 	if errors.Is(err, control.ErrAlreadyRunning) {
 		fmt.Fprintln(env.Stdout, "tervi is already running in the background.")
 		return 0

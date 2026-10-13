@@ -3,12 +3,10 @@
 package connection
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"time"
 
-	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -20,13 +18,6 @@ type Deps struct {
 	CheckInterval     time.Duration
 	ConnectionTimeout time.Duration
 	Now               func() time.Time
-}
-
-type socket interface {
-	Read(context.Context) (websocket.MessageType, []byte, error)
-	Write(context.Context, websocket.MessageType, []byte) error
-	Close(websocket.StatusCode, string) error
-	SetReadLimit(int64)
 }
 
 func (deps Deps) normalized() Deps {

@@ -16,7 +16,11 @@ function render() {
   const page = view({ machines, failed, loaded, address: location.origin });
   app.replaceChildren();
   app.append(textElement('h1', '', page.heading));
-  if (page.failureMessage) app.append(textElement('p', 'warning', page.failureMessage));
+  if (page.failureMessage) {
+    const warning = textElement('p', 'warning', page.failureMessage);
+    warning.setAttribute('aria-live', 'polite');
+    app.append(warning);
+  }
 
   if (page.rows.length === 0) {
     if (page.emptyMessage) app.append(textElement('p', '', page.emptyMessage));

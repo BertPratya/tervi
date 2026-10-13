@@ -216,3 +216,80 @@ func TestCloseAllOnStop(t *testing.T) {
 		}
 	}
 }
+
+func TestRunBoundsStopWhenWorkerDoesNotAnswerClose(t *testing.T) {
+	pool, databaseURL := dbtest.NewEmpty(t)
+	if _, err := db.Migrate(context.Background(), pool); err != nil {
+		t.Fatalf("migrate test database: %v", err)
+	}
+	credential := "server-stop-silent-worker-credential"
+	var pairingID string
+	if err := pool.QueryRow(context.Background(), `INSERT INTO pairing_requests
+		(status, polling_key_hash, approval_key_hash, expires_at)
+		VALUES ('waiting_for_approval', $1, $2, now() + interval '10 minutes') RETURNING id::text`,
+		[]byte("polling-silent-worker"), []byte("approval-silent-worker")).Scan(&pairingID); err != nil {
+		t.Fatalf("insert pairing request: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `INSERT INTO machines
+		(pairing_request_id, display_name, credential_hash, status, expires_at)
+		VALUES ($1, 'silent worker', $2, 'active', now() + interval '10 minutes')`,
+		pairingID, secret.Hash(secret.FromString(credential))); err != nil {
+		t.Fatalf("insert machine: %v", err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve server address: %v", err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("release server address: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- server.Run(ctx, server.Config{
+			ServerAddr: address, PublicURL: "http://127.0.0.1", DatabaseURL: databaseURL,
+			CheckInterval: time.Second, ConnectionTimeout: 30 * time.Second,
+		}, nil)
+	}()
+	var conn *websocket.Conn
+	t.Cleanup(func() {
+		cancel()
+		if conn != nil {
+			_ = conn.CloseNow()
+		}
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		headers := make(http.Header)
+		headers.Set("Authorization", "Bearer "+credential)
+		conn, _, err = websocket.Dial(context.Background(), "ws://"+address+"/api/v1/machines/current/connection", &websocket.DialOptions{HTTPHeader: headers})
+		if err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("open silent worker WebSocket: %v", err)
+	}
+	readCtx, readCancel := context.WithTimeout(context.Background(), time.Second)
+	_, message, err := conn.Read(readCtx)
+	readCancel()
+	if err != nil || !strings.Contains(string(message), `"type":"hello"`) {
+		t.Fatalf("read hello from silent worker: message=%q error=%v", message, err)
+	}
+
+	started := time.Now()
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run() after cancellation: %v", err)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("Run() did not return within about five seconds when the worker did not answer close")
+	}
+	if elapsed := time.Since(started); elapsed > 6*time.Second {
+		t.Fatalf("Run() stop took %s, want about five seconds", elapsed)
+	}
+}
