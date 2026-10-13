@@ -5,13 +5,14 @@ import (
 	"net/http"
 
 	"github.com/bertpratya/tervi/internal/secret"
+	"github.com/bertpratya/tervi/internal/server/httpapi"
 	"github.com/jackc/pgx/v5"
 )
 
 func (deps Deps) poll(w http.ResponseWriter, r *http.Request) {
-	proof, ok := bearerProof(r)
+	proof, ok := httpapi.BearerProof(r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unknown_key")
+		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_key")
 		return
 	}
 	var status string
@@ -27,11 +28,11 @@ func (deps Deps) poll(w http.ResponseWriter, r *http.Request) {
 		WHERE pr.polling_key_hash = $1`, secret.Hash(secret.FromString(proof))).
 		Scan(&status, &expiresInSeconds, &triesLeft, &failureReason)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusUnauthorized, "unknown_key")
+		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_key")
 		return
 	}
 	if err != nil {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, "read pairing", err)
 		return
 	}
 	body := map[string]any{
@@ -44,5 +45,5 @@ func (deps Deps) poll(w http.ResponseWriter, r *http.Request) {
 	if status == "failed" {
 		body["failure_reason"] = failureReason
 	}
-	writeJSON(w, http.StatusOK, body)
+	httpapi.WriteJSON(w, http.StatusOK, body)
 }

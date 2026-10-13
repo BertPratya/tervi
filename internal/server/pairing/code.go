@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/bertpratya/tervi/internal/secret"
+	"github.com/bertpratya/tervi/internal/server/httpapi"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -16,14 +17,14 @@ type codeInput struct {
 }
 
 func (deps Deps) submitCode(w http.ResponseWriter, r *http.Request) {
-	proof, ok := bearerProof(r)
+	proof, ok := httpapi.BearerProof(r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "unknown_key")
+		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_key")
 		return
 	}
 	input, ok := decodeCodeInput(r)
 	if !ok {
-		writeError(w, http.StatusBadRequest, "invalid_input")
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
 	pollingHash := secret.Hash(secret.FromString(proof))
@@ -38,19 +39,19 @@ func (deps Deps) submitCode(w http.ResponseWriter, r *http.Request) {
 		WHERE pr.polling_key_hash = $1`, pollingHash).
 		Scan(&requestID, &status, &storedCode, &triesLeft)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusUnauthorized, "unknown_key")
+		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_key")
 		return
 	}
 	if err != nil {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, "submit code", err)
 		return
 	}
 	if status == "expired" {
-		writeJSON(w, http.StatusOK, map[string]string{"result": "expired"})
+		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"result": "expired"})
 		return
 	}
 	if status != "waiting_for_code" {
-		writeJSON(w, http.StatusOK, map[string]string{"result": "not_waiting_for_code", "status": status})
+		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"result": "not_waiting_for_code", "status": status})
 		return
 	}
 
@@ -69,14 +70,14 @@ func (deps Deps) submitCode(w http.ResponseWriter, r *http.Request) {
 		RETURNING tries_left, status`, requestID).Scan(&triesLeft, &status)
 	if err == nil {
 		if status == "failed" {
-			writeJSON(w, http.StatusOK, map[string]string{"result": "failed"})
+			httpapi.WriteJSON(w, http.StatusOK, map[string]string{"result": "failed"})
 		} else {
-			writeJSON(w, http.StatusOK, map[string]any{"result": "wrong_code", "tries_left": triesLeft})
+			httpapi.WriteJSON(w, http.StatusOK, map[string]any{"result": "wrong_code", "tries_left": triesLeft})
 		}
 		return
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, "submit code", err)
 		return
 	}
 	deps.writeCodeUnavailable(w, r, requestID)
@@ -105,7 +106,7 @@ func decodeCodeInput(r *http.Request) (codeInput, bool) {
 func (deps Deps) issueCredential(w http.ResponseWriter, r *http.Request, requestID string) {
 	tx, err := deps.Pool.Begin(r.Context())
 	if err != nil {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, "submit code", err)
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
@@ -120,12 +121,12 @@ func (deps Deps) issueCredential(w http.ResponseWriter, r *http.Request, request
 		return
 	}
 	if err != nil {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, "submit code", err)
 		return
 	}
 	credential, err := secret.NewKey()
 	if err != nil {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, "submit code", err)
 		return
 	}
 	displayName := hostname
@@ -138,14 +139,14 @@ func (deps Deps) issueCredential(w http.ResponseWriter, r *http.Request, request
 		VALUES ($1, $2, $3, $4, $5, $6, 'pending', now() + interval '5 minutes')
 		RETURNING machine_id::text`, requestID, hostname, osName, osVersion, displayName, secret.Hash(credential)).Scan(&machineID)
 	if err != nil {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, "submit code", err)
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, "submit code", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
+	httpapi.WriteJSON(w, http.StatusOK, map[string]string{
 		"result":     "accepted",
 		"credential": credential.Reveal(),
 		"machine_id": machineID,
@@ -159,16 +160,16 @@ func (deps Deps) writeCodeUnavailable(w http.ResponseWriter, r *http.Request, re
 		LEFT JOIN machines AS m ON m.pairing_request_id = pr.id
 		WHERE pr.id = $1`, requestID).Scan(&status)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusUnauthorized, "unknown_key")
+		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_key")
 		return
 	}
 	if err != nil {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, "submit code", err)
 		return
 	}
 	if status == "expired" {
-		writeJSON(w, http.StatusOK, map[string]string{"result": "expired"})
+		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"result": "expired"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"result": "not_waiting_for_code", "status": status})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"result": "not_waiting_for_code", "status": status})
 }
