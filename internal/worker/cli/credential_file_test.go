@@ -3,14 +3,15 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/bertpratya/tervi/internal/secret"
+	"github.com/bertpratya/tervi/internal/worker/control"
 	"github.com/bertpratya/tervi/internal/worker/credential"
 	"github.com/bertpratya/tervi/internal/worker/state"
 )
@@ -55,27 +56,157 @@ func TestPairUnwritableCredentialStopsBeforeServer(t *testing.T) {
 }
 
 func TestCredentialFileMessages(t *testing.T) {
-	path := credential.Path(filepath.Join(t.TempDir(), "state"))
-	for _, tc := range []struct {
+	type messageCase struct {
 		name  string
-		print func(io.Writer, string)
-		want  string
-	}{
-		{name: "write", print: printUnusableStore, want: fmt.Sprintf("✗ Can't write %s.\n", path)},
-		{name: "read", print: printStoreReadFailure, want: fmt.Sprintf("✗ Can't read %s.\n", path)},
-		{name: "delete", print: printStoreDeleteFailure, want: fmt.Sprintf("✗ Can't delete %s.\n", path)},
-	} {
+		setup func(t *testing.T, env *Env, stateDir string, flow *flowRecorder)
+		want  func(string) string
+		code  int
+	}
+	cases := []messageCase{
+		{
+			name: "write",
+			setup: func(_ *testing.T, env *Env, _ string, _ *flowRecorder) {
+				env.Store = credential.NewStore(failingCredentialCheckBackend{Backend: credential.NewFileBackend(env.StateDir)})
+			},
+			want: func(path string) string { return fmt.Sprintf("✗ Can't write %s.\n", path) },
+			code: 1,
+		},
+		{
+			name: "read",
+			setup: func(t *testing.T, _ *Env, stateDir string, _ *flowRecorder) {
+				if err := os.Mkdir(credential.Path(stateDir), 0700); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: func(path string) string { return fmt.Sprintf("✗ Can't read %s.\n", path) },
+			code: 1,
+		},
+		{
+			name: "delete",
+			setup: func(t *testing.T, env *Env, stateDir string, _ *flowRecorder) {
+				if err := os.WriteFile(credential.Path(stateDir), []byte("damaged"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				env.Store = credential.NewStore(failingCredentialDeleteBackend{Backend: credential.NewFileBackend(stateDir)})
+			},
+			want: func(path string) string { return fmt.Sprintf("✗ Can't delete %s.\n", path) },
+			code: 1,
+		},
+		{
+			name: "damaged",
+			setup: func(t *testing.T, _ *Env, stateDir string, flow *flowRecorder) {
+				if err := os.WriteFile(credential.Path(stateDir), []byte("damaged"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				flow.startCode = 1
+			},
+			want: func(path string) string {
+				return fmt.Sprintf("Found a damaged %s.\n  Removed the leftover pairing data. Starting a new pairing.\n", path)
+			},
+			code: 1,
+		},
+		{
+			name: "incomplete credential without state",
+			setup: func(t *testing.T, env *Env, _ string, flow *flowRecorder) {
+				if err := env.Store.Save(credential.Entry{Server: "http://localhost:8080", Credential: testSecretValue()}); err != nil {
+					t.Fatal(err)
+				}
+				flow.startCode = 1
+			},
+			want: func(_ string) string {
+				return "Found incomplete pairing data: credential.json exists, but state.json is missing.\n  Removed the leftover pairing data. Starting a new pairing.\n"
+			},
+			code: 1,
+		},
+		{
+			name: "incomplete state without credential",
+			setup: func(t *testing.T, env *Env, _ string, flow *flowRecorder) {
+				if err := state.WriteState(env.StateDir, state.State{MachineID: "machine", CredentialSaved: true}); err != nil {
+					t.Fatal(err)
+				}
+				flow.startCode = 1
+			},
+			want: func(_ string) string {
+				return "Found incomplete pairing data: state.json exists, but credential.json is missing.\n  Removed the leftover pairing data. Starting a new pairing.\n"
+			},
+			code: 1,
+		},
+		{
+			name: "unprotected",
+			setup: func(t *testing.T, env *Env, _ string, _ *flowRecorder) {
+				if err := env.Store.Save(credential.Entry{Server: "http://localhost:8080", Credential: testSecretValue()}); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(credential.Path(env.StateDir), 0644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: func(path string) string {
+				return fmt.Sprintf("✗ Other users may be able to read %s, so tervi won't use it.\n  Make it private with: chmod 600 %s\n", path, path)
+			},
+			code: 1,
+		},
+		{
+			name: "background started",
+			want: func(_ string) string {
+				return "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n"
+			},
+			code: 0,
+		},
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var output bytes.Buffer
-			tc.print(&output, path)
-			if output.String() != tc.want {
-				t.Errorf("message = %q, want %q", output.String(), tc.want)
+			stateDir := t.TempDir()
+			var stdout, stderr bytes.Buffer
+			runner := &commandRunner{}
+			env := Env{
+				Stdout: &stdout, Stderr: &stderr,
+				Store: credential.NewStore(credential.NewFileBackend(stateDir)), StateDir: stateDir,
+				Runner: runner, ProgramPath: "/usr/bin/true", ServiceDir: t.TempDir(),
+				ControlClient: &commandControl{connect: control.ConnectAnswer{Result: "connected"}},
 			}
-			if strings.Contains(strings.ToLower(output.String()), "keyring") {
-				t.Errorf("message contains a keyring hint: %q", output.String())
+			flow := &flowRecorder{}
+			if tc.setup != nil {
+				tc.setup(t, &env, stateDir, flow)
+			}
+			if tc.name == "background started" {
+				t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+			}
+			if code := Run(context.Background(), []string{"pair", "--server", "http://localhost:8080"}, env, flow); code != tc.code {
+				t.Fatalf("Run() = %d, want %d; stdout=%q stderr=%q", code, tc.code, stdout.String(), stderr.String())
+			}
+			if got, want := stdout.String(), tc.want(credential.Path(stateDir)); got != want {
+				t.Errorf("stdout = %q, want %q", got, want)
+			}
+			if stderr.Len() != 0 {
+				t.Errorf("stderr = %q, want empty", stderr.String())
+			}
+			output := strings.ToLower(stdout.String() + stderr.String())
+			for _, forbidden := range []string{"keyring", "secret store"} {
+				if strings.Contains(output, forbidden) {
+					t.Errorf("worker output contains %q: %q", forbidden, output)
+				}
 			}
 		})
 	}
+}
+
+type failingCredentialCheckBackend struct{ credential.Backend }
+
+func (backend failingCredentialCheckBackend) Set(user, value string) error {
+	if user == "worker-check" {
+		return errors.New("credential file check failed")
+	}
+	return backend.Backend.Set(user, value)
+}
+
+type failingCredentialDeleteBackend struct{ credential.Backend }
+
+func (backend failingCredentialDeleteBackend) Delete(user string) error {
+	if user == "worker" {
+		return errors.New("credential file delete failed")
+	}
+	return backend.Backend.Delete(user)
 }
 
 func TestUnprotectedCredentialMessages(t *testing.T) {

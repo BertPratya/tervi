@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -643,42 +642,5 @@ func assertNoSecretLeaks(t *testing.T, audit secretAudit) {
 
 func assertCredentialAbsentFromFiles(t *testing.T, stateDir, credentialValue string) {
 	t.Helper()
-	credentialPath := credential.Path(stateDir)
-	foundCredential := false
-	err := filepath.WalkDir(stateDir, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if path == credentialPath {
-			foundCredential = true
-			info, err := entry.Info()
-			if err != nil {
-				return err
-			}
-			if got := info.Mode().Perm(); got != 0600 {
-				t.Errorf("credential.json mode = %04o, want 0600", got)
-			}
-			if !bytes.Contains(data, []byte(credentialValue)) {
-				t.Error("credential.json does not contain the paired credential")
-			}
-			return nil
-		}
-		if bytes.Contains(data, []byte(credentialValue)) {
-			t.Errorf("credential was written to local file %q", path)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("inspect state directory: %v", err)
-	}
-	if !foundCredential {
-		t.Errorf("credential file %q was not found", credentialPath)
-	}
+	assertCredentialInPrivateStateFile(t, stateDir, credentialValue)
 }

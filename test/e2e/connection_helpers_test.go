@@ -504,6 +504,32 @@ func assertNoConnectionSecret(t *testing.T, audit connectionAudit) {
 func assertCredentialOnlyInPrivateFile(t *testing.T, stateDir, serviceDir, credentialValue string, previousCredentials ...string) {
 	t.Helper()
 	credentialValues := append([]string{credentialValue}, previousCredentials...)
+	assertCredentialInPrivateStateFile(t, stateDir, credentialValue, previousCredentials...)
+	if err := filepath.WalkDir(serviceDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, value := range credentialValues {
+			if strings.Contains(string(data), value) {
+				t.Errorf("credential appeared in service file %q", path)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("inspect service folder: %v", err)
+	}
+}
+
+func assertCredentialInPrivateStateFile(t *testing.T, stateDir, credentialValue string, previousCredentials ...string) {
+	t.Helper()
+	credentialValues := append([]string{credentialValue}, previousCredentials...)
 	credentialPath := credential.Path(stateDir)
 	foundCredential := false
 	if err := filepath.WalkDir(stateDir, func(path string, entry os.DirEntry, walkErr error) error {
@@ -531,7 +557,7 @@ func assertCredentialOnlyInPrivateFile(t *testing.T, stateDir, serviceDir, crede
 			}
 			for _, value := range previousCredentials {
 				if strings.Contains(string(data), value) {
-					t.Errorf("credential.json still contains a replaced credential")
+					t.Error("credential.json still contains a replaced credential")
 				}
 			}
 			return nil
@@ -547,26 +573,6 @@ func assertCredentialOnlyInPrivateFile(t *testing.T, stateDir, serviceDir, crede
 	}
 	if !foundCredential {
 		t.Errorf("credential file %q was not found", credentialPath)
-	}
-	if err := filepath.WalkDir(serviceDir, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		for _, value := range credentialValues {
-			if strings.Contains(string(data), value) {
-				t.Errorf("credential appeared in service file %q", path)
-			}
-		}
-		return nil
-	}); err != nil {
-		t.Fatalf("inspect service folder: %v", err)
 	}
 }
 
