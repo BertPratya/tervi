@@ -273,6 +273,7 @@ quote. `<…>` is filled in.
 | Reconnecting, a try happening now | `  Try <n>, trying now` in place of the `next in` line |
 | Reconnecting, no try has failed yet | The `Last error:` line is left out |
 | Running, not connecting, no rejection (a slice-1 pairing) | `○ Not connecting.` then `  Connect with: tervi connect` |
+| Ctrl+C while `tervi status` waits for the answer | Nothing; exit `130` |
 
 `<how long>` is `less than a minute`, `1 minute`, `N minutes`, `1 hour`,
 `N hours`, `1 day`, or `N days`.

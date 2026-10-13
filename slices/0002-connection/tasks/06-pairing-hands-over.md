@@ -60,7 +60,8 @@ rejected pair again.
 - `internal/worker/cli` (task 05): `cli.Env` carries the program path, the
   systemd `Runner`, the service-file folder (`ServiceDir`), and the control
   client, so tests set fakes; an empty or nil one stops the hand-over with
-  the internal-setting line; functions
+  the internal-setting line, checked once by task 05's `ensureRunning`
+  helper (use it; do not repeat the checks); functions
   that print the two R29 lines and the two rejected lines. Reuse those
   functions; do not print the same messages a second way.
 - `tervi pair` is handled in `internal/worker/cli` (step zero and the
