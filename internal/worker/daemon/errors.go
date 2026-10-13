@@ -66,18 +66,22 @@ func errorText(err error, response *http.Response, credentialValue string) (stri
 		return last, upperFirst(last)
 	}
 	if errors.Is(err, credential.ErrNotFound) {
-		last := "the secret store entry is missing"
+		last := "credential.json is missing"
 		return last, upperFirst(last)
 	}
 	if errors.Is(err, credential.ErrDamaged) {
-		last := "the secret store entry is damaged"
+		last := "credential.json is damaged"
 		return last, upperFirst(last)
 	}
 	if isStateReadError(err) {
 		return "can't read state.json", ""
 	}
+	if errors.Is(err, credential.ErrUnprotected) {
+		last := "other users may be able to read credential.json"
+		return last, upperFirst(last)
+	}
 	if errors.Is(err, credential.ErrStoreUnreadable) {
-		last := "can't read the secret store"
+		last := "can't read credential.json"
 		return last, upperFirst(last)
 	}
 	if err == nil {

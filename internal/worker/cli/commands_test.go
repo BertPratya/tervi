@@ -303,7 +303,7 @@ func TestConnectFromDifferentInstallPrintsConnected(t *testing.T) {
 	if stdout.String() != "✓ Connected.\n" || stderr.Len() != 0 || client.connectCalls != 1 {
 		t.Errorf("stdout=%q stderr=%q Connect calls=%d, want connected output and one Connect call", stdout.String(), stderr.String(), client.connectCalls)
 	}
-	wantCalls := [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
+	wantCalls := [][]string{{"loginctl", "enable-linger"}, {"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
 	if fmt.Sprint(runner.calls) != fmt.Sprint(wantCalls) {
 		t.Errorf("systemctl calls = %v, want %v", runner.calls, wantCalls)
 	}
@@ -347,6 +347,7 @@ func TestConnectStartsStoppedService(t *testing.T) {
 			statuses: []statusResult{{err: control.ErrNotRunning}},
 			answer:   "connected",
 			wantCalls: [][]string{
+				{"loginctl", "enable-linger"},
 				{"systemctl", "--user", "daemon-reload"},
 				{"systemctl", "--user", "enable", "tervi"},
 				{"systemctl", "--user", "restart", "tervi"},
@@ -360,7 +361,7 @@ func TestConnectStartsStoppedService(t *testing.T) {
 				{answer: control.StatusAnswer{State: "reconnecting", Server: "http://localhost:8080"}},
 			},
 			answer:    "already_connected",
-			wantCalls: [][]string{{"systemctl", "--user", "enable", "--now", "tervi"}},
+			wantCalls: [][]string{{"loginctl", "enable-linger"}, {"systemctl", "--user", "enable", "--now", "tervi"}},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -651,7 +652,7 @@ func TestPairingUnreadable(t *testing.T) {
 				if code := Run(context.Background(), []string{command}, env, nil); code != 1 {
 					t.Fatalf("Run(%s) = %d, want 1", command, code)
 				}
-				want := "✗ Can't read the secret store entry.\n  Make sure you are logged in to a desktop session and the keyring is unlocked.\n"
+				want := fmt.Sprintf("✗ Can't read %s.\n", credential.Path(env.StateDir))
 				if failure == "unreadable state" {
 					want = fmt.Sprintf("✗ Can't read %s.\n", state.StatePath(env.StateDir))
 				}

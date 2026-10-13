@@ -109,11 +109,13 @@ func TestNoSecretsEndToEnd(t *testing.T) {
 		f.status(t)
 		f.machinesPage(t)
 		assertNoConnectionSecret(t, f.audit(paired.credential))
+		assertCredentialOnlyInPrivateFile(t, f.stateDir, f.serviceDir, paired.credential)
 	})
 	t.Run("rejection and pair again", func(t *testing.T) {
 		f := newConnectedFixture(t)
 		oldPair, newPair := rejectAndPairAgain(t, f)
 		assertNoConnectionSecret(t, f.audit(oldPair.credential, newPair.credential))
+		assertCredentialOnlyInPrivateFile(t, f.stateDir, f.serviceDir, newPair.credential, oldPair.credential)
 	})
 }
 

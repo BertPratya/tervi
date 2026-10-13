@@ -8,7 +8,7 @@ import (
 	"github.com/bertpratya/tervi/internal/worker/credential"
 )
 
-const backgroundStartedMessage = "✓ tervi now runs in the background and starts when you log in."
+const backgroundStartedMessage = "✓ tervi now runs in the background and starts when the computer starts."
 
 func runPairStart(ctx context.Context, env Env, flow Flow, server string) int {
 	var entry credential.Entry

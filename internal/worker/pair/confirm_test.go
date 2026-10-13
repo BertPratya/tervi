@@ -424,8 +424,12 @@ func runSaveFailureTest(t *testing.T, failDelete bool) {
 		t.Errorf("exit=%d reports=%d output=%q", got, reports.Load(), safeOutput(out.String()))
 	}
 	if failDelete {
-		if !strings.Contains(out.String(), "✗ Couldn't remove the partly saved secret store entry.\n  Make sure you are logged in to a desktop session and the keyring is unlocked, then run the same command again.\n") {
+		wantCleanup := fmt.Sprintf("✗ Couldn't remove the partly saved %s.\n  Delete it, then run the same command again.\n", credential.Path(env.StateDir))
+		if !strings.Contains(out.String(), wantCleanup) {
 			t.Errorf("missing partial-entry cleanup failure: %q", safeOutput(out.String()))
+		}
+		if strings.Contains(strings.ToLower(out.String()), "keyring") {
+			t.Errorf("output contains a keyring hint: %q", safeOutput(out.String()))
 		}
 		if _, exists, _ := state.ReadState(env.StateDir); !exists {
 			t.Error("state.json removed despite secret delete failure")
@@ -570,7 +574,10 @@ func TestAckResults(t *testing.T) {
 	}
 }
 
-func TestAckCleanupDeleteFails(t *testing.T) {
+func TestAckCleanupDeleteFails(t *testing.T) { runAckCleanupDeleteFails(t) }
+
+func runAckCleanupDeleteFails(t *testing.T) {
+	t.Helper()
 	var out bytes.Buffer
 	env := finishEnv(t, &out, strings.NewReader(testCode+"\n"))
 	backend := credential.NewMemoryBackend()
@@ -585,9 +592,12 @@ func TestAckCleanupDeleteFails(t *testing.T) {
 	})
 	defer server.Close()
 	got := finishFlow(time.Now().In(time.Local), time.Second, time.Millisecond).StartNew(context.Background(), env, server.URL)
-	want := "✗ Can't delete the secret store entry.\n  Make sure you are logged in to a desktop session and the keyring is unlocked.\n"
+	want := fmt.Sprintf("✗ Can't delete %s.\n", credential.Path(env.StateDir))
 	if got != 1 || !strings.Contains(out.String(), want) {
 		t.Errorf("exit=%d output=%q", got, safeOutput(out.String()))
+	}
+	if strings.Contains(strings.ToLower(out.String()), "keyring") {
+		t.Errorf("output contains a keyring hint: %q", safeOutput(out.String()))
 	}
 	if strings.Contains(out.String(), "✗ The pairing didn't finish in time. Run the same command again to start a new one.") {
 		t.Errorf("expired result message printed despite secret delete failure: %q", safeOutput(out.String()))
@@ -595,6 +605,11 @@ func TestAckCleanupDeleteFails(t *testing.T) {
 	if _, exists, _ := state.ReadState(env.StateDir); !exists {
 		t.Error("state should be kept after secret delete failure")
 	}
+}
+
+func TestCredentialFileMessages(t *testing.T) {
+	t.Run("partly saved file delete", func(t *testing.T) { runSaveFailureTest(t, true) })
+	t.Run("confirmation cleanup delete", runAckCleanupDeleteFails)
 }
 
 func TestStateDeleteFails(t *testing.T) {

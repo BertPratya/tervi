@@ -222,14 +222,15 @@ func newFixture(t *testing.T) *fixture {
 	origin := httptest.NewServer(server.New(server.Config{PublicURL: proxyServer.URL}, pool, logger, connection.NewList()))
 	t.Cleanup(origin.Close)
 	proxy.setTarget(origin.URL)
-	return &fixture{
+	f := &fixture{
 		serverURL:  proxyServer.URL,
-		store:      credential.NewStore(credential.NewMemoryBackend()),
 		stateDir:   filepath.Join(t.TempDir(), "state"),
 		serviceDir: t.TempDir(),
 		proxy:      proxy,
 		logs:       logs,
 	}
+	f.store = credential.NewStore(credential.NewFileBackend(f.stateDir))
+	return f
 }
 
 func (f *fixture) startWorker(parent context.Context) *workerRun {
@@ -640,8 +641,10 @@ func assertNoSecretLeaks(t *testing.T, audit secretAudit) {
 	}
 }
 
-func assertCredentialAbsentFromFiles(t *testing.T, stateDir, credential string) {
+func assertCredentialAbsentFromFiles(t *testing.T, stateDir, credentialValue string) {
 	t.Helper()
+	credentialPath := credential.Path(stateDir)
+	foundCredential := false
 	err := filepath.WalkDir(stateDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -653,12 +656,29 @@ func assertCredentialAbsentFromFiles(t *testing.T, stateDir, credential string) 
 		if err != nil {
 			return err
 		}
-		if bytes.Contains(data, []byte(credential)) {
+		if path == credentialPath {
+			foundCredential = true
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if got := info.Mode().Perm(); got != 0600 {
+				t.Errorf("credential.json mode = %04o, want 0600", got)
+			}
+			if !bytes.Contains(data, []byte(credentialValue)) {
+				t.Error("credential.json does not contain the paired credential")
+			}
+			return nil
+		}
+		if bytes.Contains(data, []byte(credentialValue)) {
 			t.Errorf("credential was written to local file %q", path)
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("inspect state directory: %v", err)
+	}
+	if !foundCredential {
+		t.Errorf("credential file %q was not found", credentialPath)
 	}
 }

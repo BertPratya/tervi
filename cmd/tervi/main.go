@@ -29,14 +29,15 @@ func main() {
 	}
 	// connect and status check the runtime folder before using the control client.
 	runtimeDir, _ := control.RuntimeDir()
+	stateDir := filepath.Join(configDir, "tervi")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	env := cli.Env{
 		Stdin:         os.Stdin,
 		Stdout:        os.Stdout,
 		Stderr:        os.Stderr,
-		Store:         credential.NewStore(credential.NewKeyringBackend()),
-		StateDir:      filepath.Join(configDir, "tervi"),
+		Store:         credential.NewStore(credential.NewFileBackend(stateDir)),
+		StateDir:      stateDir,
 		Runner:        service.ExecRunner{},
 		ProgramPath:   programPath,
 		ServiceDir:    filepath.Join(configDir, "systemd", "user"),

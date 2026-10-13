@@ -167,7 +167,7 @@ func newConnectedFixture(t *testing.T) *connectedFixture {
 	daemonLogs, daemonStderr := &safeBuffer{}, &safeBuffer{}
 	serverLogs := &safeBuffer{}
 	daemonCtx, cancelDaemon := context.WithCancel(context.Background())
-	store := credential.NewStore(credential.NewMemoryBackend())
+	store := credential.NewStore(credential.NewFileBackend(stateDir))
 	runtimeDir, err := control.RuntimeDir()
 	if err != nil {
 		t.Fatalf("resolve test runtime directory: %v", err)
@@ -395,7 +395,7 @@ func completeLivePair(t *testing.T, f *connectedFixture, run *workerRun) livePai
 	if code := awaitRun(t, run, connectionWait); code != 0 {
 		t.Fatalf("pair worker exit = %d", code)
 	}
-	wantOutput := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
+	wantOutput := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n"
 	if !strings.HasSuffix(run.stdout.String(), wantOutput) {
 		t.Error("pair output did not end with the required connection messages")
 	}
@@ -498,6 +498,75 @@ func assertNoConnectionSecret(t *testing.T, audit connectionAudit) {
 		if strings.Contains(audit.contents, value) {
 			t.Error("credential appeared in captured terminal output, logs, Machines responses, or state.json")
 		}
+	}
+}
+
+func assertCredentialOnlyInPrivateFile(t *testing.T, stateDir, serviceDir, credentialValue string, previousCredentials ...string) {
+	t.Helper()
+	credentialValues := append([]string{credentialValue}, previousCredentials...)
+	credentialPath := credential.Path(stateDir)
+	foundCredential := false
+	if err := filepath.WalkDir(stateDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if path == credentialPath {
+			foundCredential = true
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if got := info.Mode().Perm(); got != 0600 {
+				t.Errorf("credential.json mode = %04o, want 0600", got)
+			}
+			if !strings.Contains(string(data), credentialValue) {
+				t.Error("credential.json does not contain the paired credential")
+			}
+			for _, value := range previousCredentials {
+				if strings.Contains(string(data), value) {
+					t.Errorf("credential.json still contains a replaced credential")
+				}
+			}
+			return nil
+		}
+		for _, value := range credentialValues {
+			if strings.Contains(string(data), value) {
+				t.Errorf("credential appeared in state file %q", path)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("inspect state folder: %v", err)
+	}
+	if !foundCredential {
+		t.Errorf("credential file %q was not found", credentialPath)
+	}
+	if err := filepath.WalkDir(serviceDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, value := range credentialValues {
+			if strings.Contains(string(data), value) {
+				t.Errorf("credential appeared in service file %q", path)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("inspect service folder: %v", err)
 	}
 }
 
