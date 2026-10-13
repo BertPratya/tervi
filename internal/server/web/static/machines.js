@@ -15,9 +15,10 @@ function textElement(tag, className, text) {
 
 function render() {
   const page = view({ machines, failed, loaded, address: location.origin });
-  failureLine.textContent = page.failureMessage;
+  if (failureLine.textContent !== page.failureMessage) {
+    failureLine.textContent = page.failureMessage;
+  }
   app.replaceChildren();
-  app.append(textElement('h1', '', page.heading));
 
   if (page.rows.length === 0) {
     if (page.emptyMessage) app.append(textElement('p', '', page.emptyMessage));

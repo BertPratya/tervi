@@ -312,7 +312,7 @@ func writeCurrentServiceFile(t *testing.T, env Env) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contents := fmt.Sprintf("[Unit]\nDescription=tervi worker\n\n[Service]\nExecStart=\"%s\" daemon\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n", programPath)
+	contents := fmt.Sprintf("ExecStart=\"%s\" daemon\n", programPath)
 	if err := os.WriteFile(filepath.Join(env.ServiceDir, "tervi.service"), []byte(contents), 0600); err != nil {
 		t.Fatal(err)
 	}
