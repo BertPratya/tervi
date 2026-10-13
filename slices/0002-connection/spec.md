@@ -300,6 +300,7 @@ quote. `<…>` is filled in.
 | --- | --- |
 | `tervi daemon` without a desktop session's runtime folder | `✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).` |
 | `tervi logs` cannot read the log | `✗ Can't read the log: <reason>` |
+| tervi was built without one of its internal settings | `✗ tervi is missing an internal setting (<field name>).` |
 
 ## Not in this slice
 

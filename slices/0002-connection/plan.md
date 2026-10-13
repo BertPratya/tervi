@@ -307,7 +307,7 @@ with `0`.
   minute always holds — no extra timer.
   Not chosen: a timer per connection writing every minute — works with no
   messages, but adds a timer for every machine.
-- (pending the user's confirmation) The connection route refuses any
+- The connection route refuses any
   request that carries an `Origin` header with `403 forbidden_origin`,
   before anything else — only browsers send `Origin`, and the worker never
   does, so no web page can open a machine's connection.
