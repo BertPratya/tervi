@@ -7,7 +7,9 @@ import (
 	"io"
 	"strings"
 
+	"github.com/bertpratya/tervi/internal/worker/control"
 	"github.com/bertpratya/tervi/internal/worker/credential"
+	"github.com/bertpratya/tervi/internal/worker/service"
 	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
@@ -19,6 +21,16 @@ type Env struct {
 	Stdout, Stderr io.Writer
 	Store          *credential.Store
 	StateDir       string
+	Runner         service.Runner
+	ProgramPath    string
+	ServiceDir     string
+	ControlClient  ControlClient
+}
+
+// ControlClient is the private client used by commands to talk to the daemon.
+type ControlClient interface {
+	Status(ctx context.Context) (control.StatusAnswer, error)
+	Connect(ctx context.Context) (control.ConnectAnswer, error)
 }
 
 // Flow runs the network portion of a new or resumed pairing.
@@ -89,6 +101,9 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 	if env.Stderr == nil {
 		env.Stderr = io.Discard
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(args) > 0 {
 		switch args[0] {
 		case "daemon":
@@ -97,9 +112,12 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 				return 2
 			}
 			return runDaemon(ctx, env)
-		case "connect", "status", "logs":
-			fmt.Fprintln(env.Stdout, "Not available yet.")
-			return 1
+		case "connect":
+			return runConnect(ctx, args[1:], env)
+		case "status":
+			return runStatus(ctx, args[1:], env)
+		case "logs":
+			return runLogs(ctx, args[1:], env)
 		}
 	}
 	cmd, parseMessage, usageOnly := parseCommand(args)
@@ -110,9 +128,6 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		fmt.Fprintln(env.Stderr, usageLine)
 		return 2
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if cancelled(ctx, env.Stdout, false) {
 		return 130
 	}
@@ -122,7 +137,7 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		return 130
 	}
 	if err != nil {
-		fmt.Fprintf(env.Stdout, "✗ Can't read %s.\n", state.StatePath(env.StateDir))
+		printStateReadFailure(env.Stdout, env.StateDir)
 		return 1
 	}
 	if cancelled(ctx, env.Stdout, false) {
@@ -210,6 +225,18 @@ func cancelled(ctx context.Context, output io.Writer, resumable bool, server ...
 func printStoreReadFailure(output io.Writer) {
 	fmt.Fprintln(output, "✗ Can't read the secret store entry.")
 	fmt.Fprintln(output, "  Make sure you are logged in to a desktop session and the keyring is unlocked.")
+}
+
+func requireRuntimeFolder(output io.Writer) bool {
+	if _, err := control.RuntimeDir(); errors.Is(err, control.ErrRuntimeDirNotSet) {
+		fmt.Fprintln(output, "✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).")
+		return false
+	}
+	return true
+}
+
+func printStateReadFailure(output io.Writer, stateDir string) {
+	fmt.Fprintf(output, "✗ Can't read %s.\n", state.StatePath(stateDir))
 }
 
 func printStoreDeleteFailure(output io.Writer) {

@@ -153,12 +153,10 @@ func TestUsage(t *testing.T) {
 	if stderr.String() != usage || stdout.Len() != 0 {
 		t.Errorf("stderr=%q stdout=%q, want full usage and no stdout", stderr.String(), stdout.String())
 	}
-	for _, name := range []string{"connect", "status", "logs"} {
-		var out, errOut bytes.Buffer
-		unavailableEnv := Env{Stdout: &out, Stderr: &errOut}
-		if code := Run(context.Background(), []string{name}, unavailableEnv, nil); code != 1 || out.String() != "Not available yet.\n" || errOut.Len() != 0 {
-			t.Errorf("Run(%q) = code %d, stdout %q, stderr %q", name, code, out.String(), errOut.String())
-		}
+	var out, errOut bytes.Buffer
+	usageEnv := Env{Stdout: &out, Stderr: &errOut}
+	if code := Run(context.Background(), []string{"logs", "extra"}, usageEnv, nil); code != 2 || out.Len() != 0 || errOut.String() != usage {
+		t.Errorf("Run(logs extra) = code %d, stdout %q, stderr %q", code, out.String(), errOut.String())
 	}
 }
 
@@ -275,6 +273,20 @@ func TestNoRuntimeFolder(t *testing.T) {
 	want := "✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).\n"
 	if stdout.String() != want || stderr.Len() != 0 {
 		t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
+	}
+	for _, command := range []string{"status", "connect"} {
+		t.Run(command, func(t *testing.T) {
+			runner := &commandRunner{}
+			client := &commandControl{}
+			env, _, stdout, stderr := commandEnv(t, runner, client, true)
+			t.Setenv("XDG_RUNTIME_DIR", "")
+			if code := Run(context.Background(), []string{command}, env, nil); code != 1 {
+				t.Fatalf("Run(%s) = %d, want 1", command, code)
+			}
+			if stdout.String() != want || stderr.Len() != 0 || client.statusCalls != 0 || client.connectCalls != 0 || len(runner.calls) != 0 {
+				t.Errorf("Run(%s) = stdout %q stderr %q status calls %d connect calls %d systemctl %v", command, stdout.String(), stderr.String(), client.statusCalls, client.connectCalls, runner.calls)
+			}
+		})
 	}
 }
 
