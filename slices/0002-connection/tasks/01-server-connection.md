@@ -108,6 +108,15 @@ into a new package `internal/server/httpapi` as exported functions
 `internal/server/pairing` use them, and delete `respond.go`. The connection
 route uses them too; task 02 will.
 
+**Logging each `500` (backlog B4).** `WriteInternalError` also takes the
+caller's `*slog.Logger` and a short fixed text naming what failed (for
+example `"look up machine"`, `"write last seen"`), and logs
+`slog.Error("internal error", "kind", <text>)`, adding `"sqlstate", <code>`
+when the error is a PostgreSQL error. It never logs the error's message or
+detail, a request value, a key, a credential, or a hash: PostgreSQL error
+details can contain the values of a row. Every caller in `pairing` and
+`connection` passes its own kind text. A nil logger logs nothing.
+
 ### The route: `internal/server/connection`
 
 `Register(mux, Deps)` adds `GET /api/v1/machines/current/connection`. It
@@ -236,6 +245,7 @@ Never log the credential, the `Authorization` header, or the hash.
 | `TestOversizedMessageCloses` | contract rule |
 | `TestUnknownTypeIgnored` | contract rule |
 | `TestCredentialNeverLogged` — the log output of every test above contains no credential | R25 |
+| `TestInternalErrorLogsKindOnly` — a `500` from `pairing` and from `connection` logs its kind (and `sqlstate` for a PostgreSQL error), and the log has no error message, request value, or credential | backlog B4, R25 |
 | `TestConnectionTimingSettings` — defaults, valid values, an interval of 61, and both error messages | R14, R24 |
 | `TestMigrationAddsLastSeen` — version 2, the column exists and is null for existing machines | R24 |
 | Contract test — `openConnection` returns `101`, `400`, `401`, `403`; no `x-planned` on it | contract |

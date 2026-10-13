@@ -204,10 +204,10 @@ time `15:04`, then the time since, rounded down:
 Exit `0` only when connected. For the rejected lines, `<server>` comes from
 the secret store entry.
 
-**Open — waiting for the user's wording:** what `○ Reconnecting` shows while
-a try is under way (`next_try_in_seconds` is `0`) and before any try has
-failed (no last error). Until the user answers, build the two cases so the
-wording is one string each, easy to change.
+While a try is under way (`next_try_in_seconds` is `0`), the second line is
+`  Try <n>, trying now` instead of `  Try <n>, next in <s> seconds`. Before
+any try has failed (no last error), the `Last error:` line is left out.
+`TestStatusOutputs` covers both.
 
 If the daemon answers `not_connecting` without a stop reason (a computer
 paired in slice 1 whose daemon was started by hand), print

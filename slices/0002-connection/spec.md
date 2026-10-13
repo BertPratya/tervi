@@ -263,6 +263,8 @@ quote. `<…>` is filled in.
 | --- | --- |
 | Connected | `● Connected to <server>`, `  Machine: <hostname>`, `  Since:   <HH:MM> (<how long>)` |
 | Reconnecting | `○ Reconnecting to <server>`, `  Try <n>, next in <s> seconds`, `  Last error: <error>` |
+| Reconnecting, a try happening now | `  Try <n>, trying now` in place of the `next in` line |
+| Reconnecting, no try has failed yet | The `Last error:` line is left out |
 | Running, not connecting, no rejection (a slice-1 pairing) | `○ Not connecting.` then `  Connect with: tervi connect` |
 
 `<how long>` is `less than a minute`, `1 minute`, `N minutes`, `1 hour`,
