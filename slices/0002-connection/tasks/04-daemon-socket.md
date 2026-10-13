@@ -71,6 +71,8 @@ Serve HTTP over the socket with `net/http`:
 | `POST /connect` | `{"result": "connected"}`, `already_connected`, `rejected`, `not_paired`, `{"result": "still_trying", "last_error": "…"}` (`last_error` is `null` if no try has failed yet), or `{"result": "failed", "path": "<path of state.json>"}` (`state.json` could not be written; added during task 03) — from `Daemon.Connect` |
 
 `next_try_in_seconds` is rounded to the nearest whole second, at least 0.
+`server` may be empty while `reconnecting` if the daemon has not read the
+secret store yet (see task 03, `Status()`; added in fix 1).
 `last_error` is `null` before any try has failed (see task 03's `Status`).
 
 ### The client

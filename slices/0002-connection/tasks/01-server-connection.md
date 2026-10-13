@@ -272,6 +272,7 @@ Never log the credential, the `Authorization` header, or the hash.
 | `TestClientCloseNoticedAtOnce` — a client close removes the entry at once | R12 |
 | `TestCloseAllOnStop` — cancelling `Run`'s context closes every connection with `1001`, and each connection's final `last_seen_at` is written before `Run` returns | R12, R24 |
 | `TestAddAfterCloseAll` — a connection added after `CloseAll` is closed at once with `1001`, is never Online, and its handler is waited for | R12, R24 |
+| `TestCloseAllSharesDeadlineAndForcesClose` — three `CloseAll` calls with a worker that never answers the close finish within about 5 s together, and the connection is closed with `CloseNow` (added in fix 1) | R12 |
 | `TestNotAnUpgradeRequest` — a known credential without the upgrade headers, or with a missing or malformed `Sec-WebSocket-Key`, gets `400 invalid_input` in JSON | contract |
 | `TestNewestWins` — a second connection for the same machine closes the first with `4000`, logs the warning with the machine id, and the machine stays Online | R15 |
 | `TestReplacedCloseKeepsNewEntry` — the old connection's end does not remove the new entry | R15, R23 |
