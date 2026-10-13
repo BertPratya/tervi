@@ -216,6 +216,7 @@ The same error has one text, written in two ways:
 | An HTTP answer other than `101` and the rejection | `the server answered <status code>` | `The server answered <status code>` |
 | The secret store cannot be read | `can't read the secret store` | `Can't read the secret store` |
 | The secret store entry is damaged | `the secret store entry is damaged` | `The secret store entry is damaged` |
+| The secret store entry is missing (`state.json` is confirmed) — decided by the user during task 03 | `the secret store entry is missing` | `The secret store entry is missing` |
 | `state.json` cannot be read or parsed (only in `Connect`) | `can't read state.json` | — (never logged as a try) |
 | Any other network error | Go's error text, first letter lower-case | the same, first letter upper-case |
 
