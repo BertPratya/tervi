@@ -209,7 +209,8 @@ The daemon obeys it at all times.
 **Machines page**
 
 - R21. The server shall show `/machines`: every paired machine (only those
-  whose pairing finished), with its name, OS, and `Online` or `Offline`. An
+  whose pairing finished), sorted by name, with its name, OS, and `Online` or
+  `Offline`. An
   offline machine shall also show `last seen <time ago>`, or `never connected`
   if it never connected.
 - R22. The page shall refresh by itself every 5 seconds.

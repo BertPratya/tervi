@@ -84,6 +84,7 @@ slice shows:
 - **Repetition**: the same SQL or logic written by two tasks becomes one
   shared constant or function.
 - **Contracts and layout**: the code lenses above, applied to the whole diff.
+  No operation in `api/openapi.yaml` is still marked `x-planned`.
 - **Leftovers**: unused code, `TODO`s, and comments that no longer match the code.
 - **Checklist**: every test named in "Proved by tests" in `checklist.md`
   exists and proves what its row says. Every message quoted in "Check by hand"

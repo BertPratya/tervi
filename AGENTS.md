@@ -47,18 +47,23 @@ Start PostgreSQL from outside the sandbox: the architect runs
 
 ## Contracts and data model
 
-Two places hold the design that outlives any one slice. Both are readable by
+These files hold the design that outlives any one slice. All are readable by
 people and by agents:
 
 | File | Holds |
 | --- | --- |
-| [`api/openapi.yaml`](api/openapi.yaml) | Every API route, the approval page, and `/health`: who calls it, with what proof, every request and answer. Static files and the development-only docs page are not listed. Later, `api/asyncapi.yaml` holds the WebSocket messages. |
+| [`api/openapi.yaml`](api/openapi.yaml) | Every API route, the web pages, and `/health`: who calls it, with what proof, every request and answer. Static files and the development-only docs page are not listed. |
+| [`api/asyncapi.yaml`](api/asyncapi.yaml) | Every message sent over a machine's connection (the WebSocket), the checks, the timeout, and the close codes |
 | [`design/data-model.md`](design/data-model.md) | Every database table and column, each lifecycle, and the worker's local data |
 
 - **A plan pull request changes them directly**, in the same pull request as
-  `plan.md`. The plan links to what changed instead of copying it.
+  `plan.md`. The plan links to what changed instead of copying it. Each
+  operation it adds to `api/openapi.yaml` is marked `x-planned: true`, so
+  the contract test passes before the code exists; the task that builds the
+  operation removes the mark.
 - **The code must match them.** A test checks the server against
-  `api/openapi.yaml`. For the database, the migration files are the truth and
+  `api/openapi.yaml`, and tests check both sides against
+  `api/asyncapi.yaml`. For the database, the migration files are the truth and
   `design/data-model.md` must agree with them.
 - A task that finds the contract wrong stops and reports it; it does not
   change the code to disagree with the contract.
