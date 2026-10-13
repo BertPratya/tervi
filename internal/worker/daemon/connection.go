@@ -11,7 +11,6 @@ import (
 
 	"github.com/bertpratya/tervi/internal/protocol"
 	"github.com/bertpratya/tervi/internal/worker/credential"
-	"github.com/bertpratya/tervi/internal/worker/state"
 	"github.com/coder/websocket"
 )
 
@@ -31,7 +30,6 @@ type attemptResult struct {
 	logError  string
 	conn      *websocket.Conn
 	hello     protocol.Hello
-	record    state.State
 }
 
 type lostResult struct {
@@ -85,7 +83,7 @@ func (d *Daemon) tryConnection(parent context.Context, try int) attemptResult {
 		if conn != nil {
 			_ = conn.CloseNow()
 		}
-		return attemptResult{kind: attemptRejected, server: server, record: record}
+		return attemptResult{kind: attemptRejected, server: server}
 	}
 	if dialErr != nil || conn == nil {
 		if conn != nil {

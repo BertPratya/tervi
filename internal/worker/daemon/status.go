@@ -1,8 +1,6 @@
 package daemon
 
 import (
-	"fmt"
-	"math"
 	"time"
 )
 
@@ -31,12 +29,7 @@ func (d *Daemon) Status() Status {
 	defer d.mu.Unlock()
 	result := d.status
 	if result.State == "reconnecting" && !result.NextTry.IsZero() {
-		seconds := math.Round(result.NextTry.Sub(d.opts.Now()).Seconds())
-		if seconds > 0 {
-			result.NextTryInSeconds = int(seconds)
-		} else {
-			result.NextTryInSeconds = 0
-		}
+		result.NextTryInSeconds = wholeSeconds(result.NextTry.Sub(d.opts.Now()))
 	}
 	if result.StopReason != nil {
 		reason := *result.StopReason
@@ -81,8 +74,4 @@ func (d *Daemon) currentServer() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.status.Server
-}
-
-func (d *Daemon) logLine(format string, args ...any) {
-	_, _ = fmt.Fprintf(d.opts.Log, "%s %s\n", d.opts.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 }

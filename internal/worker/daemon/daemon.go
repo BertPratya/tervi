@@ -3,7 +3,9 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"math"
 	"math/rand/v2"
 	"net/http"
 	"sync"
@@ -107,11 +109,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 			d.refreshState()
 			try, announce = 1, false
 		case attemptRejected:
-			d.reject(result.record, result.server)
+			d.reject(result.server)
 			try, announce = 1, false
 		case attemptFailed:
 			wait := reconnectWait(try+1, d.opts.Rand())
-			d.logLine("✗ %s. Next try in %d seconds", result.logError, int(wait.Seconds()+0.5))
+			d.logLine("✗ %s. Next try in %d seconds", result.logError, wholeSeconds(wait))
 			d.setRetry(try+1, result.server, result.lastError, d.opts.Now().Add(wait))
 			waited := d.wait(wait, ctx)
 			if waited == waitCancelled {
@@ -231,4 +233,16 @@ func (d *Daemon) signal() {
 	case d.wake <- struct{}{}:
 	default:
 	}
+}
+
+func (d *Daemon) logLine(format string, args ...any) {
+	_, _ = fmt.Fprintf(d.opts.Log, "%s %s\n", d.opts.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
+}
+
+func wholeSeconds(duration time.Duration) int {
+	seconds := int(math.Round(duration.Seconds()))
+	if seconds < 0 {
+		return 0
+	}
+	return seconds
 }

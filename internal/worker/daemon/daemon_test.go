@@ -790,6 +790,47 @@ func TestRejectionStops(t *testing.T) {
 	<-done
 }
 
+func TestRejectionPreservesCurrentPairingFields(t *testing.T) {
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	expected := state.State{
+		MachineID:       "new-machine-id",
+		CredentialSaved: false,
+		Confirmed:       false,
+		Connect:         true,
+	}
+	d := f.newDaemon(t, Options{Dial: func(context.Context, string, *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+		if err := state.WriteState(f.dir, expected); err != nil {
+			t.Errorf("WriteState() while Dial is in progress: %v", err)
+		}
+		return nil, &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Body:       io.NopCloser(strings.NewReader(`{"error":"unknown_credential"}`)),
+		}, nil
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	waitFor(t, time.Second, func() bool {
+		status := d.Status()
+		return status.State == "not_connecting" && status.StopReason != nil
+	}, "credential rejection")
+	got, _, err := state.ReadState(f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MachineID != expected.MachineID || got.CredentialSaved != expected.CredentialSaved || got.Confirmed != expected.Confirmed {
+		t.Fatalf("pairing fields after rejection = (%+v), want machine_id %q, credential_saved %t, confirmed %t", got, expected.MachineID, expected.CredentialSaved, expected.Confirmed)
+	}
+	if got.Connect || got.StopReason == nil || *got.StopReason != "credential_rejected" {
+		t.Fatalf("connection fields after rejection = (%+v), want connect false and credential_rejected", got)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+}
+
 func TestConnectAfterRejection(t *testing.T) {
 	f := newDaemonFixture(t, true, 10, 30, nil)
 	secondDialStarted := make(chan struct{})
@@ -885,6 +926,9 @@ func TestIdleWhileConnectFalse(t *testing.T) {
 }
 
 func TestDaemonConnectResults(t *testing.T) {
+	if got := New(Options{}).connectTimeout; got != 30*time.Second {
+		t.Fatalf("New().connectTimeout = %s, want 30s", got)
+	}
 	t.Run("not paired", func(t *testing.T) {
 		f := newDaemonFixture(t, false, 10, 30, nil)
 		if err := state.WriteState(f.dir, state.State{}); err != nil {
@@ -926,7 +970,7 @@ func TestDaemonConnectResults(t *testing.T) {
 		go d.Run(runCtx)
 		connectCtx, cancel := context.WithCancel(context.Background())
 		go func() { time.Sleep(30 * time.Millisecond); cancel() }()
-		if got := d.Connect(connectCtx); got.Result != "still_trying" {
+		if got := d.Connect(connectCtx); got.Result != "still_trying" || got.LastError != "" {
 			t.Fatalf("Connect() = %+v", got)
 		}
 		stop()
@@ -968,6 +1012,9 @@ func TestDaemonConnectResults(t *testing.T) {
 		}
 	})
 	t.Run("state write failure", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("permission checks are bypassed for the root user")
+		}
 		f := newDaemonFixture(t, false, 10, 30, nil)
 		before, err := os.ReadFile(state.StatePath(f.dir))
 		if err != nil {

@@ -18,7 +18,8 @@ func (d *Daemon) Connect(ctx context.Context) ConnectResult {
 
 	entry, record, paired, err := credential.Paired(d.opts.StateDir, d.opts.Store)
 	if err != nil && isStateReadError(err) {
-		return ConnectResult{Result: "still_trying", LastError: "can't read state.json"}
+		lastError, _ := errorText(err, nil, "")
+		return ConnectResult{Result: "still_trying", LastError: lastError}
 	}
 	if !record.Confirmed || !paired && err == nil {
 		return ConnectResult{Result: "not_paired"}
@@ -67,11 +68,14 @@ func (d *Daemon) waitForConnect(ctx context.Context) ConnectResult {
 	}
 }
 
-func (d *Daemon) reject(record state.State, server string) {
-	record.Connect = false
-	reason := "credential_rejected"
-	record.StopReason = &reason
-	_ = state.WriteState(d.opts.StateDir, record)
+func (d *Daemon) reject(server string) {
+	record, exists, err := state.ReadState(d.opts.StateDir)
+	if err == nil && exists {
+		record.Connect = false
+		reason := "credential_rejected"
+		record.StopReason = &reason
+		_ = state.WriteState(d.opts.StateDir, record)
+	}
 	d.setRejected()
 	d.logLine("✗ The server doesn't accept this computer's credential. Pair again with: tervi pair --server %s", server)
 }
