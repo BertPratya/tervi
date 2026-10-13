@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/bertpratya/tervi/internal/secret"
+	"github.com/bertpratya/tervi/internal/server/httpapi"
 )
 
 type startInput struct {
@@ -25,23 +26,23 @@ type startResponse struct {
 func (deps Deps) start(w http.ResponseWriter, r *http.Request) {
 	input, ok := decodeStartInput(w, r)
 	if !ok {
-		writeError(w, http.StatusBadRequest, "invalid_input")
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
 	if utf8.RuneCountInString(input.Hostname) > 64 || utf8.RuneCountInString(input.OSName) > 64 || utf8.RuneCountInString(input.OSVersion) > 32 ||
 		strings.ContainsRune(input.Hostname, '\x00') || strings.ContainsRune(input.OSName, '\x00') || strings.ContainsRune(input.OSVersion, '\x00') {
-		writeError(w, http.StatusBadRequest, "invalid_input")
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
 
 	pollingKey, err := secret.NewKey()
 	if err != nil {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, "start pairing", err)
 		return
 	}
 	approvalKey, err := secret.NewKey()
 	if err != nil {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, "start pairing", err)
 		return
 	}
 	_, err = deps.Pool.Exec(r.Context(), `INSERT INTO pairing_requests
@@ -49,11 +50,11 @@ func (deps Deps) start(w http.ResponseWriter, r *http.Request) {
 		VALUES ($1, $2, $3, 'waiting_for_approval', $4, $5, now() + interval '10 minutes')`,
 		input.Hostname, input.OSName, input.OSVersion, secret.Hash(pollingKey), secret.Hash(approvalKey))
 	if err != nil {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, "start pairing", err)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, startResponse{
+	httpapi.WriteJSON(w, http.StatusCreated, startResponse{
 		PollingKey:       pollingKey.Reveal(),
 		ApprovalURL:      deps.PublicURL + "/pair/" + approvalKey.Reveal(),
 		ExpiresInSeconds: 600,
