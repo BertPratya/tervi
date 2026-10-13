@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/bertpratya/tervi/internal/worker/control"
 	"github.com/bertpratya/tervi/internal/worker/credential"
 	"github.com/bertpratya/tervi/internal/worker/state"
 )
@@ -75,7 +77,7 @@ func usageEnv(t *testing.T) (Env, *countingBackend, *trapReader, *bytes.Buffer, 
 }
 
 func TestUsageErrors(t *testing.T) {
-	usage := "Usage: tervi pair --server <url>\n"
+	usage := "Usage: tervi pair --server <url>\n       tervi connect\n       tervi status\n       tervi logs [-f]\n       tervi daemon\n"
 	cases := []struct {
 		name string
 		args []string
@@ -92,6 +94,8 @@ func TestUsageErrors(t *testing.T) {
 		{"flag before command", []string{"--server", "x", "pair"}, "Unknown command: --server\n" + usage},
 		{"unknown argument", []string{"pair", "extra"}, "Unknown argument: extra\n" + usage},
 		{"unknown command", []string{"other"}, "Unknown command: other\n" + usage},
+		{"daemon with flag", []string{"daemon", "--foo"}, usage},
+		{"daemon with argument", []string{"daemon", "anything"}, usage},
 		{"short help after pair", []string{"pair", "-h"}, usage},
 		{"help after pair", []string{"pair", "--help"}, usage},
 		{"help before pair", []string{"--help", "pair"}, usage},
@@ -138,6 +142,149 @@ func TestUsageErrors(t *testing.T) {
 			t.Errorf("unexpected output: stdout=%q stderr=%q", stdout.String(), stderr.String())
 		}
 	}
+}
+
+func TestUsage(t *testing.T) {
+	usage := "Usage: tervi pair --server <url>\n       tervi connect\n       tervi status\n       tervi logs [-f]\n       tervi daemon\n"
+	env, _, _, stdout, stderr := usageEnv(t)
+	if code := Run(context.Background(), []string{"daemon", "--unexpected"}, env, nil); code != 2 {
+		t.Fatalf("Run() = %d, want 2", code)
+	}
+	if stderr.String() != usage || stdout.Len() != 0 {
+		t.Errorf("stderr=%q stdout=%q, want full usage and no stdout", stderr.String(), stdout.String())
+	}
+	for _, name := range []string{"connect", "status", "logs"} {
+		var out, errOut bytes.Buffer
+		unavailableEnv := Env{Stdout: &out, Stderr: &errOut}
+		if code := Run(context.Background(), []string{name}, unavailableEnv, nil); code != 1 || out.String() != "Not available yet.\n" || errOut.Len() != 0 {
+			t.Errorf("Run(%q) = code %d, stdout %q, stderr %q", name, code, out.String(), errOut.String())
+		}
+	}
+}
+
+func TestSecondDaemonExits(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	firstEnv, _, _, _, _ := usageEnv(t)
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	firstDone := make(chan int, 1)
+	go func() { firstDone <- Run(firstCtx, []string{"daemon"}, firstEnv, nil) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := control.Status(context.Background(), mustRuntimeDir(t)); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancelFirst()
+			t.Fatal("first daemon socket did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	secondEnv, _, _, secondStdout, secondStderr := usageEnv(t)
+	if code := Run(context.Background(), []string{"daemon"}, secondEnv, nil); code != 0 {
+		cancelFirst()
+		t.Fatalf("second daemon Run() = %d, want 0", code)
+	}
+	want := "tervi is already running in the background.\n"
+	if secondStdout.String() != want || secondStderr.Len() != 0 {
+		cancelFirst()
+		t.Errorf("second daemon stdout=%q stderr=%q, want %q and empty", secondStdout.String(), secondStderr.String(), want)
+	}
+	if _, err := control.Status(context.Background(), mustRuntimeDir(t)); err != nil {
+		cancelFirst()
+		t.Fatalf("second daemon affected first daemon: %v", err)
+	}
+	cancelFirst()
+	if code := <-firstDone; code != 0 {
+		t.Errorf("first daemon Run() = %d, want 0", code)
+	}
+}
+
+func TestDaemonCommandStops(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	env, _, _, stdout, stderr := usageEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int, 1)
+	go func() { done <- Run(ctx, []string{"daemon"}, env, nil) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := control.Status(context.Background(), mustRuntimeDir(t)); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("daemon socket did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Errorf("daemon Run() = %d, want 0", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("daemon did not stop after context cancellation")
+	}
+	if stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Errorf("stdout=%q stderr=%q, want empty", stdout.String(), stderr.String())
+	}
+	if _, err := control.Status(context.Background(), mustRuntimeDir(t)); !errors.Is(err, control.ErrNotRunning) {
+		t.Errorf("Status() after stop error = %v, want ErrNotRunning", err)
+	}
+}
+
+func TestDaemonPrintsLogLines(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	env, _, _, stdout, stderr := usageEnv(t)
+	if err := state.WriteState(env.StateDir, state.State{MachineID: "machine", CredentialSaved: true, Confirmed: true, Connect: true}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int, 1)
+	go func() { done <- Run(ctx, []string{"daemon"}, env, nil) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		answer, err := control.Status(context.Background(), mustRuntimeDir(t))
+		if err == nil && answer.LastError != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("daemon did not attempt a connection: status=%+v err=%v", answer, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	if code := <-done; code != 0 {
+		t.Fatalf("daemon Run() = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), "Next try in") {
+		t.Errorf("stdout = %q, want a connection log line", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestNoRuntimeFolder(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	env, _, _, stdout, stderr := usageEnv(t)
+	if code := Run(context.Background(), []string{"daemon"}, env, nil); code != 1 {
+		t.Fatalf("Run() = %d, want 1", code)
+	}
+	want := "✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).\n"
+	if stdout.String() != want || stderr.Len() != 0 {
+		t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
+	}
+}
+
+func mustRuntimeDir(t *testing.T) string {
+	t.Helper()
+	path, err := control.RuntimeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestStateFileBroken(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
-const usageLine = "Usage: tervi pair --server <url>"
+const usageLine = "Usage: tervi pair --server <url>\n       tervi connect\n       tervi status\n       tervi logs [-f]\n       tervi daemon"
 
 // Env supplies the worker's local inputs, outputs, and state locations.
 type Env struct {
@@ -88,6 +88,19 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 	}
 	if env.Stderr == nil {
 		env.Stderr = io.Discard
+	}
+	if len(args) > 0 {
+		switch args[0] {
+		case "daemon":
+			if len(args) != 1 {
+				fmt.Fprintln(env.Stderr, usageLine)
+				return 2
+			}
+			return runDaemon(ctx, env)
+		case "connect", "status", "logs":
+			fmt.Fprintln(env.Stdout, "Not available yet.")
+			return 1
+		}
 	}
 	cmd, parseMessage, usageOnly := parseCommand(args)
 	if usageOnly || parseMessage != "" {
