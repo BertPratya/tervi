@@ -7,7 +7,7 @@ Spec: [spec.md](spec.md)
 
 | Part | Location | Notes |
 | --- | --- | --- |
-| JSON answers and proofs | `internal/server/httpapi` | Shared by the server's route packages: reading the `Authorization: Bearer` proof and writing JSON answers and `{"error": …}` answers. Moved here from `internal/server/pairing` (task 01) |
+| JSON answers and proofs | `internal/server/httpapi` | The server's JSON API conventions, shared by its route packages: reading the `Authorization: Bearer` proof, writing JSON answers and `{"error": …}` answers, and logging the kind of each `500` (R34). Moved here from `internal/server/pairing` (task 08) |
 | Connection on the server | `internal/server/connection` | Accepts each worker's connection, checks its credential, keeps one connection per machine (newest wins), runs the checks that notice a lost worker, knows which machines are Online, and records "last seen"; `Register(mux, ...)` for its route |
 | Machines list | `internal/server/machines` | The list the Machines page shows: every paired machine with its name, OS, Online or Offline, and "last seen"; `Register(mux, ...)` for its route |
 | Machines page | `internal/server/web` | `/machines`, plain HTML and JavaScript next to the approval page, refreshing itself every 5 seconds |
@@ -41,7 +41,7 @@ Added to [`api/openapi.yaml`](../../api/openapi.yaml):
 
 | Operation | Called by | Proof | Purpose | Requirements |
 | --- | --- | --- | --- | --- |
-| `GET /api/v1/machines/current/connection` | The daemon | Credential | Opens the WebSocket; an unknown credential gets `401 unknown_credential` before it opens | R2, R12–R15, R18, R19, R23, R24 |
+| `GET /api/v1/machines/current/connection` | The daemon | Credential | Opens the WebSocket; a request with an `Origin` header gets `403 forbidden_origin`, and an unknown credential gets `401 unknown_credential`, before it opens | R2, R12–R15, R18, R19, R23, R24 |
 | `GET /api/v1/machines` | The Machines page | None (R27) | Every active machine, with Online and "last seen" | R21, R23, R24 |
 | `GET /machines` | The browser | None (R27) | The Machines page (HTML) | R21, R22 |
 
@@ -151,7 +151,9 @@ with the database's clock, so the two never disagree.
 Covers R12, R24. On Ctrl+C, the server closes every connection with code
 `1001` and waits until each connection has written its final
 `last_seen_at`, before it stops serving and closes the database. Each worker
-notices at once and starts reconnecting.
+notices at once and starts reconnecting. Closing every connection is final:
+a connection that finishes opening after it is closed at once with `1001`
+and waited for too, so nothing writes after the database is closed.
 
 ### Starting the background service
 
@@ -305,6 +307,14 @@ with `0`.
   minute always holds — no extra timer.
   Not chosen: a timer per connection writing every minute — works with no
   messages, but adds a timer for every machine.
+- (pending the user's confirmation) The connection route refuses any
+  request that carries an `Origin` header with `403 forbidden_origin`,
+  before anything else — only browsers send `Origin`, and the worker never
+  does, so no web page can open a machine's connection.
+  Not chosen: the WebSocket library's own `Origin` check — it answers in
+  plain text, breaking the rule that every `/api/` answer is JSON; skipping
+  the `Origin` check — a page in the user's browser could open the
+  connection if it ever had a credential.
 
 ## Requirement coverage
 
@@ -334,7 +344,7 @@ with `0`.
 | R22 | 02 |
 | R23 | 01, 02, 07 |
 | R24 | 01, 02, 07 |
-| R25 | 01, 02, 03, 05, 06, 07 |
+| R25 | 01, 02, 03, 05, 06, 07, 08 |
 | R26 | 04 |
 | R27 | 02 |
 | R28 | 05, 06 |
@@ -343,6 +353,7 @@ with `0`.
 | R31 | 05, 06 |
 | R32 | 05 |
 | R33 | 06, 07 |
+| R34 | 08, 01, 02 |
 
 R1 is met through the daemon: pairing asks it to connect, and it writes
 `connect: true` (decision 1). If the background service cannot start, the
@@ -352,19 +363,26 @@ user finishes with `tervi connect` (R29).
 
 | # | Task | Depends on | Risk | Status |
 | --- | --- | --- | --- | --- |
-| 01 | [Server: the machine connection](tasks/01-server-connection.md) | — | core | todo |
-| 02 | [Server: the machines list and the Machines page](tasks/02-machines-page.md) | 01 | normal | todo |
+| 08 | [Server: shared JSON helpers, and logging each `500`](tasks/08-server-http-helpers.md) | — | normal | todo |
+| 01 | [Server: the machine connection](tasks/01-server-connection.md) | 08 | core | todo |
+| 02 | [Server: the machines list and the Machines page](tasks/02-machines-page.md) | 01, 08 | normal | todo |
 | 03 | [Worker: the daemon's connection](tasks/03-daemon-connection.md) | 01 | core | todo |
 | 04 | [Worker: the daemon's socket, its lock, and `tervi daemon`](tasks/04-daemon-socket.md) | 03 | core | todo |
 | 05 | [Worker: the background service, `tervi connect`, `tervi status`, `tervi logs`](tasks/05-service-and-commands.md) | 04 | core | todo |
 | 06 | [Worker: pairing hands over to the daemon](tasks/06-pairing-hands-over.md) | 05 | core | todo |
-| 07 | [End-to-end test of the connection](tasks/07-end-to-end.md) | 01–06 | normal | todo |
+| 07 | [End-to-end test of the connection](tasks/07-end-to-end.md) | 01–06, 08 | normal | todo |
+
+The table is in build order. Task 08 is built first and numbered 08 only
+because it was split out of task 01 during plan review, after the other
+task files were numbered.
 
 Tasks 02 and 03 can be built at the same time. Both change their own row
 in this table; the rows are next to each other, so the second merge into
 the slice branch has a one-line conflict, which the architect resolves.
 
-Task sizes are uneven: task 03 (the daemon's engine) is the largest, and
-tasks 06 and 07 are small. This is accepted: splitting task 03 would
-separate the connection loop from the methods that drive it, and task 07 is
-tests only.
+Task sizes are uneven: task 03 (the daemon's engine) and task 01 (the
+protocol, the connection route and list, settings, the migration, and the
+contract test) are the largest, and tasks 06, 07, and 08 are small. This is
+accepted: splitting task 03 would separate the connection loop from the
+methods that drive it; task 01's parts are one route and what it needs, and
+the shared helpers it used to carry are now task 08; task 07 is tests only.

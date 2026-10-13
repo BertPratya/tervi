@@ -1,6 +1,6 @@
 # Task 07 — End-to-end test of the connection
 
-Slice: 0002-connection    Risk: normal    Depends on: 01, 02, 03, 04, 05, 06
+Slice: 0002-connection    Risk: normal    Depends on: 01, 02, 03, 04, 05, 06, 08
 
 ## Goal
 
@@ -68,18 +68,27 @@ a fake that runs the real daemon in the same test process.
   buffers, approving through the API, reading the code); move shared
   helpers into a `helpers_test.go` if both files need them. Its proxy is
   not used here (see below).
-- Task 05's `cli.Env` hooks let a test replace systemd and the program path.
+- Task 05's `cli.Env` hooks let a test replace systemd (`Runner`), the
+  program path, the control client, and the service-file folder
+  (`ServiceDir`).
 - Task 04's `tervi daemon` and `internal/worker/control` run the daemon with
   a runtime folder you choose (set `XDG_RUNTIME_DIR` to a temporary folder
   for the test).
 
 ### The fake background service
 
-Replace systemd with a fake whose start step starts the real daemon
-(`tervi daemon`, through `cli.Run` or the daemon and control packages) in a
-goroutine, with the test's state folder, secret store, and runtime folder.
-The fake records that it was asked to start. The program path is a fake
-installed path outside `os.TempDir()`.
+Replace systemd with a fake `Runner`. When it is asked to run
+`systemctl --user restart tervi` or `systemctl --user enable --now tervi`,
+it starts the real daemon with `cli.Run(ctx, []string{"daemon"}, env, …)`
+in a goroutine, using the test's state folder, secret store, and runtime
+folder. Every other `systemctl` call succeeds and does nothing. If the fake
+is asked to start while a daemon is already running, the second
+`tervi daemon` exits `0` through the lock (R7), as real systemd would leave
+the running one alone. The fake records each call.
+
+The program path is a fake installed path outside `os.TempDir()`, and
+`ServiceDir` is `t.TempDir()`, so the test never writes the real
+`~/.config/systemd/user/tervi.service`.
 
 ### How the test runs the server
 
@@ -97,7 +106,8 @@ address.
 - **To stop the server:** `connections.CloseAll()`, then close the
   `httptest` server. **To start it again:** open a new listener on the same
   address, and serve a new `server.New(...)` with a new list, on the same
-  database.
+  database. A list is never used again after `CloseAll` (it is final, task
+  01), so every start needs a new one.
 
 ### Scenarios
 
@@ -113,13 +123,21 @@ address.
    again as above. The daemon reconnects by itself, and the list shows the
    machine Online again, with `last_seen_seconds_ago` set.
 3. **Newest wins.** Open a second WebSocket with the same credential (read
-   it from the in-memory secret store in the test). The daemon's connection
-   is replaced (its log shows `replaced by a newer connection`), the server
-   logs the warning with the machine id, and the machine stays Online. Close
-   the extra connection; the daemon reconnects.
+   it from the in-memory secret store in the test), sending no `Origin`
+   header. In this order:
+   - The daemon's connection is replaced: its log shows
+     `✗ Connection lost: replaced by a newer connection`, and the server
+     logs the warning with the machine id.
+   - About 1–2 seconds later the daemon reconnects by itself (a new
+     `✓ Connected to <server>` line), which replaces the test's connection:
+     the test's WebSocket receives close code `4000`.
+   - The server has now logged the warning twice for that machine, and the
+     machine stayed Online throughout (check the list between the steps).
+   Wait for each step with a deadline of a few seconds; never wait for the
+   test's own connection to close first.
 4. **Rejection, then pairing again.** Set the machine's status to `failed`
-   in the database, then call `connections.CloseAll()` (the server keeps
-   running). The daemon's next try gets `401`, it stops, `state.json` has
+   in the database, then stop and start the server as in scenario 2. The
+   daemon's next try gets `401`, it stops, `state.json` has
    `connect: false` and `stop_reason: "credential_rejected"`, and
    `tervi status` shows the R16 rejection lines. `tervi pair` then prints the
    R33 line and a new pairing completes and connects.

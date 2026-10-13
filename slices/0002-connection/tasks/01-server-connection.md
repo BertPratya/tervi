@@ -1,6 +1,6 @@
 # Task 01 — Server: the machine connection
 
-Slice: 0002-connection    Risk: core    Depends on: —
+Slice: 0002-connection    Risk: core    Depends on: 08
 
 ## Goal
 
@@ -42,8 +42,22 @@ the shared message types both sides use.
   minute early if the server itself stopped suddenly.
 - R25. The credential shall never appear in terminal output, logs, the
   Machines page, or `state.json`. *This task: server logs.*
+- R34. When the server answers `internal_error`, it shall log what kind of
+  operation failed, and never the error's details, a request value, a key,
+  a credential, or a hash. *This task: the connection route's own failures,
+  through task 08's helper.*
 
 ## Context
+
+### What exists (task 08)
+
+`internal/server/httpapi` holds the shared JSON helpers: `BearerProof`,
+`WriteJSON`, `WriteError`, and `WriteInternalError(w, logger, kind, err)`,
+which logs only the kind (and the PostgreSQL error code). `pairing` already
+uses them. Use them in the connection route; never write JSON answers or
+read the proof another way. Pass a short fixed kind text for every
+`WriteInternalError` call, for example `"look up machine"` or
+`"write last seen"`.
 
 ### Library
 
@@ -61,9 +75,11 @@ The full rules are in `api/asyncapi.yaml`; read it. Build:
 - A function that reads the `type` of a received JSON object, so a receiver
   can ignore unknown types.
 - `MaxMessageSize = 4096` bytes.
-- Close codes as constants: `CloseServerStopping = 1001`,
-  `CloseReplaced = 4000`, `CloseTimeout = 4001`, and the worker's normal
-  close `1000`.
+- Close codes as constants, one for each code in `asyncapi.yaml`:
+  `CloseNormal = 1000` (the worker stopping on purpose),
+  `CloseServerStopping = 1001`, `CloseInvalidMessage = 1008`,
+  `CloseTooLarge = 1009` (sent by the library; the constant is for reading
+  it), `CloseReplaced = 4000`, and `CloseTimeout = 4001`.
 - `DefaultHelloTimeout = 30 * time.Second` (what the worker uses before
   `hello` arrives).
 
@@ -99,29 +115,16 @@ or `TERVI_CONNECTION_TIMEOUT_SECONDS must be a whole number of seconds, greater 
 Add both variables, with their defaults and a one-line comment each, to
 `.env.example`.
 
-### Shared JSON helpers: `internal/server/httpapi`
-
-`internal/server/pairing/respond.go` holds `bearerProof`, `writeJSON`,
-`writeError`, and `writeInternalError`. Move them, unchanged in behavior,
-into a new package `internal/server/httpapi` as exported functions
-(`BearerProof`, `WriteJSON`, `WriteError`, `WriteInternalError`), make
-`internal/server/pairing` use them, and delete `respond.go`. The connection
-route uses them too; task 02 will.
-
-**Logging each `500` (backlog B4).** `WriteInternalError` also takes the
-caller's `*slog.Logger` and a short fixed text naming what failed (for
-example `"look up machine"`, `"write last seen"`), and logs
-`slog.Error("internal error", "kind", <text>)`, adding `"sqlstate", <code>`
-when the error is a PostgreSQL error. It never logs the error's message or
-detail, a request value, a key, a credential, or a hash: PostgreSQL error
-details can contain the values of a row. Every caller in `pairing` and
-`connection` passes its own kind text. A nil logger logs nothing.
-
 ### The route: `internal/server/connection`
 
 `Register(mux, Deps)` adds `GET /api/v1/machines/current/connection`. It
 runs behind the existing Host check like every route.
 
+0. A request that carries an `Origin` header gets
+   `403 {"error": "forbidden_origin"}` before any other step. Only browsers
+   send `Origin`; the worker never does, so no web page can open a machine's
+   connection. With no `Origin` header, the library's own origin check
+   passes; do not set `InsecureSkipVerify`.
 1. Read the proof from `Authorization: Bearer <credential>`. Look it up:
    `SELECT machine_id FROM machines WHERE credential_hash = $1 AND status = 'active'`
    with `secret.Hash(...)`, as `internal/server/pairing/machine.go` does.
@@ -131,8 +134,9 @@ runs behind the existing Host check like every route.
    `500 {"error": "internal_error"}`.
 3. Check that the request is a WebSocket opening request before handing it
    to the library: `Connection` contains `upgrade`, `Upgrade` is
-   `websocket` (both case-insensitive), and `Sec-WebSocket-Version` is
-   `13`. Otherwise answer `400 {"error": "invalid_input"}` (documented in
+   `websocket` (both case-insensitive), `Sec-WebSocket-Version` is `13`,
+   and `Sec-WebSocket-Key` is present and is standard base64 of exactly 16
+   bytes. Otherwise answer `400 {"error": "invalid_input"}` (documented in
    `api/openapi.yaml`), so the library never answers in plain text.
 4. Accept the WebSocket. Set the read limit to `protocol.MaxMessageSize`.
 5. Add it to the in-memory list (below), set `last_seen_at = now()`, and send
@@ -176,6 +180,12 @@ read at the same moment (protect it with a mutex; run its tests with
   connection's handler has finished, including its final `last_seen_at`
   write, so nothing writes after the database is closed. It waits at most
   5 seconds.
+- `CloseAll()` is final: the list remembers that it was closed. A
+  connection added after it (a handshake that finished between `CloseAll`
+  and `Shutdown`) is closed at once with `1001` and never stored, and
+  `CloseAll` (or a second call to it) waits for that connection's handler
+  too, within the same 5 seconds. A server that keeps running never calls
+  `CloseAll`.
 
 Every machine is Offline after a restart because the list starts empty.
 
@@ -201,7 +211,8 @@ In `api/openapi.yaml`, remove `x-planned: true` from `openConnection` only.
 In `test/contract/contract_test.go`, call `openConnection` so that it returns
 `101` (with a real credential from a finished pairing, using a WebSocket
 handshake), `400` (a known credential without the upgrade headers), `401`,
-and `403` (through the existing unknown-host loop).
+and `403` twice: through the existing unknown-host loop (`unknown_host`) and
+with an `Origin` header (`forbidden_origin`).
 
 ### Secrets
 
@@ -210,8 +221,6 @@ Never log the credential, the `Authorization` header, or the hash.
 ## Boundaries
 
 - May create or change: `internal/protocol/`, `internal/server/connection/`,
-  `internal/server/httpapi/`, `internal/server/pairing/` (only to use
-  `httpapi` and delete `respond.go`),
   `internal/server/db/migrations/0002_last_seen.sql`,
   `internal/server/config.go`, `internal/server/server.go`, their tests,
   tests that check the database version, `cmd/server/main.go` only if
@@ -220,7 +229,8 @@ Never log the credential, the `Authorization` header, or the hash.
   `server.New` call), `.env.example` (the two settings),
   `api/openapi.yaml` (only the `x-planned` line of `openConnection`),
   `go.mod`, `go.sum`.
-- Must not change: anything under `internal/worker/`, any other behavior of
+- Must not change: anything under `internal/worker/`,
+  `internal/server/httpapi/` (report a missing piece instead),
   `internal/server/pairing/`, `internal/server/web/`, `design/`, `slices/`
   except this task's row in `plan.md`.
 
@@ -229,14 +239,15 @@ Never log the credential, the `Authorization` header, or the hash.
 | Test | Proves |
 | --- | --- |
 | `TestUnknownCredentialRefused` — missing, unknown, and `pending`/`failed` credentials get `401 unknown_credential` and no WebSocket | R18, R19 |
-| `TestDatabaseFailureIsNotRejection` — a database failure answers `500`, never `401` | R19 |
+| `TestDatabaseFailureIsNotRejection` — a database failure answers `500`, never `401`, and the server log has the kind text and no credential | R19, R34 |
+| `TestOriginRefused` — any `Origin` header gets `403 forbidden_origin` in JSON, before the credential is looked up | contract |
 | `TestHelloCarriesTiming` — the first message is `hello` with the configured interval and timeout | R14 |
 | `TestPingGetsPong` | R13 |
 | `TestServerTimeout` — with a 1 s interval and 3 s timeout, a silent client is closed with `4001` and its entry removed; a client that keeps pinging stays | R13 |
 | `TestClientCloseNoticedAtOnce` — a client close removes the entry at once | R12 |
 | `TestCloseAllOnStop` — cancelling `Run`'s context closes every connection with `1001`, and each connection's final `last_seen_at` is written before `Run` returns | R12, R24 |
-| `TestNotAnUpgradeRequest` — a known credential without the upgrade headers gets `400 invalid_input` in JSON | contract |
-| `TestHTTPAPIHelpers` — `BearerProof` accepts only `Bearer <proof>`; the write helpers set JSON and the status; the slice-1 pairing tests still pass | layout |
+| `TestAddAfterCloseAll` — a connection added after `CloseAll` is closed at once with `1001`, is never Online, and its handler is waited for | R12, R24 |
+| `TestNotAnUpgradeRequest` — a known credential without the upgrade headers, or with a missing or malformed `Sec-WebSocket-Key`, gets `400 invalid_input` in JSON | contract |
 | `TestNewestWins` — a second connection for the same machine closes the first with `4000`, logs the warning with the machine id, and the machine stays Online | R15 |
 | `TestReplacedCloseKeepsNewEntry` — the old connection's end does not remove the new entry | R15, R23 |
 | `TestListSafeUnderLoad` — many goroutines add, replace, remove, and read at once, under `go test -race` | R15, R23 |
@@ -245,16 +256,16 @@ Never log the credential, the `Authorization` header, or the hash.
 | `TestOversizedMessageCloses` | contract rule |
 | `TestUnknownTypeIgnored` | contract rule |
 | `TestCredentialNeverLogged` — the log output of every test above contains no credential | R25 |
-| `TestInternalErrorLogsKindOnly` — a `500` from `pairing` and from `connection` logs its kind (and `sqlstate` for a PostgreSQL error), and the log has no error message, request value, or credential | backlog B4, R25 |
 | `TestConnectionTimingSettings` — defaults, valid values, an interval of 61, and both error messages | R14, R24 |
 | `TestMigrationAddsLastSeen` — version 2, the column exists and is null for existing machines | R24 |
-| Contract test — `openConnection` returns `101`, `400`, `401`, `403`; no `x-planned` on it | contract |
+| Contract test — `openConnection` returns `101`, `400`, `401`, and `403` (`unknown_host` and `forbidden_origin`); no `x-planned` on it | contract |
 
 `go vet ./...`, `go test ./...`, and `go test -race ./internal/server/connection/`
 pass. This task's row in `plan.md` changes to `done`.
 
 ## Out of scope
 
+- The shared JSON helpers and logging each `500` (task 08).
 - The machines list and the Machines page (task 02).
 - Everything on the worker (tasks 03–06).
 

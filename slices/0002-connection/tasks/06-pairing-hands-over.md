@@ -57,7 +57,9 @@ rejected pair again.
   `connected`, `already_connected`, `still_trying` (with the last error),
   `rejected`, `not_paired`.
 - `internal/worker/cli` (task 05): `cli.Env` carries the program path, the
-  systemd `Runner`, and the control client, so tests set fakes; functions
+  systemd `Runner`, the service-file folder (`ServiceDir`), and the control
+  client, so tests set fakes; an empty or nil one stops the hand-over with
+  the internal-setting line; functions
   that print the two R29 lines and the two rejected lines. Reuse those
   functions; do not print the same messages a second way.
 - `tervi pair` is handled in `internal/worker/cli` (step zero and the
@@ -114,9 +116,11 @@ and exits `130`. The pairing stays saved.
   `test/e2e/pairing_test.go`. In every existing test that runs `tervi pair`
   (in `internal/worker/cli/cli_test.go`, `internal/worker/pair/`, and
   `test/e2e/pairing_test.go`), you may set a fake installed program path, a
-  fake systemd `Runner`, and a fake control client in `cli.Env`: the test
-  binary itself lives inside `os.TempDir()`, so without fakes the installed
-  check would stop it, and the hand-over would call real `systemctl`.
+  fake systemd `Runner`, a fake control client, and `ServiceDir` in
+  `cli.Env`: the test binary itself lives inside `os.TempDir()`, so without
+  fakes the installed check would stop it, and the hand-over would call real
+  `systemctl`. Every test that reaches the hand-over sets `ServiceDir` to
+  `t.TempDir()`, so no test ever writes `~/.config/systemd/user/tervi.service`.
 - Must not change: `internal/worker/daemon/`, `internal/worker/control/`,
   `internal/worker/service/`, `internal/worker/state/`,
   `internal/worker/credential/`, `internal/server/`, `api/`, `design/`,
@@ -127,7 +131,7 @@ and exits `130`. The pairing stays saved.
 | Test | Proves |
 | --- | --- |
 | `TestPairInstalledCheckFirst` — a temporary program gets the R28 message and no request reaches the server | R28 |
-| `TestPairHandsOver` — after `✓ Paired successfully.`, the start steps run, then the two lines in order, exit `0` | R5, R10 |
+| `TestPairHandsOver` — after `✓ Paired successfully.`, the start steps run, then the two lines in order, exit `0`; the service file is written in the test's `t.TempDir()` `ServiceDir` and nowhere else | R5, R10 |
 | `TestPairSetsConnectThroughDaemon` — the hand-over calls `Connect`, and the fake daemon wrote `connect: true` | R1 |
 | `TestPairStillTrying` — the R11 lines, exit `0` | R11 |
 | `TestPairServiceFails` — the R29 lines, exit `1`, `state.json` and the secret store entry still hold the pairing | R29 |

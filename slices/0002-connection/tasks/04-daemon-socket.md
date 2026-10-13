@@ -46,9 +46,10 @@ commands in task 05.
 
 ### The lock (R7)
 
-`internal/worker/control` takes an exclusive, non-blocking `flock`
-(`syscall.Flock` with `LOCK_EX|LOCK_NB`) on `daemon.lock` and keeps the file
-open while the daemon runs. Linux releases it when the process ends. If the
+`internal/worker/control` opens `daemon.lock`, creating it with mode `0600`
+if it is missing (as in `design/data-model.md`), takes an exclusive,
+non-blocking `flock` (`syscall.Flock` with `LOCK_EX|LOCK_NB`) on it, and
+keeps the file open while the daemon runs. Linux releases it when the process ends. If the
 lock is taken: print `tervi is already running in the background.` and exit
 with `0`. (Exit `0` so systemd, which restarts only after a failure, does not
 keep starting the service while the user runs one by hand.)
@@ -123,7 +124,7 @@ secret store) through `cli.Env` or a similar existing pattern.
 | `TestSecondDaemonExits` — a second `tervi daemon` with the same runtime folder prints the message, exits `0`, and the first keeps answering | R7, R30 |
 | `TestLockReleasedWhenDaemonEnds` — after the first ends, a new one starts | R7 |
 | `TestOldSocketFileReplaced` — a leftover `daemon.sock` does not stop a new daemon | R7 |
-| `TestRuntimeFolderPrivate` — the folder is `0700`, the socket `0600` | R26 |
+| `TestRuntimeFolderPrivate` — the folder is `0700`, the socket and the lock file `0600` | R26 |
 | `TestOtherUserRefused` — the peer check refuses a different user id and accepts the same one | R26 |
 | `TestStatusOverSocket` — each state's JSON | R3 |
 | `TestConnectOverSocket` — each result's JSON | R3 |

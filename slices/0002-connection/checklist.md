@@ -51,7 +51,7 @@ command prints its exit code on the next line.
 | 9 | R31 | Close terminal 2 | The page still shows Online | ⬜ |
 | 10 | R31 | Open a new terminal 2: `tervi status` | Still `● Connected to http://localhost:8080` | ⬜ |
 | 11 | R26 | `ls -la $XDG_RUNTIME_DIR/tervi` | The `.` line starts with `drwx------`, `daemon.sock` with `srw-------`; both owned by you | ⬜ |
-| 12 | R27 | `ss -ltn 'sport = :8080'` | One line, with the local address `127.0.0.1:8080`: the server is reachable only from this computer | ⬜ |
+| 12 | R27 | `ss -ltn 'sport = :8080'` | A header line, then exactly one line under it, with the local address `127.0.0.1:8080`: the server is reachable only from this computer | ⬜ |
 
 **The server goes away and comes back**
 
@@ -71,8 +71,8 @@ command prints its exit code on the next line.
 | 19 | R21, R22, R24 | `systemctl --user stop tervi`. Watch the page without reloading | Within about 5 seconds: `○ <your computer>   <your OS>   Offline · last seen less than a minute ago` | ⬜ |
 | 20 | R16 | `tervi status` | `✗ tervi isn't running in the background.` and `Start it with: tervi connect` | ⬜ |
 | 21 | R4 | `tervi connect` | `✓ Connected.`; the page shows Online | ⬜ |
-| 22 | R6 | `systemctl --user kill -s KILL tervi` | The page shows Offline within a few seconds | ⬜ |
-| 23 | R6 | Wait 10 seconds: `systemctl --user is-active tervi` | `active`; the page shows Online again | ⬜ |
+| 22 | R6 | `systemctl --user kill -s KILL tervi` | The prompt comes back. The page may show Offline only for a moment, or not at all: systemd restarts tervi within about 6 seconds, and the page reads every 5 seconds | ⬜ |
+| 23 | R6 | Wait 10 seconds: `tervi logs` | The log ends with a new `<time> ✓ Connected to http://localhost:8080`, about 6 seconds after the kill: systemd started tervi again by itself. The page shows Online | ⬜ |
 | 24 | R13 | `systemctl --user kill -s STOP tervi` (freezes it without closing anything). Watch the page | Within about 35 seconds the page shows Offline | ⬜ |
 | 25 | R13, R2 | `systemctl --user kill -s CONT tervi`. Watch the page | Within about 40 seconds it shows Online again | ⬜ |
 
@@ -144,6 +144,7 @@ command prints its exit code on the next line.
 | R29 | A service that can't start keeps the pairing | `TestEnsureRunningFailures`, `TestConnectServiceFails`, `TestPairServiceFails` | ⬜ |
 | R31 | The commands return while the daemon keeps running | `TestConnectReturnsAfterLastLine`, `TestPairReturnsAfterLastLine` | ⬜ |
 | R33 | Pairing again only after a rejection; otherwise the slice-1 refusal | `TestPairAgainAfterRejection`, `TestAlreadyPairedStillRefused`, `TestPairAgainDeleteFails` | ⬜ |
+| R34 | A `500` logs what kind of operation failed, and never the error's details, a value, or a credential | `TestInternalErrorLogsKindOnly`, `TestPairingInternalErrorLogged`, `TestDatabaseFailureIsNotRejection`, `TestListDatabaseFailure` | ⬜ |
 
 Rows 24–25 freeze the daemon with a signal instead of cutting the network;
 for the server that is the same: the connection stays open and goes silent.

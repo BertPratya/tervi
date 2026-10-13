@@ -114,6 +114,10 @@ func (d *Daemon) Connect(ctx context.Context) ConnectResult
 
 - `connect` false, or no confirmed `state.json`: stay idle until `Connect`
   is called or `ctx` ends. No network at all.
+- `state.json` cannot be read or parsed: stay idle the same way, write
+  nothing, and answer `Status` with `not_connecting` and no stop reason.
+  The daemon never writes over a `state.json` it could not read, so the
+  pairing fields are never lost.
 - `connect` true: try to connect, as below. Each try reads the secret store
   entry again (through `credential.Paired`). A store that cannot be read, a
   damaged entry, or a missing entry is a **failed try**: it gets the log
@@ -176,6 +180,7 @@ picked up. Then:
 | Situation | Result |
 | --- | --- |
 | No confirmed `state.json`, or no secret store entry | `not_paired` |
+| `state.json` cannot be read or parsed | `still_trying` with the last error `can't read state.json`; nothing is written, and the loop stays idle |
 | Already connected | `already_connected` (nothing changes) |
 | Otherwise (including a secret store that cannot be read, or a damaged entry) | Writes `connect: true`, `stop_reason: null`; wakes the loop; waits until connected (`connected`), rejected (`rejected`), or 30 seconds or `ctx` end (`still_trying`, with the last error, for example `can't read the secret store`) |
 
@@ -211,6 +216,7 @@ The same error has one text, written in two ways:
 | An HTTP answer other than `101` and the rejection | `the server answered <status code>` | `The server answered <status code>` |
 | The secret store cannot be read | `can't read the secret store` | `Can't read the secret store` |
 | The secret store entry is damaged | `the secret store entry is damaged` | `The secret store entry is damaged` |
+| `state.json` cannot be read or parsed (only in `Connect`) | `can't read state.json` | — (never logged as a try) |
 | Any other network error | Go's error text, first letter lower-case | the same, first letter upper-case |
 
 The log form is the `last error` form with its first letter upper-case.
@@ -270,7 +276,8 @@ injected clock and `Rand`, and short test timings.
 | `TestRejectionStops` — `401 unknown_credential` stops trying, writes `connect: false` and `stop_reason`, logs the line | R18 |
 | `TestConnectAfterRejection` — `Connect` tries again; a second rejection stops again | R20 |
 | `TestIdleWhileConnectFalse` — no network activity while `connect` is false; `Status` still answers | R3 |
-| `TestDaemonConnectResults` — `not_paired`, `already_connected`, `connected`, `rejected`, `still_trying` after 30 s (injected clock) | R3, R20 |
+| `TestDaemonConnectResults` — `not_paired`, `already_connected`, `connected`, `rejected`, `still_trying` after 30 s (injected clock), and `still_trying` with `can't read state.json` for an unreadable `state.json`, which is left byte-for-byte unchanged | R3, R20, R4 |
+| `TestUnreadableStateStaysIdle` — with an unparsable `state.json`, `Run` stays idle with no network, writes nothing, and `Status` is `not_connecting` | R3 |
 | `TestConnectReadsNewPairing` — after the pairing changes, `Connect` uses the new server and credential | R20 |
 | `TestStateKeepsPairingFields` — writing `connect` keeps the other fields; a file without `connect` reads as false | R1 data rule |
 | `TestLogLines` — the exact lines for each event, and no line for `ping`/`pong`/`hello` | R8 |

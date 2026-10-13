@@ -108,9 +108,18 @@ folder), the program is temporary: print
 `tervi must be installed to run in the background. Install it with: go install ./cmd/tervi`
 and exit `1`.
 
-**The service file.** `~/.config/systemd/user/tervi.service` (use
-`os.UserConfigDir()`), exactly the contents in `design/data-model.md`, with
-`ExecStart=<absolute program path> daemon`. Create the folder if needed.
+**The service file.** `tervi.service` in the service-file folder, exactly the
+contents in `design/data-model.md`, with
+`ExecStart=<absolute program path> daemon`. Create the folder if needed. The
+folder is a field of the service options and of `cli.Env`
+(`ServiceDir`); `main` sets it to `<os.UserConfigDir()>/systemd/user`,
+which is `~/.config/systemd/user`.
+
+**Tests never touch the real folder.** Every test that can reach the service
+code (in this task, task 06, and task 07) sets `ServiceDir` to
+`t.TempDir()`. A test that left it empty would write over the service file
+the user set up by hand, so an empty `ServiceDir` is a programming error:
+`EnsureRunning` returns an error and writes nothing.
 
 **Start (the "Starting the background service" mechanism in `plan.md`):**
 
@@ -130,18 +139,40 @@ when there is one (the command's output, trimmed), or
 
 Export one function that the pairing (task 06) also uses:
 `EnsureRunning(ctx) error` doing steps 1–2. Put whatever the commands need
-from systemd (the `Runner`), the program path, and the control client into
-`cli.Env`, so tests can replace them. When a field is nil, `cmd/tervi`'s
-real value is used only if `main` sets it; tests set fakes.
+into `cli.Env`, so tests can replace them: the `Runner`, the program path,
+the service-file folder (`ServiceDir`), and the control client.
+
+`main` in `cmd/tervi` sets all four to their real values. `cli.Run` never
+fills in a default: if `connect`, `status`, `logs`, or the pairing hand-over
+finds any of the four it needs empty or nil, it prints
+`✗ tervi is missing an internal setting (<field name>).` and exits `1`,
+without calling systemd or writing a file. Tests set fakes, and
+`t.TempDir()` for `ServiceDir`.
 
 Put the printing of the shared messages (the two R29 lines, the two
 rejected lines, the not-paired line, the two control-error lines) in
 functions in `internal/worker/cli`, so task 06 reuses them.
 
+### When the pairing cannot be read
+
+`credential.Paired` returns an error when the secret store cannot be read
+(for example, the keyring is still locked), when the entry is damaged, or
+when `state.json` cannot be read or parsed. Both `tervi connect` and
+`tervi status` then print slice 1's existing message for that failure and
+exit `1`; there is no new wording:
+
+| Error | Output |
+| --- | --- |
+| The secret store cannot be read, or its entry is damaged | `printStoreReadFailure` in `internal/worker/cli/cli.go`: `✗ Can't read the secret store entry.` then `  Make sure you are logged in to a desktop session and the keyring is unlocked.` |
+| `state.json` cannot be read or parsed | `✗ Can't read <path of state.json>.`, the same text `cli.Run` prints today in step zero. Move that `fmt.Fprintf` into a function `printStateReadFailure` and use it in both places |
+
+Neither command writes, deletes, or starts anything in these cases.
+
 ### `tervi connect` (R4, R28, R29, R31)
 
 1. Installed check (R28).
-2. Not paired → `This computer isn't paired. Pair it with: tervi pair --server <url>`, exit `1`.
+2. `credential.Paired`: an error → "When the pairing cannot be read" above.
+   Not paired → `This computer isn't paired. Pair it with: tervi pair --server <url>`, exit `1`.
 3. `EnsureRunning` → on failure, the two lines above, exit `1`. The pairing
    is untouched.
 4. `control.Client.Connect` and print:
@@ -166,7 +197,8 @@ in. The command then exits; it never stops the daemon.
 
 ### `tervi status` (R16, R17)
 
-1. Not paired → `✗ This computer isn't paired.` then
+1. `credential.Paired`: an error → "When the pairing cannot be read" above.
+   Not paired → `✗ This computer isn't paired.` then
    `  Pair it with: tervi pair --server <url>` (`<url>` printed as is),
    exit `1`. A daemon that answers `not_paired` gets the same two lines.
 2. `control.Client.Status`; `ErrNotRunning` →
@@ -250,6 +282,9 @@ else after `logs` is wrong usage (exit `2`).
 | `TestStatusSince` — each `Since` wording at 0, 59, 60, 119, 120, 3599, 3600, 86399, 86400 seconds | R16 |
 | `TestLogsCommand` — the exact `journalctl` arguments with and without `-f`, passed to `Runner.Stream`; failure message; wrong usage | R32 |
 | `TestNoCredentialPrinted` — no command's output contains the credential | R25 |
+| `TestPairingUnreadable` — for `connect` and `status`: an unreadable store, a damaged entry, and an unreadable `state.json` each print slice 1's message and exit `1`, with no `systemctl` call and no file written | R4, R16 |
+| `TestServiceDirRequired` — an empty `ServiceDir` makes `EnsureRunning` fail without writing anywhere; every test in this package uses `t.TempDir()` | R5 |
+| `TestMissingInternalSetting` — a nil `Runner`, control client, empty program path, or empty `ServiceDir` prints the internal-setting line with the field name and exits `1` | — (guards the tests against real systemd) |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md` changes
 to `done`.

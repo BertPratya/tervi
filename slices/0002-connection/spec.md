@@ -242,6 +242,12 @@ The daemon obeys it at all times.
   reach the server can see the Machines page. The server still listens on
   `localhost` only.
 
+**Server log**
+
+- R34. When the server answers `internal_error`, it shall log what kind of
+  operation failed, and never the error's details, a request value, a key,
+  a credential, or a hash.
+
 ## Messages
 
 The exact wording of messages the requirements above describe but do not

@@ -242,7 +242,13 @@ paths:
         are described in `asyncapi.yaml`. A new connection for a machine
         that already has one replaces it (spec R15). A request with a known
         credential that is not a WebSocket opening request (no
-        `Upgrade: websocket`, or the wrong WebSocket version) gets `400`.
+        `Upgrade: websocket`, the wrong WebSocket version, or a missing or
+        malformed `Sec-WebSocket-Key`) gets `400`.
+
+        A request that carries an `Origin` header gets
+        `403 forbidden_origin` before anything else is checked. Only browsers
+        send `Origin`; the worker never does, so no web page can open a
+        machine's connection.
       security:
         - credential: []
       responses:
@@ -258,7 +264,19 @@ paths:
         "401":
           $ref: "#/components/responses/UnknownCredential"
         "403":
-          $ref: "#/components/responses/UnknownHost"
+          description: |
+            `unknown_host`: the `Host` header names a host that is not
+            allowed. `forbidden_origin`: the request carries an `Origin`
+            header.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                unknown_host:
+                  value: { error: unknown_host }
+                forbidden_origin:
+                  value: { error: forbidden_origin }
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -420,7 +438,7 @@ components:
         error:
           type: string
           enum:
-            [invalid_input, unknown_key, unknown_credential, invalid_link, unknown_host, internal_error]
+            [invalid_input, unknown_key, unknown_credential, invalid_link, unknown_host, forbidden_origin, internal_error]
 
     PairingStatus:
       type: string

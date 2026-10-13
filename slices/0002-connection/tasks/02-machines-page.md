@@ -1,6 +1,6 @@
 # Task 02 — Server: the machines list and the Machines page
 
-Slice: 0002-connection    Risk: normal    Depends on: 01
+Slice: 0002-connection    Risk: normal    Depends on: 01, 08
 
 ## Goal
 
@@ -30,17 +30,22 @@ for offline machines, refreshing every 5 seconds.
 - R27. **Known limitation (as in slice 1):** without sign-in, anyone who can
   reach the server can see the Machines page. The server still listens on
   `localhost` only.
+- R34. When the server answers `internal_error`, it shall log what kind of
+  operation failed, and never the error's details, a request value, a key,
+  a credential, or a hash. *This task: the machines list's database
+  failure, through task 08's helper.*
 
 ## Context
 
-### What exists (task 01)
+### What exists (tasks 01 and 08)
 
 `internal/server/connection` keeps the in-memory list of open connections
 (`*connection.List`) and exports `Online(machineID string) bool` and
 `OnlineIDs() map[string]bool`. `server.New(cfg, pool, logger, connections)`
 receives the list. `machines.last_seen_at` exists (migration `0002`).
 `internal/server/httpapi` has `WriteJSON`, `WriteError`, and
-`WriteInternalError`; use them for every answer.
+`WriteInternalError(w, logger, kind, err)`; use them for every answer, with
+the kind `"list machines"` for a database failure.
 
 ### The list: `internal/server/machines`
 
@@ -63,7 +68,8 @@ answer is described in `api/openapi.yaml` (`MachineList`, `Machine`):
   and `last_seen_at` (rounded down, never below 0), or `null` when
   `last_seen_at` is null. Compute it in SQL so server and database clocks
   cannot disagree.
-- A database failure answers `500 {"error": "internal_error"}`.
+- A database failure answers `500 {"error": "internal_error"}` through
+  `httpapi.WriteInternalError`, which logs the kind (R34).
 - Never select or return `credential_hash`.
 
 ### The page: `internal/server/web`
@@ -125,6 +131,7 @@ return `200` and `403`, with at least one machine in the answer.
 | `TestListOnlineFromMemory` — `online` is true exactly for machines in the in-memory list | R23 |
 | `TestListLastSeen` — seconds since `last_seen_at`, and `null` when never connected | R21, R24 |
 | `TestListHasNoCredential` — the answer has no credential or hash | R25 |
+| `TestListDatabaseFailure` — a database failure answers `500 internal_error`, and the server log has the kind `list machines` | R34 |
 | `TestMachinesPageServed` — `/machines` and its scripts answer with the right types and headers; the test file answers `404` | R21 |
 | `machines-view.test.js` — each row form, every `<time ago>` boundary (59, 60, 3599, 3600, 86399, 86400), the empty state, the failure line, and that a name with `<b>` is shown as text | R21, R22 |
 | `machines-view.test.js` — `REFRESH_MS` is `5000` | R22 |
