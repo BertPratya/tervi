@@ -47,15 +47,16 @@ Check all eleven, for every requirement and every task file:
     hand", "Proved by tests", or both. Each hand check is one action with an
     exact expected result that someone without the code can see. Each test it
     names is in a task's "Definition of done".
-11. **Choices in the plan**: the user reads `plan.md` but not the task
-    files. Every choice the user would care about (a library, a file kept on
-    the user's computer, behavior the user can notice that the spec leaves
-    open) is in `plan.md` under "Technical decisions". Such a choice found
-    only in a task file is a finding.
+11. **Design decisions**: every design decision (defined in `AGENTS.md`,
+    "Design decisions") made anywhere in the plan or the task files is in
+    `plan.md` under "Technical decisions", with the options not chosen. A
+    design decision missing from "Technical decisions" is a finding marked
+    `User`, because only the user makes design decisions. One recorded there
+    without its "Not chosen" line is a finding marked `Architect`.
 
 ## Code review
 
-Review with two lenses:
+Review with four lenses:
 
 - **Spec**: each listed requirement is met; each test in "Definition of done"
   exists and really proves what it claims; nothing beyond the task was added;
@@ -64,6 +65,8 @@ Review with two lenses:
   responses, input checks, SQL injection.
 - **Contracts**: routes, requests, and answers match `api/openapi.yaml`; a
   migration matches `design/data-model.md`; local file formats match it too.
+  A library added to `go.mod` must be in the task file; one that is not is a
+  finding marked `User`.
 - **Layout**: the rules under "Code layout" in `AGENTS.md`. A non-test file
   over 300 lines, the same SQL or logic written twice, a generic package
   name, or code on the wrong side (server or worker) is a finding.
@@ -104,7 +107,8 @@ When the message includes earlier findings:
   bug, or a test that does not prove its requirement; `Low` is minor.
 - **Who decides**: `Architect` (a plan the architect can fix), `Worker` (code
   the task already defines correctly), or `User` (the spec is silent or
-  contradicts itself).
+  contradicts itself, or a design decision is missing from "Technical
+  decisions" in `plan.md`).
 - Something worth doing that the task did not ask for goes under
   "Outside this task", which does not block.
 

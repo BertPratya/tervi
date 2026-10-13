@@ -67,8 +67,8 @@ people and by agents:
 
 | Role | Who | Job |
 | --- | --- | --- |
-| User | The human owner | Writes specs, makes decisions, reviews and merges every pull request |
-| Architect | The main Claude Code session | Plans, dispatches work, commits, merges finished tasks into the slice branch, opens pull requests, records every review. The only role that talks to the others. |
+| User | The human owner | Writes specs, makes every design decision, answers every question brought to them, reviews and merges every pull request |
+| Architect | The main Claude Code session | Writes the plan with the user (the user makes every design decision), dispatches work, commits, merges finished tasks into the slice branch, opens pull requests, records every review. The only role that talks to the others. |
 | Worker | Codex (`gpt-6-luna`, effort `xhigh`) through the Codex plugin, launched by `scripts/run-worker.sh` | Builds one task inside its worktree |
 | Reviewer | `.claude/agents/reviewer.md` (`claude-opus-5-5`, effort `high`) | Reviews a plan, a task, or a whole slice. Read-only. |
 
@@ -86,13 +86,31 @@ pull requests of their own.
 1. **Spec.** The user writes `slices/NNNN-name/spec.md` on branch
    `plan/NNNN-name` while the architect asks questions. The user approves it
    in chat.
-2. **Plan.** The architect adds `plan.md`, `tasks/*.md`, `checklist.md`, and
-   the contract and data model changes on the same branch. The checklist is
-   how the user will test the slice: steps to do by hand, and the tests that
-   prove what cannot be seen by hand. A slice has 4–8 tasks; a plan that
-   needs more than 8 means the slice is too big, so the architect proposes
-   splitting it. Each task changes roughly 300–400 lines, not counting tests,
-   so that one review can check it closely.
+2. **Plan.** On the same branch, in two parts, in this order:
+   1. **`plan.md`, with the user.** The architect and the user go through
+      `plan.md` in chat, one section at a time, in the order of the format
+      in `slices/README.md`, from "Overview" through "Technical decisions".
+      For each design decision in a section (defined in "Design decisions"
+      below), the architect explains the options, recommends one with the
+      reason, and waits for the user to choose. Then the architect writes
+      the section, adds each decision the user chose to "Technical
+      decisions", shows the user the diff, and commits once the user says
+      ok. The "Data" section comes with its change to
+      `design/data-model.md`, and "Interfaces" with its change to `api/`,
+      in the same diff. A section with no design decisions is shown and
+      approved the same way. This part is done when the user has approved
+      every section through "Technical decisions".
+   2. **The rest, by the architect.** The architect adds the "Requirement
+      coverage" and "Tasks" sections of `plan.md`, `tasks/*.md`, and
+      `checklist.md`, following the decisions in `plan.md`. A design
+      decision that comes up here goes to
+      the user as in part 1 before the architect continues. The checklist is
+      how the user will test the slice: steps to do by hand, and the tests
+      that prove what cannot be seen by hand. A slice has 4–8 tasks; a plan
+      that needs more than 8 means the slice is too big, so the architect
+      proposes splitting it and the user decides. Each task changes roughly
+      300–400 lines, not counting tests, so that one review can check it
+      closely.
 3. **Plan review.** The reviewer checks the spec, plan, and task files. The
    architect fixes findings marked `Architect`, up to 2 fix rounds. Findings
    marked `User` go to the user.
@@ -119,6 +137,40 @@ pull requests of their own.
    branch, and marks the pull request ready. The user merges. The
    architect tags the merge commit `slice-NNNN-done`, and the user and the
    architect go through the slice together.
+
+## Design decisions
+
+A design decision is a choice about how to build the slice that the user
+makes. A choice of any of these kinds is one:
+
+- How the parts talk to each other: protocols, messages, who connects to whom.
+- Security: proofs, secrets, who may do what.
+- A library outside Go's standard library that tervi does not use yet,
+  including one used only by tests or tools.
+- A file kept on the user's computer: what it holds and where it lives.
+- Any other choice the user asks to make.
+
+`spec.md` says what must be true, as seen from outside; a design decision is
+how the code makes it true. Behavior the user can notice (commands, flags,
+messages, what happens when) belongs in `spec.md`. When the plan needs
+behavior the spec leaves open, the architect asks the user and updates
+`spec.md`, with the user seeing the diff.
+
+A slice has as many design decisions as it needs. When it has more than 10,
+the slice is too big: the architect proposes splitting it, and the user
+decides.
+
+Each design decision is recorded in `plan.md` under "Technical decisions",
+in the form shown in `slices/README.md`. Other sections of `plan.md`, the
+contracts, and the task files use it and agree with it. A design decision
+that comes up during building (a worker question, a new library) goes to
+the user as in "When the user must decide"; the architect then records it in
+"Technical decisions" and adds it to the file of every task it affects,
+before that task continues.
+
+The architect makes every other choice (names inside the code, the task
+split, tests, the code inside a package) and writes it in the task file. The
+reviewer checks these against the task file and the code layout rules.
 
 ## Workflow: a task
 
@@ -178,8 +230,9 @@ and a merge into the slice branch with one comment.
 - The architect asks in chat, and posts the same question, options, and
   suggestion as a comment on the slice pull request so it is on record.
 - After the user answers, the architect writes the decision down: into
-  `spec.md` for behavior, into the task file for how to build it. The user
-  sees the diff before the commit.
+  `spec.md` for behavior, into `plan.md` for a design decision, and into the
+  task file for any other choice about how to build it. The user sees the
+  diff before the commit.
 - Work the user defers goes into `slices/backlog.md`, added in the current
   pull request.
 
