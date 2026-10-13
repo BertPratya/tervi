@@ -9,7 +9,7 @@ are recorded here as they are made.
 
 ## Technical decisions
 
-- A computer's identity for recognizing it (R24) is a one-way hash of
+- A computer's identity for recognizing it (R23) is a one-way hash of
   `/etc/machine-id` combined with a fixed tervi-specific value, so the same
   computer always gives the same identity, and the machine ID itself can't
   be worked back from it. The worker computes it each time it pairs and

@@ -1,6 +1,6 @@
 # 0003 Disconnect and unpair — slice 3
 
-Status: draft
+Status: approved
 
 ## What the user does
 
@@ -186,11 +186,11 @@ page). It also lets the server recognize a computer that pairs again.
 
 **Recognizing a computer that pairs again**
 
-- R24. When a computer starts pairing, the worker shall send the server an
+- R23. When a computer starts pairing, the worker shall send the server an
   identity of this computer that tervi derives from the operating system's
   machine ID. The machine ID itself shall never leave the computer, and the
   identity shall never be shown on any page or printed.
-- R25. When the identity matches an earlier machine, the approval page shall
+- R24. When the identity matches an earlier machine, the approval page shall
   show `This looks like a computer that was paired before:` and
   `<earlier name>, <what happened> on <date>.`, where `<what happened>` is
   `unpaired`, `revoked`, or `rejected`, or the line reads
@@ -199,20 +199,20 @@ page). It also lets the server recognize a computer that pairs again.
   **Accept as the same computer** (`brings back <earlier name>, with its history`),
   **Accept as a new computer** (`adds it next to the old one, starting empty`),
   and **Reject** (`doesn't pair it`).
-- R26. A match shall be found by the identity alone, also when the computer's
+- R25. A match shall be found by the identity alone, also when the computer's
   name changed. When several earlier machines match, the page shall offer the
   most recently paired one.
-- R27. When the user clicks **Accept as the same computer** and the pairing
+- R26. When the user clicks **Accept as the same computer** and the pairing
   completes, the server shall continue the earlier machine instead of
   creating a new one: the same entry, keeping its history, now with the
   computer's current name. If the earlier machine's credential still worked,
   it shall stop working.
-- R28. When the user clicks **Accept as a new computer**, pairing shall
+- R27. When the user clicks **Accept as a new computer**, pairing shall
   continue as in slice 1, creating a new machine. The earlier one stays as it
   was.
-- R29. When the identity matches no earlier machine, the approval page shall
+- R28. When the identity matches no earlier machine, the approval page shall
   be exactly as in slice 1.
-- R30. **Known limitation:** the identity is the computer's claim, which the
+- R29. **Known limitation:** the identity is the computer's claim, which the
   server cannot verify; a computer that knew another's identity could claim
   to be it. This is why the server only offers the match and the user
   decides. After the operating system is reinstalled the computer is not
@@ -221,7 +221,7 @@ page). It also lets the server recognize a computer that pairs again.
 
 **Known limitation**
 
-- R31. **Known limitation (as in slice 2's R27):** without sign-in, anyone
+- R30. **Known limitation (as in slice 2's R27):** without sign-in, anyone
   who can reach the server can revoke any machine. The server still listens
   on `localhost` only.
 
@@ -231,8 +231,8 @@ page). It also lets the server recognize a computer that pairs again.
 - Showing unpaired or revoked machines anywhere, or deleting their records.
 - Bringing back a revoked or unpaired machine without pairing again.
 - Renaming machines, and sign-in (the Revoke button has no sign-in behind it:
-  R31).
-- Workspaces; R27's "history" covers what exists in this slice, and slice
+  R30).
+- Workspaces; R26's "history" covers what exists in this slice, and slice
   0004's workspaces will follow it.
 
 ## Open questions
@@ -271,13 +271,13 @@ None.
   database (R19) — for history, and so a computer that pairs again can be
   recognized.
 - A computer that pairs again is recognized by an identity derived from the
-  machine ID, not by its name (R24, R26) — it still matches after a rename
+  machine ID, not by its name (R23, R25) — it still matches after a rename
   or after tervi's own files are lost. Comparable products (Tailscale, VS Code
   tunnels, GitHub's self-hosted runners) treat each registration as new and
   leave the old entry to the user; tervi offers the match so a machine's
   history, and later its workspaces, are not stranded.
-- The server only offers a match; the user decides (R25, R30) — the identity
+- The server only offers a match; the user decides (R24, R29) — the identity
   is a claim the server cannot verify.
 - The approval page asks with three buttons that each name their result
-  (R25) — one click decides; there is no separate "same or new" choice that
+  (R24) — one click decides; there is no separate "same or new" choice that
   could be left on the wrong option before Accept.
