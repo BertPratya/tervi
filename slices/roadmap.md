@@ -1,0 +1,40 @@
+# Roadmap
+
+The order slices are expected to come in, and what each lets the user do. It
+is a direction, not a promise: each slice still gets its own spec, and trying
+a slice can change the ones after it. The product design behind it is in
+[`docs/product/`](../docs/product/). The status of each slice is in
+[index.md](index.md).
+
+## The picture
+
+The user signs into Codex on their own computer and pairs it with tervi. From
+a browser, they pick that computer, pick a folder on it as a workspace, and
+chat with Codex there. Codex works on that computer, in that folder; its
+replies, actions, and approval requests stream to the browser, and the server
+saves them, so the user can close the browser and come back, or follow from
+another device. Files never leave the computer.
+
+## Slices
+
+| Slice | After it, the user can | Notes |
+| --- | --- | --- |
+| 0001 | Pair a computer with the server | Done |
+| 0002 | See each computer Online or Offline; tervi runs in the background and reconnects by itself | In progress |
+| 0003 | Disconnect (`tervi disconnect`) and unpair a computer | Decided during 0002. See backlog B12 |
+| 0004 | Register a folder on a computer as a workspace | The first request the server sends down the connection and waits for an answer to |
+| 0005 | Chat with Codex in a workspace: send a message, watch the reply stream in, see when it is done | `codex app-server`; raises the 4 KB message limit or splits large output |
+| 0006 | Answer Codex's approval requests in the browser | |
+| 0007 | Close the browser and come back to the full history; nothing lost or doubled when the computer disconnects mid-task | Event IDs, acknowledgements, replay (`docs/product/recovery.md`) |
+| 0008 | Stop a running task; queue messages while the agent is busy | |
+
+## Later, order not decided
+
+- Sign-in and HTTPS, so tervi can be used from another device outside the
+  computer itself. Today the server listens on `localhost` only. If remote
+  use is wanted early, this moves before 0005.
+- Claude Code as a second agent, and switching agents within a chat.
+- Several chats per workspace.
+- The Theia IDE panel next to the chat.
+- Background jobs.
+- Managed workspaces (storage and execution provided by the platform).

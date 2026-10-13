@@ -10,6 +10,7 @@ every slice and its status. The workflow and the roles are in
 ```text
 slices/
   index.md                 # one row per slice
+  roadmap.md               # the expected order of slices, and what each lets the user do
   backlog.md               # deferred work
   NNNN-name/
     spec.md                # what to build. Written by the user.
