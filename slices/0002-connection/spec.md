@@ -1,6 +1,6 @@
 # 0002 Connection — slice 2
 
-Status: draft
+Status: approved
 
 ## What the user does
 
