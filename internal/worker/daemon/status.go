@@ -65,8 +65,7 @@ func (d *Daemon) setTrying(try int, server string, now time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if server == "" {
-		d.setStatusLocked(Status{State: StateNotConnecting, LastError: d.status.LastError})
-		return
+		server = d.status.Server
 	}
 	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: try, NextTry: now, LastError: d.status.LastError})
 }
@@ -75,8 +74,7 @@ func (d *Daemon) setRetry(try int, server, lastError string, next time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if server == "" {
-		d.setStatusLocked(Status{State: StateNotConnecting, LastError: lastError})
-		return
+		server = d.status.Server
 	}
 	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: try, NextTry: next, LastError: lastError})
 }
@@ -84,11 +82,6 @@ func (d *Daemon) setRetry(try int, server, lastError string, next time.Time) {
 func (d *Daemon) setConnected(server string, since time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if server == "" {
-		d.enabled = false
-		d.setStatusLocked(Status{State: StateNotConnecting})
-		return
-	}
 	d.setStatusLocked(Status{State: StateConnected, Server: server, ConnectedSince: since})
 }
 

@@ -185,12 +185,12 @@ func escapeServicePath(path string) string {
 func decodeServiceExecStart(value string) string {
 	const suffix = `" daemon`
 	if !strings.HasPrefix(value, `"`) || !strings.HasSuffix(value, suffix) {
-		return value
+		return ""
 	}
 	quotedPath := strings.TrimSuffix(strings.TrimPrefix(value, `"`), suffix)
 	path, err := strconv.Unquote(`"` + quotedPath + `"`)
 	if err != nil {
-		return value
+		return ""
 	}
 	path = strings.ReplaceAll(path, "%%", "%")
 	path = strings.ReplaceAll(path, "$$", "$")

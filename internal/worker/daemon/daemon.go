@@ -216,19 +216,11 @@ func (d *Daemon) refreshState() {
 		d.mu.Unlock()
 		return
 	}
-	entry, _, paired, pairingErr := credential.Paired(d.opts.StateDir, d.opts.Store)
-	if pairingErr != nil || !paired || entry.Server == "" {
-		d.mu.Lock()
-		lastError := d.status.LastError
-		d.enabled = true
-		d.setStatusLocked(Status{State: StateNotConnecting, LastError: lastError})
-		d.mu.Unlock()
-		return
-	}
 	d.mu.Lock()
 	lastError := d.status.LastError
+	server := d.status.Server
 	d.enabled = true
-	d.setStatusLocked(Status{State: StateReconnecting, Server: entry.Server, Try: 1, NextTry: d.opts.Now(), LastError: lastError})
+	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: 1, NextTry: d.opts.Now(), LastError: lastError})
 	d.mu.Unlock()
 }
 

@@ -544,6 +544,64 @@ func (c *testSocket) Close(code websocket.StatusCode, _ string) error {
 
 func (c *testSocket) CloseNow() error { return nil }
 
+type forceCloseSocket struct {
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func newForceCloseSocket() *forceCloseSocket {
+	return &forceCloseSocket{closed: make(chan struct{})}
+}
+
+func (c *forceCloseSocket) Close(websocket.StatusCode, string) error {
+	<-c.closed
+	return nil
+}
+
+func (c *forceCloseSocket) CloseNow() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return nil
+}
+
+func TestCloseAllSharesDeadlineAndForcesClose(t *testing.T) {
+	list := NewList()
+	fake := newForceCloseSocket()
+	setConnection, finish := list.trackHandler()
+	setConnection(fake)
+	if !list.add("machine", fake) {
+		t.Fatal("add() rejected the connection before shutdown")
+	}
+	handlerDone := make(chan struct{})
+	go func() {
+		<-fake.closed
+		finish()
+		close(handlerDone)
+	}()
+	t.Cleanup(func() {
+		_ = fake.CloseNow()
+		finish()
+	})
+
+	started := time.Now()
+	list.CloseAll()
+	list.CloseAll()
+	list.CloseAll()
+	elapsed := time.Since(started)
+	if elapsed >= 5500*time.Millisecond {
+		t.Errorf("three CloseAll() calls took %s, want one shared deadline under 5.5s", elapsed)
+	}
+	select {
+	case <-fake.closed:
+	default:
+		t.Error("CloseNow() was not called for a connection that did not answer Close()")
+	}
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Error("tracked handler did not finish after the fake connection closed")
+	}
+}
+
 func TestOnlineListStartsEmpty(t *testing.T) {
 	list := NewList()
 	if list.Online("machine") || len(list.OnlineIDs()) != 0 {

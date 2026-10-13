@@ -124,6 +124,29 @@ func TestServiceFileRewrittenWhenPathChanges(t *testing.T) {
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Errorf("same path calls = %#v, want %#v", runner.calls, want)
 	}
+	resolvedProgram, err := filepath.EvalSymlinks(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[Service]\nExecStart="+resolvedProgram+" daemon\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner.calls = nil
+	client.calls = 0
+	if err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want = [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Errorf("same-path unquoted ExecStart calls = %#v, want %#v", runner.calls, want)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != string(serviceContents(resolvedProgram)) {
+		t.Errorf("rewritten service file = %q, want quoted contents %q", contents, serviceContents(resolvedProgram))
+	}
 }
 
 func TestEnsureRunningSteps(t *testing.T) {

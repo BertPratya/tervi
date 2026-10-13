@@ -107,7 +107,11 @@ func printConnectedStatus(output io.Writer, answer control.StatusAnswer, entry c
 }
 
 func printReconnectingStatus(output io.Writer, answer control.StatusAnswer, entry credential.Entry) {
-	fmt.Fprintf(output, "○ Reconnecting to %s\n", redactText(answer.Server, entry))
+	server := answer.Server
+	if server == "" {
+		server = entry.Server
+	}
+	fmt.Fprintf(output, "○ Reconnecting to %s\n", redactText(server, entry))
 	if answer.NextTryInSeconds == 0 {
 		fmt.Fprintf(output, "  Try %d, trying now\n", answer.Try)
 	} else {

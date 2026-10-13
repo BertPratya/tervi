@@ -37,11 +37,11 @@ func (d *Daemon) Connect(ctx context.Context) ConnectResult {
 	}
 	d.mu.Lock()
 	d.enabled = true
-	if entry.Server == "" {
-		d.setStatusLocked(Status{State: StateNotConnecting, LastError: d.status.LastError})
-	} else {
-		d.setStatusLocked(Status{State: StateReconnecting, Server: entry.Server, Try: 1, NextTry: d.opts.Now(), LastError: d.status.LastError})
+	server := entry.Server
+	if server == "" {
+		server = d.status.Server
 	}
+	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: 1, NextTry: d.opts.Now(), LastError: d.status.LastError})
 	d.mu.Unlock()
 	d.signal()
 	return d.waitForConnect(ctx)

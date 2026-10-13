@@ -590,14 +590,38 @@ func TestStatusWhileTrying(t *testing.T) {
 	})
 }
 
-func TestStatusWhileReconnectingIncludesServer(t *testing.T) {
+func TestRefreshStateKeepsLastServer(t *testing.T) {
 	f := newDaemonFixture(t, true, 10, 30, nil)
 	d := f.newDaemon(t, Options{})
+	d.setTrying(1, f.server.URL, time.Now())
 	d.refreshState()
 
 	status := d.Status()
-	if status.State != "reconnecting" || status.Server != f.server.URL {
+	if status.State != StateReconnecting || status.Server != f.server.URL {
 		t.Fatalf("Status() = %+v, want reconnecting with server %q", status, f.server.URL)
+	}
+}
+
+func TestStatusReconnectsWhenSecretStoreIsUnreadable(t *testing.T) {
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	f.backend.FailGet = true
+	d := f.newDaemon(t, Options{Rand: func() float64 { return 0 }})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("Run() = %v", err)
+		}
+	}()
+
+	waitFor(t, time.Second, func() bool {
+		return d.Status().LastError == "can't read the secret store"
+	}, "secret-store failure in daemon status")
+	status := d.Status()
+	if status.State != StateReconnecting || status.Server != "" || status.LastError != "can't read the secret store" {
+		t.Fatalf("Status() = %+v, want reconnecting without a known server and with the secret-store error", status)
 	}
 }
 
