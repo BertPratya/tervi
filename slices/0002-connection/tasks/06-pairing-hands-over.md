@@ -96,6 +96,11 @@ is, and the printed `Try again with: tervi connect` is how the user finishes.
    stays exactly as it is.
 4. Pairing as today.
 5. **Hand-over**, only when the pairing flow returned `0`:
+   - The hand-over gets the secret store entry that this pairing just saved
+     from the pairing flow (the small hook in `internal/worker/pair` the
+     Boundaries allow); it never reads the secret store again, so no
+     store-read error can appear after `✓ Paired successfully.` (added
+     during task 06 review).
    - Without `XDG_RUNTIME_DIR`: print
      `✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).`,
      exit `1`, and do nothing else. The pairing stays saved. (Decided by the
