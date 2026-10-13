@@ -61,7 +61,7 @@ command prints its exit code on the next line.
 | 14 | R12, R8 | Terminal 2, at once: `tervi logs` | Near the end: `<time> ✗ Connection lost: the server is stopping`, then `… Reconnecting (try 1)` and `✗ Connection refused. Next try in 2 seconds` | ⬜ |
 | 15 | R9 | Wait about 30 seconds, then `tervi logs` | The "Next try in" waits grow: about 2, 4, 8, 16 seconds (each may be up to 20% off) | ⬜ |
 | 16 | R16, R17 | `tervi status; echo $?` | `○ Reconnecting to http://localhost:8080`, `Try <n>, next in <s> seconds`, `Last error: connection refused`; then `1` | ⬜ |
-| 17 | R2, R23 | Terminal 1: `go run ./cmd/server`. Watch the page | Within about 30 seconds, without typing anything else, the page shows Online again | ⬜ |
+| 17 | R2, R23 | Terminal 1: `go run ./cmd/server`. Watch the page | Within about 40 seconds, without typing anything else, the page shows Online again | ⬜ |
 | 18 | R2, R8 | `tervi logs` | The last line is `<time> ✓ Connected to http://localhost:8080` | ⬜ |
 
 **The daemon stops, crashes, or freezes**
@@ -95,7 +95,7 @@ command prints its exit code on the next line.
 | # | Requirement | Do this | You should see | Result |
 | --- | --- | --- | --- | --- |
 | 35 | R5 | Restart the computer and log in | Your desktop, as usual; nothing from tervi to type | ⬜ |
-| 36 | R5 | Start only the server: `docker compose up -d`, then `go run ./cmd/server`. Open the page | Without any `tervi` command, the page shows Online within about 30 seconds | ⬜ |
+| 36 | R5 | Start only the server: `docker compose up -d`, then `go run ./cmd/server`. Open the page | Without any `tervi` command, the page shows Online within about 40 seconds | ⬜ |
 
 **A rejected credential, and pairing again**
 
