@@ -240,8 +240,14 @@ and a merge into the slice branch with one comment.
   suggestion as a comment on the slice pull request so it is on record.
 - After the user answers, the architect writes the decision down: into
   `spec.md` for behavior, into `plan.md` for a design decision, and into the
-  task file for any other choice about how to build it. The user sees the
-  diff before the commit.
+  task file for any other choice about how to build it, and shows the user
+  the diff. Then:
+  - **The user chose an offered option, and the diff only writes down that
+    option's text:** the architect commits and continues at once. If the
+    user objects afterwards, the change becomes a fix.
+  - **Anything else** (an answer in the user's own words, or wording in
+    `spec.md` the user has not seen): the architect waits for the user's ok
+    before committing.
 - Work the user defers goes into `slices/backlog.md`, added in the current
   pull request.
 
