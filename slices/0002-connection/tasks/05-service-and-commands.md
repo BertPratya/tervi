@@ -315,7 +315,7 @@ never reads the secret store. Anything else after `logs` is wrong usage
 | `TestServiceFileRewrittenWhenPathChanges` — a different `ExecStart` is replaced and `daemon-reload`, `enable`, `restart` run in that order; the same path is left alone and `enable --now` runs | R5 |
 | `TestEnsureRunningSteps` — the `systemctl` calls in order, then waiting for the socket | R5 |
 | `TestEnsureRunningReportsStoppedDaemonStarted` — with the service file current and no daemon answering, `EnsureRunning` runs `enable --now` and reports that it started the daemon (added in fix 3) | R4 |
-| `TestEnsureRunningFailures` — `systemctl` failing, systemd missing, and no socket after 10 s each give the reason | R29 |
+| `TestEnsureRunningFailures` — `systemctl` failing (on the rewrite path, and `enable --now` with a current service file, added in fix 3), systemd missing, and no socket after 10 s each give the reason | R29 |
 | `TestConnectCommandResults` — every row of the result table, with output and exit code | R4 |
 | `TestConnectFromDifferentInstallPrintsConnected` — the service file names another path, so it is rewritten and the daemon restarted; an `already_connected` answer then prints `✓ Connected.`, exit `0` (added in fix 2; the same-path case, `Already connected.`, is the `already connected` row of `TestConnectCommandResults`) | R4, R5 |
 | `TestConnectNotPaired` | R4 |
