@@ -98,21 +98,34 @@ func TestMachinesPageAnnouncesOnlyFailureLineAndPreservesRowSpacing(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(page), `<main id="app" aria-live=`) {
-		t.Fatal("Machines page main element must not be a live region")
+	pageText := string(page)
+	const failureLine = `<p class="warning" aria-live="polite"></p>`
+	if strings.Count(pageText, "aria-live=") != 1 || !strings.Contains(pageText, failureLine) {
+		t.Fatal("Machines page must have one empty polite live region for the failure line")
+	}
+	mainStart := strings.Index(pageText, `<main>`)
+	mainEnd := strings.Index(pageText, `</main>`)
+	failureIndex := strings.Index(pageText, failureLine)
+	headingIndex := strings.Index(pageText, `<h1>Machines</h1>`)
+	appIndex := strings.Index(pageText, `<div id="app">`)
+	if mainStart < 0 || mainEnd < 0 || headingIndex < mainStart || headingIndex > failureIndex || failureIndex > mainEnd {
+		t.Fatal("failure line must be under the heading inside the centered main column")
+	}
+	if appIndex < 0 || failureIndex > appIndex {
+		t.Fatal("failure line must be outside the part of the page that render replaces")
 	}
 	script, err := staticFiles.ReadFile("static/machines.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(script), `warning.setAttribute('aria-live', 'polite')`) {
-		t.Fatal("server failure line is not announced as a polite live region")
+	scriptText := string(script)
+	if !strings.Contains(scriptText, `failureLine.textContent !== page.failureMessage`) || !strings.Contains(scriptText, `failureLine.textContent = page.failureMessage;`) || strings.Contains(scriptText, `aria-live`) {
+		t.Fatal("render must update the existing failure line only when its text changes")
 	}
-	styles, err := staticFiles.ReadFile("static/machines.html")
-	if err != nil {
-		t.Fatal(err)
+	if !strings.Contains(scriptText, `const app = document.querySelector('#app');`) || !strings.Contains(scriptText, `app.replaceChildren();`) {
+		t.Fatal("render must replace only the inner app content, leaving the failure line in place")
 	}
-	if !strings.Contains(string(styles), `li { border-bottom: 1px solid #8886; padding: 0.8rem 0; white-space: pre-wrap; }`) {
+	if !strings.Contains(pageText, `white-space: pre-wrap;`) {
 		t.Fatal("machine rows do not preserve their spacing")
 	}
 }

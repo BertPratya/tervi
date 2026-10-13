@@ -162,7 +162,7 @@ func TestInstalledCheck(t *testing.T) {
 				if len(runner.calls) != 0 || client.statusCalls != 0 {
 					t.Errorf("temporary executable did work: runner=%v status calls=%d", runner.calls, client.statusCalls)
 				}
-			} else if code != 0 || stdout.String() != "Already connected.\n" || stderr.Len() != 0 || client.connectCalls != 1 {
+			} else if code != 0 || stdout.String() != "✓ Connected.\n" || stderr.Len() != 0 || client.connectCalls != 1 {
 				t.Errorf("installed Run(connect) = %d, stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 			}
 		})
@@ -267,6 +267,9 @@ func TestConnectCommandResults(t *testing.T) {
 				connect:  tc.answer, connectErr: tc.err,
 			}
 			env, _, stdout, stderr := commandEnv(t, runner, client, true)
+			if tc.name == "already connected" {
+				writeCurrentServiceFile(t, env)
+			}
 			if code := Run(context.Background(), []string{"connect"}, env, nil); code != tc.code {
 				t.Errorf("Run(connect) = %d, want %d", code, tc.code)
 			}
@@ -275,6 +278,43 @@ func TestConnectCommandResults(t *testing.T) {
 			}
 			assertNoCredential(t, stdout.String(), stderr.String())
 		})
+	}
+}
+
+func TestConnectFromDifferentInstallPrintsConnected(t *testing.T) {
+	runner := &commandRunner{}
+	client := &commandControl{
+		statuses: []statusResult{{answer: control.StatusAnswer{State: "reconnecting", Server: "http://localhost:8080"}}},
+		connect:  control.ConnectAnswer{Result: "already_connected"},
+	}
+	env, _, stdout, stderr := commandEnv(t, runner, client, true)
+	servicePath := filepath.Join(env.ServiceDir, "tervi.service")
+	oldService := "[Unit]\nDescription=tervi worker\n\n[Service]\nExecStart=\"/usr/local/bin/tervi\" daemon\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
+	if err := os.WriteFile(servicePath, []byte(oldService), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := Run(context.Background(), []string{"connect"}, env, nil); code != 0 {
+		t.Fatalf("Run(connect) = %d, want 0", code)
+	}
+	if stdout.String() != "✓ Connected.\n" || stderr.Len() != 0 || client.connectCalls != 1 {
+		t.Errorf("stdout=%q stderr=%q Connect calls=%d, want connected output and one Connect call", stdout.String(), stderr.String(), client.connectCalls)
+	}
+	wantCalls := [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
+	if fmt.Sprint(runner.calls) != fmt.Sprint(wantCalls) {
+		t.Errorf("systemctl calls = %v, want %v", runner.calls, wantCalls)
+	}
+}
+
+func writeCurrentServiceFile(t *testing.T, env Env) {
+	t.Helper()
+	programPath, err := filepath.EvalSymlinks(env.ProgramPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := fmt.Sprintf("ExecStart=\"%s\" daemon\n", programPath)
+	if err := os.WriteFile(filepath.Join(env.ServiceDir, "tervi.service"), []byte(contents), 0600); err != nil {
+		t.Fatal(err)
 	}
 }
 

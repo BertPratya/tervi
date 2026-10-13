@@ -35,7 +35,7 @@ func handOver(ctx context.Context, env Env, entry credential.Entry) int {
 		return 1
 	}
 
-	if err := ensureRunning(ctx, env); err != nil {
+	if _, err := ensureRunning(ctx, env); err != nil {
 		return handleEnsureRunningFailure(ctx, env.Stdout, err, entry, printPairHandoverCancelled)
 	}
 	if ctx.Err() != nil {

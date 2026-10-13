@@ -76,7 +76,7 @@ func TestServiceFileContents(t *testing.T) {
 			}
 			runner := &serviceTestRunner{}
 			client := &serviceTestClient{answers: []control.StatusAnswer{{State: "connected"}}}
-			if err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
+			if _, err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
 				t.Fatalf("EnsureRunning() error = %v", err)
 			}
 			resolved, err := filepath.EvalSymlinks(program)
@@ -108,7 +108,7 @@ func TestServiceFileRewrittenWhenPathChanges(t *testing.T) {
 	if err := os.WriteFile(program, []byte("program"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
+	if _, err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	want := [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
@@ -117,7 +117,7 @@ func TestServiceFileRewrittenWhenPathChanges(t *testing.T) {
 	}
 	runner.calls = nil
 	client.calls = 0
-	if err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
+	if _, err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	want = [][]string{{"systemctl", "--user", "enable", "--now", "tervi"}}
@@ -133,7 +133,7 @@ func TestServiceFileRewrittenWhenPathChanges(t *testing.T) {
 	}
 	runner.calls = nil
 	client.calls = 0
-	if err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
+	if _, err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	want = [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
@@ -158,7 +158,7 @@ func TestEnsureRunningSteps(t *testing.T) {
 		errors:  []error{control.ErrNotRunning, control.ErrNotRunning, errors.New("daemon answered with a broken response")},
 		events:  &events,
 	}
-	if err := New(serviceTestOptions(dir, "/usr/bin/true", runner, client)).EnsureRunning(context.Background()); err != nil {
+	if _, err := New(serviceTestOptions(dir, "/usr/bin/true", runner, client)).EnsureRunning(context.Background()); err != nil {
 		t.Fatalf("EnsureRunning() error = %v", err)
 	}
 	want := [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
@@ -192,7 +192,7 @@ func TestEnsureRunningFailures(t *testing.T) {
 			if tc.name == "socket timeout" {
 				options.StartupTimeout = 3 * time.Millisecond
 			}
-			err := New(options).EnsureRunning(context.Background())
+			_, err := New(options).EnsureRunning(context.Background())
 			if err == nil || err.Error() != tc.want {
 				t.Fatalf("EnsureRunning() error = %v, want %q", err, tc.want)
 			}
@@ -205,7 +205,7 @@ func TestServiceDirRequired(t *testing.T) {
 	client := &serviceTestClient{}
 	servicePath := filepath.Join(".", serviceFile)
 	before, beforeErr := os.ReadFile(servicePath)
-	err := New(serviceTestOptions("", "/usr/bin/true", runner, client)).EnsureRunning(context.Background())
+	_, err := New(serviceTestOptions("", "/usr/bin/true", runner, client)).EnsureRunning(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "ServiceDir") {
 		t.Fatalf("EnsureRunning(empty ServiceDir) error = %v, want a ServiceDir error", err)
 	}

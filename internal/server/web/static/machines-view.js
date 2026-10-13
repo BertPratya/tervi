@@ -30,7 +30,6 @@ export function view(state = {}) {
   });
 
   return {
-    heading: 'Machines',
     rows,
     emptyMessage: state.loaded === true && rows.length === 0
       ? `No machines yet. Pair one with: tervi pair --server ${state.address}`
