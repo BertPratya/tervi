@@ -27,7 +27,10 @@ func main() {
 		fmt.Fprintln(os.Stdout, "✗ Can't find tervi's program file.")
 		os.Exit(1)
 	}
-	runtimeDir, _ := control.RuntimeDir()
+	runtimeDir, runtimeDirErr := control.RuntimeDir()
+	if runtimeDirErr != nil {
+		runtimeDir = ""
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	env := cli.Env{

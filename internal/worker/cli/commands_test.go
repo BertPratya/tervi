@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ type commandRunner struct {
 	runOutput   string
 	runError    error
 	streamError error
+	streamCheck func()
 }
 
 func (r *commandRunner) Run(_ context.Context, name string, args ...string) (string, error) {
@@ -38,9 +40,15 @@ func (r *commandRunner) Stream(_ context.Context, out io.Writer, name string, ar
 	if len(r.chunks) > 0 {
 		for _, chunk := range r.chunks {
 			_, _ = io.WriteString(out, chunk)
+			if r.streamCheck != nil {
+				r.streamCheck()
+			}
 		}
 	} else {
 		_, _ = io.WriteString(out, r.output)
+		if r.streamCheck != nil {
+			r.streamCheck()
+		}
 	}
 	return r.streamError
 }
@@ -57,7 +65,6 @@ type commandControl struct {
 	connectErr   error
 	connectCalls int
 	connectFunc  func(context.Context) (control.ConnectAnswer, error)
-	running      bool
 }
 
 func (c *commandControl) Status(context.Context) (control.StatusAnswer, error) {
@@ -79,6 +86,7 @@ func (c *commandControl) Connect(ctx context.Context) (control.ConnectAnswer, er
 
 func commandEnv(t *testing.T, runner *commandRunner, client *commandControl, paired bool) (Env, *credential.MemoryBackend, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	stateDir := filepath.Join(t.TempDir(), "state")
 	backend := credential.NewMemoryBackend()
 	if paired {
@@ -103,24 +111,37 @@ func TestInstalledCheck(t *testing.T) {
 	if err := os.WriteFile(tempProgram, []byte("worker"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	goBuildProgram := filepath.Join("/opt", "tervi-go-cache", "go-build", "b001", "tervi")
+	otherRoot := t.TempDir()
+	goBuildProgram := filepath.Join(otherRoot, "go-build", "b001", "tervi")
+	if err := os.MkdirAll(filepath.Dir(goBuildProgram), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(goBuildProgram, []byte("worker"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	linkedTempRoot := filepath.Join(t.TempDir(), "tmp-link")
+	if err := os.Symlink(tempRoot, linkedTempRoot); err != nil {
+		t.Fatal(err)
+	}
 	installedProgram := "/usr/bin/true"
 	cases := []struct {
 		name    string
 		program string
+		tempDir string
 		blocked bool
 	}{
-		{name: "inside temporary folder", program: tempProgram, blocked: true},
-		{name: "go build folder elsewhere", program: goBuildProgram, blocked: true},
-		{name: "installed", program: installedProgram, blocked: false},
+		{name: "inside temporary folder", program: tempProgram, tempDir: tempRoot, blocked: true},
+		{name: "temporary folder reached through symlink", program: tempProgram, tempDir: linkedTempRoot, blocked: true},
+		{name: "go build folder elsewhere", program: goBuildProgram, tempDir: t.TempDir(), blocked: true},
+		{name: "installed", program: installedProgram, tempDir: t.TempDir(), blocked: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isTemporaryProgram(tc.program, os.TempDir()); got != tc.blocked {
+			if got := service.IsTemporaryProgram(tc.program, tc.tempDir); got != tc.blocked {
 				t.Fatalf("temporary check for %q did not match blocked=%v", tc.program, tc.blocked)
 			}
 			runner := &commandRunner{}
-			client := &commandControl{statuses: []statusResult{{answer: control.StatusAnswer{State: "connected", Server: "http://localhost:8080", Since: time.Now().Format(time.RFC3339)}}}}
+			client := &commandControl{statuses: []statusResult{{answer: control.StatusAnswer{State: "connected", Server: "http://localhost:8080", Since: time.Now().Format(time.RFC3339)}}}, connect: control.ConnectAnswer{Result: "already_connected"}}
 			env, _, stdout, stderr := commandEnv(t, runner, client, true)
 			env.ProgramPath = tc.program
 			code := Run(context.Background(), []string{"connect"}, env, nil)
@@ -132,7 +153,7 @@ func TestInstalledCheck(t *testing.T) {
 				if len(runner.calls) != 0 || client.statusCalls != 0 {
 					t.Errorf("temporary executable did work: runner=%v status calls=%d", runner.calls, client.statusCalls)
 				}
-			} else if code != 0 || stdout.String() != "Already connected.\n" || stderr.Len() != 0 {
+			} else if code != 0 || stdout.String() != "Already connected.\n" || stderr.Len() != 0 || client.connectCalls != 1 {
 				t.Errorf("installed Run(connect) = %d, stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 			}
 		})
@@ -159,8 +180,6 @@ func TestConnectCtrlC(t *testing.T) {
 	runner := &commandRunner{}
 	started := make(chan struct{})
 	client := &commandControl{
-		statuses: []statusResult{{answer: control.StatusAnswer{State: "reconnecting", Server: "http://localhost:8080"}}},
-		running:  true,
 		connectFunc: func(ctx context.Context) (control.ConnectAnswer, error) {
 			close(started)
 			<-ctx.Done()
@@ -178,6 +197,7 @@ func TestConnectCtrlC(t *testing.T) {
 		cancel()
 		t.Fatal("Connect was not called")
 	}
+	callsAtCancel := len(runner.calls)
 	select {
 	case code := <-done:
 		if code != 130 {
@@ -189,8 +209,27 @@ func TestConnectCtrlC(t *testing.T) {
 	if got, want := stdout.String(), "Connecting was cancelled; tervi keeps trying in the background.\n"; got != want {
 		t.Errorf("stdout=%q, want %q", got, want)
 	}
-	if stderr.Len() != 0 || !client.running {
-		t.Errorf("stderr=%q daemon running=%v, want empty and running", stderr.String(), client.running)
+	if stderr.Len() != 0 {
+		t.Errorf("stderr=%q, want empty", stderr.String())
+	}
+	if len(runner.calls) != callsAtCancel {
+		t.Errorf("Runner calls changed after cancel: before=%d after=%v", callsAtCancel, runner.calls)
+	}
+	assertNoServiceStopCalls(t, runner.calls)
+}
+
+func TestConnectAfterRejectedStatusStillCallsConnect(t *testing.T) {
+	runner := &commandRunner{}
+	client := &commandControl{
+		statuses: []statusResult{{answer: control.StatusAnswer{State: "not_connecting", StopReason: ptrString("credential_rejected")}}},
+		connect:  control.ConnectAnswer{Result: "connected"},
+	}
+	env, _, stdout, stderr := commandEnv(t, runner, client, true)
+	if code := Run(context.Background(), []string{"connect"}, env, nil); code != 0 {
+		t.Fatalf("Run(connect) = %d, want 0", code)
+	}
+	if stdout.String() != "✓ Connected.\n" || stderr.Len() != 0 || client.connectCalls != 1 {
+		t.Errorf("stdout=%q stderr=%q Connect calls=%d, want connected output and one Connect call", stdout.String(), stderr.String(), client.connectCalls)
 	}
 }
 
@@ -222,7 +261,7 @@ func TestConnectCommandResults(t *testing.T) {
 			if code := Run(context.Background(), []string{"connect"}, env, nil); code != tc.code {
 				t.Errorf("Run(connect) = %d, want %d", code, tc.code)
 			}
-			if stdout.String() != tc.want || stderr.Len() != 0 {
+			if stdout.String() != tc.want || stderr.Len() != 0 || client.connectCalls != 1 {
 				t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), tc.want)
 			}
 			assertNoCredential(t, stdout.String(), stderr.String())
@@ -250,7 +289,7 @@ func TestConnectStartsStoppedService(t *testing.T) {
 			{err: control.ErrNotRunning},
 			{answer: control.StatusAnswer{State: "reconnecting", Server: "http://localhost:8080"}},
 		},
-		connect: control.ConnectAnswer{Result: "connected"}, running: true,
+		connect: control.ConnectAnswer{Result: "connected"},
 	}
 	env, _, stdout, stderr := commandEnv(t, runner, client, true)
 	if code := Run(context.Background(), []string{"connect"}, env, nil); code != 0 {
@@ -292,14 +331,27 @@ func TestConnectReturnsAfterLastLine(t *testing.T) {
 	runner := &commandRunner{}
 	client := &commandControl{
 		statuses: []statusResult{{answer: control.StatusAnswer{State: "reconnecting", Server: "http://localhost:8080"}}},
-		connect:  control.ConnectAnswer{Result: "connected"}, running: true,
+		connect:  control.ConnectAnswer{Result: "connected"},
 	}
 	env, _, stdout, stderr := commandEnv(t, runner, client, true)
 	if code := Run(context.Background(), []string{"connect"}, env, nil); code != 0 {
 		t.Fatalf("Run(connect) = %d, want 0", code)
 	}
-	if stdout.String() != "✓ Connected.\n" || stderr.Len() != 0 || !client.running {
-		t.Errorf("stdout=%q stderr=%q daemon running=%v", stdout.String(), stderr.String(), client.running)
+	if stdout.String() != "✓ Connected.\n" || stderr.Len() != 0 {
+		t.Errorf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	assertNoServiceStopCalls(t, runner.calls)
+}
+
+func assertNoServiceStopCalls(t *testing.T, calls [][]string) {
+	t.Helper()
+	for _, call := range calls {
+		if len(call) < 3 || call[0] != "systemctl" || call[1] != "--user" {
+			continue
+		}
+		if (call[2] == "stop" || call[2] == "kill" || call[2] == "disable") && (len(call) < 4 || call[3] == "tervi") {
+			t.Errorf("command tried to stop the background service: %v", call)
+		}
 	}
 }
 
@@ -325,6 +377,7 @@ func TestStatusOutputs(t *testing.T) {
 		{name: "rejected", paired: true, statuses: []statusResult{{answer: control.StatusAnswer{State: "not_connecting", StopReason: ptrString("credential_rejected")}}}, want: "✗ Not connecting: the server doesn't accept this computer's credential.\n  Pair again with: tervi pair --server http://localhost:8080\n", code: 1},
 		{name: "not connecting", paired: true, statuses: []statusResult{{answer: control.StatusAnswer{State: "not_connecting"}}}, want: "○ Not connecting.\n  Connect with: tervi connect\n", code: 1},
 		{name: "daemon says not paired", paired: true, statuses: []statusResult{{answer: control.StatusAnswer{State: "not_paired"}}}, want: "✗ This computer isn't paired.\n  Pair it with: tervi pair --server <url>\n", code: 1},
+		{name: "broken answer", paired: true, statuses: []statusResult{{err: errors.New("invalid daemon response")}}, want: "✗ Can't reach tervi in the background: invalid daemon response\n", code: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -389,10 +442,29 @@ func TestLogsCommand(t *testing.T) {
 			t.Errorf("streams=%v stdout=%q stderr=%q", runner.streams, stdout.String(), stderr.String())
 		}
 	}
-	runner := &commandRunner{streamError: errors.New("journal unavailable")}
+	var observed []string
+	runner := &commandRunner{chunks: []string{"new line\n", "later line\n"}}
 	env, _, stdout, stderr := commandEnv(t, runner, &commandControl{}, true)
+	runner.streamCheck = func() { observed = append(observed, stdout.String()) }
+	if code := Run(context.Background(), []string{"logs", "-f"}, env, nil); code != 0 {
+		t.Errorf("Run(logs -f) = %d, want 0", code)
+	}
+	if got, want := observed, []string{"new line\n", "new line\nlater line\n"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("stream visibility snapshots = %q, want %q", got, want)
+	}
+	if stdout.String() != "new line\nlater line\n" || stderr.Len() != 0 {
+		t.Errorf("streamed output = (%q, %q), want exact stream and empty stderr", stdout.String(), stderr.String())
+	}
+
+	runner = &commandRunner{streamError: errors.New("journal unavailable")}
+	env, _, stdout, stderr = commandEnv(t, runner, &commandControl{}, true)
 	if code := Run(context.Background(), []string{"logs"}, env, nil); code != 1 || stdout.String() != "✗ Can't read the log: journal unavailable\n" || stderr.Len() != 0 {
 		t.Errorf("failed logs = (%d, %q, %q)", code, stdout.String(), stderr.String())
+	}
+	runner = &commandRunner{output: "journalctl: journal is unavailable\n", streamError: &exec.ExitError{}}
+	env, _, stdout, stderr = commandEnv(t, runner, &commandControl{}, true)
+	if code := Run(context.Background(), []string{"logs"}, env, nil); code != 1 || stdout.String() != "journalctl: journal is unavailable\n" || stderr.Len() != 0 {
+		t.Errorf("journalctl exit error = (%d, %q, %q), want exit 1 with only journalctl output", code, stdout.String(), stderr.String())
 	}
 	runner = &commandRunner{}
 	env, _, stdout, stderr = commandEnv(t, runner, &commandControl{}, true)
@@ -417,14 +489,22 @@ func TestNoCredentialPrinted(t *testing.T) {
 		Run(context.Background(), []string{"status"}, env, nil)
 		assertNoCredential(t, stdout.String(), stderr.String())
 	})
+	t.Run("connected status server", func(t *testing.T) {
+		runner := &commandRunner{}
+		client := &commandControl{statuses: []statusResult{{answer: control.StatusAnswer{State: "connected", Server: testCredential, Since: time.Now().Format(time.RFC3339)}}}}
+		env, _, stdout, stderr := commandEnv(t, runner, client, true)
+		Run(context.Background(), []string{"status"}, env, nil)
+		assertNoCredential(t, stdout.String(), stderr.String())
+	})
 	t.Run("logs", func(t *testing.T) {
-		runner := &commandRunner{chunks: []string{testCredential[:12], testCredential[12:], "\n"}, streamError: errors.New(testCredential)}
+		const stream = "daemon log has no credential\n"
+		runner := &commandRunner{output: stream}
 		env, _, stdout, stderr := commandEnv(t, runner, &commandControl{}, true)
-		if code := Run(context.Background(), []string{"logs"}, env, nil); code != 1 {
-			t.Errorf("Run(logs) = %d, want 1 for the fake stream error", code)
+		if code := Run(context.Background(), []string{"logs"}, env, nil); code != 0 {
+			t.Errorf("Run(logs) = %d, want 0", code)
 		}
-		if stdout.String() != "[redacted]\n✗ Can't read the log: [redacted]\n" {
-			t.Errorf("logs output = %q, want redacted stream and error", stdout.String())
+		if stdout.String() != stream {
+			t.Errorf("logs output = %q, want stream %q", stdout.String(), stream)
 		}
 		assertNoCredential(t, stdout.String(), stderr.String())
 	})

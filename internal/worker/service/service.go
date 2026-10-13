@@ -129,7 +129,7 @@ func (service *Service) waitForDaemon(ctx context.Context, options Options) erro
 			return errors.New("the daemon did not start within 10 seconds")
 		}
 		if !errors.Is(err, control.ErrNotRunning) {
-			return fmt.Errorf("check tervi background status: %w", err)
+			return nil
 		}
 		select {
 		case <-ctx.Done():

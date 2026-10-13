@@ -17,6 +17,9 @@ func runStatus(ctx context.Context, args []string, env Env) int {
 		fmt.Fprintln(env.Stderr, usageLine)
 		return 2
 	}
+	if !requireRuntimeFolder(env.Stdout) {
+		return 1
+	}
 	if env.ControlClient == nil {
 		return missingSetting(env.Stdout, "ControlClient")
 	}
@@ -36,13 +39,13 @@ func runStatus(ctx context.Context, args []string, env Env) int {
 			fmt.Fprintln(env.Stdout, "  Start it with: tervi connect")
 			return 1
 		}
-		printControlFailure(env.Stdout, err, entry)
+		printStatusControlFailure(env.Stdout, err, entry)
 		return 1
 	}
 
 	switch answer.State {
 	case "connected":
-		printConnectedStatus(env.Stdout, answer)
+		printConnectedStatus(env.Stdout, answer, entry)
 		return 0
 	case "reconnecting":
 		printReconnectingStatus(env.Stdout, answer, entry)
@@ -69,26 +72,30 @@ func printStatusNotPaired(output io.Writer) {
 	fmt.Fprintln(output, "  Pair it with: tervi pair --server <url>")
 }
 
+func printStatusControlFailure(output io.Writer, err error, entry credential.Entry) {
+	fmt.Fprintf(output, "✗ Can't reach tervi in the background: %s\n", redactText(err.Error(), entry))
+}
+
 func printRejectedStatus(output io.Writer, server string) {
 	fmt.Fprintln(output, "✗ Not connecting: the server doesn't accept this computer's credential.")
 	fmt.Fprintf(output, "  Pair again with: tervi pair --server %s\n", server)
 }
 
-func printConnectedStatus(output io.Writer, answer control.StatusAnswer) {
+func printConnectedStatus(output io.Writer, answer control.StatusAnswer, entry credential.Entry) {
 	machine, err := os.Hostname()
 	if err != nil {
 		machine = "unknown"
 	}
 	since, err := time.Parse(time.RFC3339, answer.Since)
 	if err != nil {
-		fmt.Fprintf(output, "● Connected to %s\n  Machine: %s\n  Since:   unknown\n", answer.Server, machine)
+		fmt.Fprintf(output, "● Connected to %s\n  Machine: %s\n  Since:   unknown\n", redactText(answer.Server, entry), machine)
 		return
 	}
 	duration := time.Since(since)
 	if duration < 0 {
 		duration = 0
 	}
-	fmt.Fprintf(output, "● Connected to %s\n  Machine: %s\n  Since:   %s (%s)\n", answer.Server, machine, since.Local().Format("15:04"), sinceText(duration))
+	fmt.Fprintf(output, "● Connected to %s\n  Machine: %s\n  Since:   %s (%s)\n", redactText(answer.Server, entry), machine, since.Local().Format("15:04"), sinceText(duration))
 }
 
 func printReconnectingStatus(output io.Writer, answer control.StatusAnswer, entry credential.Entry) {

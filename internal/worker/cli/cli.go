@@ -227,6 +227,14 @@ func printStoreReadFailure(output io.Writer) {
 	fmt.Fprintln(output, "  Make sure you are logged in to a desktop session and the keyring is unlocked.")
 }
 
+func requireRuntimeFolder(output io.Writer) bool {
+	if _, err := control.RuntimeDir(); errors.Is(err, control.ErrRuntimeDirNotSet) {
+		fmt.Fprintln(output, "✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).")
+		return false
+	}
+	return true
+}
+
 func printStateReadFailure(output io.Writer, stateDir string) {
 	fmt.Fprintf(output, "✗ Can't read %s.\n", state.StatePath(stateDir))
 }

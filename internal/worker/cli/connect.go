@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/bertpratya/tervi/internal/worker/credential"
@@ -20,19 +19,13 @@ func runConnect(ctx context.Context, args []string, env Env) int {
 		fmt.Fprintln(env.Stderr, usageLine)
 		return 2
 	}
+	if !requireRuntimeFolder(env.Stdout) {
+		return 1
+	}
 	if env.ProgramPath == "" {
 		return missingSetting(env.Stdout, "ProgramPath")
 	}
-	if env.Runner == nil {
-		return missingSetting(env.Stdout, "Runner")
-	}
-	if env.ServiceDir == "" {
-		return missingSetting(env.Stdout, "ServiceDir")
-	}
-	if env.ControlClient == nil {
-		return missingSetting(env.Stdout, "ControlClient")
-	}
-	if isTemporaryProgram(env.ProgramPath, os.TempDir()) {
+	if service.IsTemporaryProgram(env.ProgramPath, os.TempDir()) {
 		fmt.Fprintln(env.Stdout, installRequiredMessage)
 		return 1
 	}
@@ -46,27 +39,20 @@ func runConnect(ctx context.Context, args []string, env Env) int {
 		printConnectNotPaired(env.Stdout)
 		return 1
 	}
-	if ctx.Err() != nil {
-		return printConnectCancelled(env.Stdout)
+	if env.Runner == nil {
+		return missingSetting(env.Stdout, "Runner")
 	}
-
-	status, statusErr := env.ControlClient.Status(ctx)
-	if statusErr == nil && status.State == "connected" {
-		fmt.Fprintln(env.Stdout, "Already connected.")
-		return 0
+	if env.ServiceDir == "" {
+		return missingSetting(env.Stdout, "ServiceDir")
 	}
-	if statusErr == nil && status.State == "not_connecting" && status.StopReason != nil && *status.StopReason == "credential_rejected" {
-		printConnectRejected(env.Stdout, entry.Server)
-		return 1
+	if env.ControlClient == nil {
+		return missingSetting(env.Stdout, "ControlClient")
 	}
 	if ctx.Err() != nil {
 		return printConnectCancelled(env.Stdout)
 	}
 
-	manager := service.New(service.Options{
-		Runner: env.Runner, ProgramPath: env.ProgramPath, ServiceDir: env.ServiceDir, Client: env.ControlClient,
-	})
-	if err := manager.EnsureRunning(ctx); err != nil {
+	if err := ensureRunning(ctx, env); err != nil {
 		if ctx.Err() != nil {
 			return printConnectCancelled(env.Stdout)
 		}
@@ -110,35 +96,11 @@ func runConnect(ctx context.Context, args []string, env Env) int {
 	}
 }
 
-func isTemporaryProgram(programPath, tempDir string) bool {
-	if programPath == "" {
-		return false
-	}
-	resolved, err := filepath.Abs(programPath)
-	if err == nil {
-		programPath = resolved
-	}
-	if resolved, err := filepath.EvalSymlinks(programPath); err == nil {
-		programPath = resolved
-	}
-	programPath = filepath.Clean(programPath)
-	if tempDir == "" {
-		tempDir = os.TempDir()
-	}
-	if root, err := filepath.Abs(tempDir); err == nil && pathIsWithin(root, programPath) {
-		return true
-	}
-	for _, folder := range strings.Split(programPath, string(os.PathSeparator)) {
-		if folder == "go-build" {
-			return true
-		}
-	}
-	return false
-}
-
-func pathIsWithin(root, path string) bool {
-	relative, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
-	return err == nil && (relative == "." || relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)))
+func ensureRunning(ctx context.Context, env Env) error {
+	manager := service.New(service.Options{
+		Runner: env.Runner, ProgramPath: env.ProgramPath, ServiceDir: env.ServiceDir, Client: env.ControlClient,
+	})
+	return manager.EnsureRunning(ctx)
 }
 
 func missingSetting(output io.Writer, name string) int {

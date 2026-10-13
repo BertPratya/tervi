@@ -119,7 +119,7 @@ func TestEnsureRunningSteps(t *testing.T) {
 	runner := &serviceTestRunner{events: &events}
 	client := &serviceTestClient{
 		answers: []control.StatusAnswer{{}, {}, {State: "reconnecting"}},
-		errors:  []error{control.ErrNotRunning, control.ErrNotRunning, nil},
+		errors:  []error{control.ErrNotRunning, control.ErrNotRunning, errors.New("daemon answered with a broken response")},
 		events:  &events,
 	}
 	if err := New(serviceTestOptions(dir, "/usr/bin/true", runner, client)).EnsureRunning(context.Background()); err != nil {

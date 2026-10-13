@@ -274,6 +274,20 @@ func TestNoRuntimeFolder(t *testing.T) {
 	if stdout.String() != want || stderr.Len() != 0 {
 		t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
 	}
+	for _, command := range []string{"status", "connect"} {
+		t.Run(command, func(t *testing.T) {
+			runner := &commandRunner{}
+			client := &commandControl{}
+			env, _, stdout, stderr := commandEnv(t, runner, client, true)
+			t.Setenv("XDG_RUNTIME_DIR", "")
+			if code := Run(context.Background(), []string{command}, env, nil); code != 1 {
+				t.Fatalf("Run(%s) = %d, want 1", command, code)
+			}
+			if stdout.String() != want || stderr.Len() != 0 || client.statusCalls != 0 || client.connectCalls != 0 || len(runner.calls) != 0 {
+				t.Errorf("Run(%s) = stdout %q stderr %q status calls %d connect calls %d systemctl %v", command, stdout.String(), stderr.String(), client.statusCalls, client.connectCalls, runner.calls)
+			}
+		})
+	}
 }
 
 func TestDaemonUnexpectedFailure(t *testing.T) {
