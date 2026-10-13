@@ -10,6 +10,7 @@ import (
 
 	"github.com/bertpratya/tervi/api"
 	"github.com/bertpratya/tervi/internal/server"
+	"github.com/bertpratya/tervi/internal/server/connection"
 )
 
 const (
@@ -18,7 +19,7 @@ const (
 )
 
 func TestDocsOffByDefault(t *testing.T) {
-	handler := server.New(server.Config{PublicURL: "http://localhost:8080"}, nil, nil)
+	handler := server.New(server.Config{PublicURL: "http://localhost:8080"}, nil, nil, connection.NewList())
 	for _, path := range []string{"/docs", "/docs/openapi.yaml"} {
 		t.Run(path, func(t *testing.T) {
 			response := requestServer(t, handler, path)
@@ -30,7 +31,7 @@ func TestDocsOffByDefault(t *testing.T) {
 }
 
 func TestDocsOn(t *testing.T) {
-	handler := server.New(server.Config{PublicURL: "http://localhost:8080", APIDocs: true}, nil, nil)
+	handler := server.New(server.Config{PublicURL: "http://localhost:8080", APIDocs: true}, nil, nil, connection.NewList())
 	page := requestServer(t, handler, "/docs")
 	if page.Code != http.StatusOK {
 		t.Fatalf("GET /docs status = %d, want %d; body = %q", page.Code, http.StatusOK, page.Body.String())

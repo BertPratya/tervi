@@ -43,6 +43,7 @@ func TestMigrateCreatesTables(t *testing.T) {
 			"status":             {dataType: "text", isNullable: "NO"},
 			"created_at":         {dataType: "timestamp with time zone", isNullable: "NO"},
 			"expires_at":         {dataType: "timestamp with time zone", isNullable: "NO"},
+			"last_seen_at":       {dataType: "timestamp with time zone", isNullable: "YES"},
 		},
 	}
 	for table, columns := range wantColumns {

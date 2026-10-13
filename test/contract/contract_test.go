@@ -17,7 +17,9 @@ import (
 
 	"github.com/bertpratya/tervi/api"
 	"github.com/bertpratya/tervi/internal/server"
+	"github.com/bertpratya/tervi/internal/server/connection"
 	"github.com/bertpratya/tervi/internal/server/db/dbtest"
+	"github.com/coder/websocket"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/getkin/kin-openapi/routers"
@@ -43,7 +45,7 @@ func TestServerMatchesContract(t *testing.T) {
 	}
 	address := listener.Addr().String()
 	baseURL := "http://" + address
-	handler := server.New(server.Config{PublicURL: baseURL}, pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := server.New(server.Config{PublicURL: baseURL}, pool, slog.New(slog.NewTextHandler(io.Discard, nil)), connection.NewList())
 	ts := httptest.NewUnstartedServer(handler)
 	ts.Listener = listener
 	ts.Start()
@@ -98,6 +100,18 @@ func TestServerMatchesContract(t *testing.T) {
 	response = client.call(t, http.MethodPost, "/api/v1/machines/current/acknowledgment", "", bearerHeaders(credentialA), callOptions{})
 	expectStatus(t, response, http.StatusOK)
 	expectJSONField(t, response, "result", "ok")
+	client.openConnection(t, credentialA)
+	response = client.call(t, http.MethodGet, "/api/v1/machines/current/connection", "", bearerHeaders(credentialA), callOptions{})
+	expectStatus(t, response, http.StatusBadRequest)
+	expectJSONField(t, response, "error", "invalid_input")
+	response = client.call(t, http.MethodGet, "/api/v1/machines/current/connection", "", bearerHeaders("unknown-connection-credential"), callOptions{})
+	expectStatus(t, response, http.StatusUnauthorized)
+	expectJSONField(t, response, "error", "unknown_credential")
+	originHeaders := make(http.Header)
+	originHeaders.Set("Origin", "https://browser.example")
+	response = client.call(t, http.MethodGet, "/api/v1/machines/current/connection", "", bearerHeaders(credentialA), callOptions{headers: originHeaders})
+	expectStatus(t, response, http.StatusForbidden)
+	expectJSONField(t, response, "error", "forbidden_origin")
 	response = client.call(t, http.MethodGet, "/api/v1/pairings/current", "", bearerHeaders(pollingA), callOptions{})
 	expectStatus(t, response, http.StatusOK)
 	expectJSONField(t, response, "status", "paired")
@@ -190,6 +204,7 @@ func TestServerMatchesContract(t *testing.T) {
 		{operation: "submitCode", method: http.MethodPost, path: "/api/v1/pairings/current/code", body: jsonBody(map[string]string{"code": "1234-5678"}), headers: jsonHeaders()},
 		{operation: "acknowledgeMachine", method: http.MethodPost, path: "/api/v1/machines/current/acknowledgment"},
 		{operation: "reportSaveFailure", method: http.MethodPost, path: "/api/v1/machines/current/save-failure"},
+		{operation: "openConnection", method: http.MethodGet, path: "/api/v1/machines/current/connection", headers: bearerHeaders(credentialA)},
 		{operation: "approvalPage", method: http.MethodGet, path: "/pair/host-check"},
 		{operation: "readApproval", method: http.MethodGet, path: "/api/v1/approvals/current"},
 		{operation: "acceptApproval", method: http.MethodPost, path: "/api/v1/approvals/current/accept"},
@@ -408,6 +423,41 @@ func (c *contractClient) call(t *testing.T, method, path, body string, headers h
 		t.Fatalf("response violates contract for %s %d (%s %s): %v", route.Operation.OperationID, response.StatusCode, method, path, err)
 	}
 	return contractResponse{status: response.StatusCode, body: responseBody}
+}
+
+func (c *contractClient) openConnection(t *testing.T, credential string) {
+	t.Helper()
+	path := "/api/v1/machines/current/connection"
+	request, err := http.NewRequest(http.MethodGet, c.server.URL+path, nil)
+	if err != nil {
+		t.Fatalf("build openConnection request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+credential)
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	request.Header.Set("Sec-WebSocket-Version", "13")
+	request.Header.Set("Sec-WebSocket-Key", "dGhpcyBpcyBhIDE2LWJ5dGUga2V5")
+	route, pathParams, err := c.router.FindRoute(request)
+	if err != nil {
+		t.Fatalf("find openConnection route: %v", err)
+	}
+	requestInput := &openapi3filter.RequestValidationInput{
+		Request: request, PathParams: pathParams, QueryParams: request.URL.Query(),
+		Route: route, Options: filterOptions(),
+	}
+	if err := openapi3filter.ValidateRequest(context.Background(), requestInput); err != nil {
+		t.Fatalf("openConnection request violates contract: %v", err)
+	}
+	websocketURL := "ws" + strings.TrimPrefix(c.server.URL, "http") + path
+	conn, response, err := websocket.Dial(context.Background(), websocketURL, &websocket.DialOptions{HTTPHeader: bearerHeaders(credential)})
+	if err != nil {
+		t.Fatalf("openConnection WebSocket handshake: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "contract test done")
+	c.seen[route.Operation.OperationID] = map[int]bool{http.StatusSwitchingProtocols: true}
+	if err := validateContractResponse(requestInput, http.StatusSwitchingProtocols, response.Header, nil); err != nil {
+		t.Fatalf("openConnection response violates contract: %v", err)
+	}
 }
 
 func validateContractResponse(requestInput *openapi3filter.RequestValidationInput, status int, headers http.Header, body []byte) error {

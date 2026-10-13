@@ -364,7 +364,7 @@ user finishes with `tervi connect` (R29).
 | # | Task | Depends on | Risk | Status |
 | --- | --- | --- | --- | --- |
 | 08 | [Server: shared JSON helpers, and logging each `500`](tasks/08-server-http-helpers.md) | — | normal | done |
-| 01 | [Server: the machine connection](tasks/01-server-connection.md) | 08 | core | todo |
+| 01 | [Server: the machine connection](tasks/01-server-connection.md) | 08 | core | done |
 | 02 | [Server: the machines list and the Machines page](tasks/02-machines-page.md) | 01, 08 | normal | todo |
 | 03 | [Worker: the daemon's connection](tasks/03-daemon-connection.md) | 01 | core | todo |
 | 04 | [Worker: the daemon's socket, its lock, and `tervi daemon`](tasks/04-daemon-socket.md) | 03 | core | todo |
