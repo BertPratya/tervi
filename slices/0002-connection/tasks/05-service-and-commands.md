@@ -143,8 +143,11 @@ when there is one (the command's output, trimmed), or
 
 Export one function that the pairing (task 06) also uses:
 `EnsureRunning(ctx) (bool, error)` doing steps 1–2; the `bool` is true when
-it rewrote the service file and restarted the daemon (added in fix 2, for
-the `already_connected` row below). Put whatever the commands need
+this call started or restarted the daemon: it rewrote the service file and
+restarted it, or one `Status` call made before `enable --now` returned
+`ErrNotRunning` (added in fixes 2 and 3, for the `already_connected` row
+below). A daemon that was already running, including one started by hand
+with `tervi daemon`, gives `false`. Put whatever the commands need
 into `cli.Env`, so tests can replace them: the `Runner`, the program path,
 the service-file folder (`ServiceDir`), and the control client.
 
@@ -204,7 +207,7 @@ Neither command writes, deletes, or starts anything in these cases.
 | Result | Output | Exit |
 | --- | --- | --- |
 | `connected` | `✓ Connected.` | `0` |
-| `already_connected` | `Already connected.` — but `✓ Connected.` when step 3 rewrote the service file and restarted the daemon (a different installed `tervi`; decided by the user during the slice review, spec "Decisions"). `EnsureRunning` tells its caller whether it restarted | `0` |
+| `already_connected` | `Already connected.` — but `✓ Connected.` when step 3 started or restarted the daemon: the service file was rewritten (a different installed `tervi`; decided by the user during the slice review, spec "Decisions"), or the daemon was not running (R4: a stopped service is started, then `✓ Connected.`; added in fix 3). A freshly started daemon often connects before `POST /connect` arrives, so its answer alone cannot tell. `EnsureRunning` tells its caller whether it started or restarted the daemon | `0` |
 | `still_trying` | `Not connected yet: <last error>. tervi keeps trying in the background.` then `Check with: tervi status` | `1` |
 | `still_trying` with no last error (no try has failed yet) | `Not connected yet. tervi keeps trying in the background.` then `Check with: tervi status` (decided by the user during task 03) | `1` |
 | `failed` (`state.json` could not be written) | `✗ Can't write <path>.` (decided by the user during task 03) | `1` |
@@ -315,7 +318,7 @@ never reads the secret store. Anything else after `logs` is wrong usage
 | `TestConnectCommandResults` — every row of the result table, with output and exit code | R4 |
 | `TestConnectFromDifferentInstallPrintsConnected` — the service file names another path, so it is rewritten and the daemon restarted; an `already_connected` answer then prints `✓ Connected.`, exit `0` (added in fix 2; the same-path case, `Already connected.`, is the `already connected` row of `TestConnectCommandResults`) | R4, R5 |
 | `TestConnectNotPaired` | R4 |
-| `TestConnectStartsStoppedService` — with no daemon answering, `connect` runs the start steps, then connects | R4 |
+| `TestConnectStartsStoppedService` — with no daemon answering, `connect` runs the start steps, then connects; and when the started daemon answers `already_connected` (it connected first), the output is still `✓ Connected.`, exit `0` (added in fix 3) | R4 |
 | `TestConnectServiceFails` — the two lines, exit `1`, `state.json` and the secret store entry unchanged | R29 |
 | `TestConnectReturnsAfterLastLine` — the command returns after printing; the fake daemon is still running | R31 |
 | `TestStatusOutputs` — each of the five R16 cases, the slice-1 case, a daemon answering `not_paired`, a broken answer and an unknown `state` (the one `Can't reach` line each), and Ctrl+C while waiting (no output, exit `130`), with exit codes | R16, R17 |
