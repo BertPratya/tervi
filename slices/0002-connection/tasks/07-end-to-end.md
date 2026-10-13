@@ -141,6 +141,14 @@ address.
    `connect: false` and `stop_reason: "credential_rejected"`, and
    `tervi status` shows the R16 rejection lines. `tervi pair` then prints the
    R33 line and a new pairing completes and connects.
+   The new pairing connects through the **first daemon, still running and
+   not restarted** (added during task 07 review). After the re-pair, assert:
+   - the fake systemd recorded `--user enable --now tervi` for the re-pair,
+     and no second `restart`;
+   - the second daemon the fake started exited with `0`, and the daemon log
+     has `tervi is already running in the background.`;
+   - the first daemon is still running, and a `✓ Connected to <server>` line
+     follows the rejection line in its log.
 5. **No secrets.** Across every scenario, no terminal output, daemon log,
    server log, list answer, or `state.json` contains the credential.
 
