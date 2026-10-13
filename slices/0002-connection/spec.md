@@ -308,7 +308,7 @@ quote. `<…>` is filled in.
 
 | Command | Exit code |
 | --- | --- |
-| `tervi daemon` | `0` when stopped normally (Ctrl+C or systemd) or when another daemon is already running; `1` on an unexpected failure |
+| `tervi daemon` | `0` when stopped normally (Ctrl+C or systemd) or when another daemon is already running; `1` on an unexpected failure; `2` for wrong usage |
 | `tervi logs` | `0`; `1` when the log cannot be read; `2` for wrong usage |
 | `tervi pair`, after pairing | `0` when connected or still trying in the background; `1` when rejected, when the background service cannot start, or when tervi in the background cannot be reached; `130` on Ctrl+C |
 

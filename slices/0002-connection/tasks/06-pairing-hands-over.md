@@ -134,6 +134,7 @@ and exits `130`. The pairing stays saved.
 | Test | Proves |
 | --- | --- |
 | `TestPairInstalledCheckFirst` — a temporary program gets the R28 message and no request reaches the server | R28 |
+| `TestMissingInternalSetting` — extended: `tervi pair` with an empty program path prints the internal-setting line and exits `1` before reading anything | R28 |
 | `TestPairHandsOver` — after `✓ Paired successfully.`, the start steps run, then the two lines in order, exit `0`; the service file is written in the test's `t.TempDir()` `ServiceDir` and nowhere else | R5, R10 |
 | `TestPairSetsConnectThroughDaemon` — the hand-over calls `Connect`, and the fake daemon wrote `connect: true` | R1 |
 | `TestPairStillTrying` — the R11 lines, exit `0` | R11 |
