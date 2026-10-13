@@ -258,6 +258,7 @@ quote. `<…>` is filled in.
 | When | Message |
 | --- | --- |
 | Paired, but not connected within 30 seconds (R11) | `Paired, but not connected yet: <last error>. tervi keeps trying in the background.` then `Check with: tervi status` |
+| Not connected within 30 seconds, and no try has failed yet (the connection is still opening) | The same message without the error: `Not connected yet. tervi keeps trying in the background.` (`tervi connect`) or `Paired, but not connected yet. tervi keeps trying in the background.` (`tervi pair`), then `Check with: tervi status` |
 | The background service cannot start (R29) | `✗ Can't start tervi in the background: <reason>` then `Try again with: tervi connect` |
 | Ctrl+C while connecting after pairing | `Pairing finished. Connecting was cancelled; tervi keeps trying in the background.` |
 | The background service started, but asking it to connect failed | `✗ Can't reach tervi in the background: <reason>` then `Check with: tervi status` (exit `1`) |
@@ -303,6 +304,7 @@ quote. `<…>` is filled in.
 | tervi was built without one of its internal settings | `✗ tervi is missing an internal setting (<field name>).` |
 | `tervi status` or `tervi connect` cannot read the secret store entry, or it is damaged | Slice 1's `✗ Can't read the secret store entry.` and its hint line; exit `1` |
 | `tervi status` or `tervi connect` cannot read `state.json` | Slice 1's `✗ Can't read <path>.`; exit `1` |
+| `tervi connect` or `tervi pair`: tervi in the background cannot save `connect` in `state.json` (for example, the disk is full) | `✗ Can't write <path>.`; exit `1`. Nothing changes, and tervi does not start connecting |
 
 **Exit codes** (besides `tervi connect` in R4 and `tervi status` in R17)
 
@@ -310,7 +312,7 @@ quote. `<…>` is filled in.
 | --- | --- |
 | `tervi daemon` | `0` when stopped normally (Ctrl+C or systemd) or when another daemon is already running; `1` on an unexpected failure; `2` for wrong usage |
 | `tervi logs` | `0`; `1` when the log cannot be read; `2` for wrong usage |
-| `tervi pair`, after pairing | `0` when connected or still trying in the background; `1` when rejected, when the background service cannot start, or when tervi in the background cannot be reached; `130` on Ctrl+C |
+| `tervi pair`, after pairing | `0` when connected or still trying in the background; `1` when rejected, when the background service cannot start, when tervi in the background cannot be reached, or when it cannot save `state.json`; `130` on Ctrl+C |
 
 ## Not in this slice
 

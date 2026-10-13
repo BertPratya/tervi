@@ -182,6 +182,8 @@ Neither command writes, deletes, or starts anything in these cases.
 | `connected` | `✓ Connected.` | `0` |
 | `already_connected` | `Already connected.` | `0` |
 | `still_trying` | `Not connected yet: <last error>. tervi keeps trying in the background.` then `Check with: tervi status` | `1` |
+| `still_trying` with no last error (no try has failed yet) | `Not connected yet. tervi keeps trying in the background.` then `Check with: tervi status` (decided by the user during task 03) | `1` |
+| `failed` (`state.json` could not be written) | `✗ Can't write <path>.` (decided by the user during task 03) | `1` |
 | `rejected` | `✗ The server doesn't accept this computer's credential.` then `Pair again with: tervi pair --server <server>` | `1` |
 | `not_paired` | the not-paired line above | `1` |
 | a control error (the service started, but the call failed) | `✗ Can't reach tervi in the background: <reason>` then `Check with: tervi status` | `1` |

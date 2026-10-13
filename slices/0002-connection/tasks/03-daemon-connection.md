@@ -182,7 +182,8 @@ picked up. Then:
 | No confirmed `state.json`, or no secret store entry | `not_paired` |
 | `state.json` cannot be read or parsed | `still_trying` with the last error `can't read state.json`; nothing is written, and the loop stays idle |
 | Already connected | `already_connected` (nothing changes) |
-| Otherwise (including a secret store that cannot be read, or a damaged entry) | Writes `connect: true`, `stop_reason: null`; wakes the loop; waits until connected (`connected`), rejected (`rejected`), or 30 seconds or `ctx` end (`still_trying`, with the last error, for example `can't read the secret store`) |
+| Otherwise (including a secret store that cannot be read, or a damaged entry) | Writes `connect: true`, `stop_reason: null`; wakes the loop; waits until connected (`connected`), rejected (`rejected`), or 30 seconds or `ctx` end (`still_trying`, with the last error, for example `can't read the secret store`; no last error if no try has failed yet) |
+| Writing `connect: true` to `state.json` fails | `failed`, with the path of `state.json`. Nothing changes: the loop is not woken and stays as it was. (Decided by the user during task 03.) |
 
 ### `Status()`
 
@@ -277,7 +278,7 @@ injected clock and `Rand`, and short test timings.
 | `TestRejectionStops` — `401 unknown_credential` stops trying, writes `connect: false` and `stop_reason`, logs the line | R18 |
 | `TestConnectAfterRejection` — `Connect` tries again; a second rejection stops again | R20 |
 | `TestIdleWhileConnectFalse` — no network activity while `connect` is false; `Status` still answers | R3 |
-| `TestDaemonConnectResults` — `not_paired`, `already_connected`, `connected`, `rejected`, `still_trying` after 30 s (injected clock), and `still_trying` with `can't read state.json` for an unreadable `state.json`, which is left byte-for-byte unchanged | R3, R20, R4 |
+| `TestDaemonConnectResults` — `not_paired`, `already_connected`, `connected`, `rejected`, `still_trying` after 30 s (injected clock), and `still_trying` with `can't read state.json` for an unreadable `state.json`, which is left byte-for-byte unchanged; `failed` with the path when writing `state.json` fails, and the loop is not woken (no dial) | R3, R20, R4 |
 | `TestUnreadableStateStaysIdle` — with an unparsable `state.json`, `Run` stays idle with no network, writes nothing, and `Status` is `not_connecting` | R3 |
 | `TestConnectReadsNewPairing` — after the pairing changes, `Connect` uses the new server and credential | R20 |
 | `TestStateKeepsPairingFields` — writing `connect` keeps the other fields; a file without `connect` reads as false | R1 data rule |

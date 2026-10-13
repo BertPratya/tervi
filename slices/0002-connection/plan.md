@@ -67,7 +67,7 @@ worker's own commands call it, so it is described here, not in `api/`.
 | Operation | Called by | Answer |
 | --- | --- | --- |
 | `GET /status` | `tervi status` | The state: `connected` (server, connected since), `reconnecting` (server, try number, seconds until the next try, last error), `not_connecting` (the stop reason), or `not_paired` |
-| `POST /connect` | `tervi connect`, and `tervi pair` after pairing | Sets `connect` to true, reads the pairing again, and answers once the result is known or 30 seconds have passed: `connected`, `already_connected`, `still_trying` (with the last error), `rejected`, or `not_paired` |
+| `POST /connect` | `tervi connect`, and `tervi pair` after pairing | Sets `connect` to true, reads the pairing again, and answers once the result is known or 30 seconds have passed: `connected`, `already_connected`, `still_trying` (with the last error, if a try has failed), `rejected`, `not_paired`, or `failed` (`state.json` could not be written, with its path; nothing changes) |
 
 A program from another user account is refused before any operation runs
 (R26).
