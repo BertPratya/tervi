@@ -139,7 +139,7 @@ func (s *Store) CheckContext(ctx context.Context) error {
 		return ctx.Err()
 	}
 	if setErr != nil || getErr != nil || readBack != value || deleteErr != nil {
-		return errors.New("secret store check failed")
+		return errors.New("credential file check failed")
 	}
 	return nil
 }

@@ -127,7 +127,7 @@ func TestUsageErrors(t *testing.T) {
 				t.Errorf("usage handling did work: reads=%d flow=%+v", stdin.reads, flow)
 			}
 			if backend.gets != 0 || backend.sets != 0 || backend.deletes != 0 {
-				t.Errorf("usage handling touched secret store: %+v", backend)
+				t.Errorf("usage handling touched credential file: %+v", backend)
 			}
 			if _, err := os.Stat(env.StateDir); !os.IsNotExist(err) {
 				t.Errorf("usage handling touched state directory: stat error %v", err)
@@ -490,7 +490,7 @@ func TestStepZeroOtherServerChangesNothing(t *testing.T) {
 				t.Errorf("unexpected flow calls: %+v", flow)
 			}
 			if _, ok := backend.Value("worker"); !ok {
-				t.Error("secret store entry changed")
+				t.Error("credential file entry changed")
 			}
 			assertNoCredential(t, stdout.String(), stderr.String())
 		})
@@ -583,7 +583,7 @@ func TestCtrlCDuringStepZero(t *testing.T) {
 			t.Errorf("stdout=%q stderr=%q flow=%+v", stdout.String(), stderr.String(), flow)
 		}
 	})
-	t.Run("cancelled during secret store check", func(t *testing.T) {
+	t.Run("cancelled during credential file check", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		backend := &cancelSetBackend{MemoryBackend: credential.NewMemoryBackend(), cancel: cancel}
@@ -596,7 +596,7 @@ func TestCtrlCDuringStepZero(t *testing.T) {
 			t.Errorf("stdout=%q stderr=%q flow=%+v", stdout.String(), stderr.String(), flow)
 		}
 		if backend.gets != 1 || backend.deletes != 0 {
-			t.Errorf("secret store operations after cancellation: gets=%d deletes=%d", backend.gets, backend.deletes)
+			t.Errorf("credential file operations after cancellation: gets=%d deletes=%d", backend.gets, backend.deletes)
 		}
 	})
 }
@@ -709,7 +709,7 @@ func TestLeftoverThenStartNew(t *testing.T) {
 }
 
 func TestLeftoverDeleteFails(t *testing.T) {
-	t.Run("secret store delete", func(t *testing.T) {
+	t.Run("credential file delete", func(t *testing.T) {
 		dir := t.TempDir()
 		_ = state.WriteState(dir, state.State{MachineID: "m"})
 		backend := credential.NewMemoryBackend()

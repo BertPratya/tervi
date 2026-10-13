@@ -367,7 +367,7 @@ func runHappyPath(t *testing.T) secretAudit {
 	}
 	entry, entryExists, err := f.store.Get()
 	if err != nil || !entryExists || entry.Server != f.serverURL || entry.Credential.Reveal() == "" {
-		t.Fatalf("secret store entry = %#v, exists=%t, error=%v; want server and credential", entry, entryExists, err)
+		t.Fatalf("credential file entry = %#v, exists=%t, error=%v; want server and credential", entry, entryExists, err)
 	}
 	assertCredentialAbsentFromFiles(t, f.stateDir, entry.Credential.Reveal())
 	audit := f.audit(approvalKey, pairingCode, run)
