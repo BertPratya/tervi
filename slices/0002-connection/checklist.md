@@ -37,8 +37,9 @@ ls -la ~/.config/tervi/           # see "Earlier pairings" below
 ```
 
 If `which tervi` prints nothing, add `$(go env GOPATH)/bin` to your `PATH`.
-`systemctl --user stop tervi` may say `Unit tervi.service not loaded.` on a
-computer that never ran tervi in the background; that is fine. It is needed
+`systemctl --user stop tervi` may say
+`Failed to stop tervi.service: Unit tervi.service not loaded.` on a computer
+that never ran tervi in the background; that is fine, carry on. It is needed
 because installing a new `tervi` does not restart a daemon that is already
 running the old one.
 
@@ -158,7 +159,7 @@ slice 1's.
 
 **A rejected credential, and pairing again**
 
-Open terminal 2 again (plain SSH) for these rows.
+Open terminal 2 again (plain SSH) and go to the project folder for these rows.
 
 | # | Requirement | Do this | You should see | Result |
 | --- | --- | --- | --- | --- |
