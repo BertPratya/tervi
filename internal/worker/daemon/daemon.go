@@ -138,7 +138,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			}
 			d.logLine("✗ Connection lost: %s", lost.reason)
 			wait := reconnectWait(1, d.opts.Rand())
-			d.setRetry(1, result.server, lost.lastError, d.opts.Now().Add(wait))
+			d.setRetry(1, result.server, "", d.opts.Now().Add(wait))
 			waited := d.wait(wait, ctx)
 			if waited == waitCancelled {
 				return nil

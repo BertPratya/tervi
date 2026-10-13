@@ -36,7 +36,6 @@ type attemptResult struct {
 
 type lostResult struct {
 	reason       string
-	lastError    string
 	closeStarted bool
 }
 
@@ -159,6 +158,7 @@ func (d *Daemon) serveConnection(ctx context.Context, conn *websocket.Conn, hell
 	defer pingTimer.Stop()
 	timeoutTimer := time.NewTimer(timeout)
 	defer timeoutTimer.Stop()
+	lastMessageAt := time.Now()
 	type readResult struct {
 		data []byte
 		err  error
@@ -177,16 +177,19 @@ func (d *Daemon) serveConnection(ctx context.Context, conn *websocket.Conn, hell
 			_ = conn.Close(websocket.StatusCode(protocol.CloseNormal), "daemon stopped")
 			return lostResult{reason: "the server closed the connection", closeStarted: true}
 		case <-timeoutTimer.C:
-			go func() {
-				_ = conn.Close(websocket.StatusCode(protocol.CloseTimeout), "no message received before timeout")
-			}()
-			return lostResult{
-				reason:       fmt.Sprintf("no answer from the server for %d seconds", hello.TimeoutSeconds),
-				lastError:    fmt.Sprintf("no answer from the server for %d seconds", hello.TimeoutSeconds),
-				closeStarted: true,
-			}
+			return closeForTimeout(conn, hello.TimeoutSeconds)
 		case <-pingTimer.C:
-			if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"ping"}`)); err != nil {
+			writeTimeout := timeout - time.Since(lastMessageAt)
+			if writeTimeout <= 0 {
+				return closeForTimeout(conn, hello.TimeoutSeconds)
+			}
+			writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+			err := conn.Write(writeCtx, websocket.MessageText, []byte(`{"type":"ping"}`))
+			cancel()
+			if err != nil {
+				if isTimeoutError(err) && ctx.Err() == nil {
+					return closeForTimeout(conn, hello.TimeoutSeconds)
+				}
 				return connectionLost(err)
 			}
 			pingTimer.Reset(interval)
@@ -194,9 +197,20 @@ func (d *Daemon) serveConnection(ctx context.Context, conn *websocket.Conn, hell
 			if read.err != nil {
 				return connectionLost(read.err)
 			}
+			lastMessageAt = time.Now()
 			resetTimer(timeoutTimer, timeout)
 			startRead()
 		}
+	}
+}
+
+func closeForTimeout(conn *websocket.Conn, seconds int) lostResult {
+	go func() {
+		_ = conn.Close(websocket.StatusCode(protocol.CloseTimeout), "no message received before timeout")
+	}()
+	return lostResult{
+		reason:       fmt.Sprintf("no answer from the server for %d seconds", seconds),
+		closeStarted: true,
 	}
 }
 
@@ -209,7 +223,7 @@ func connectionLost(err error) lostResult {
 		return lostResult{reason: "replaced by a newer connection"}
 	case -1:
 		last, _ := errorText(err, nil, "")
-		return lostResult{reason: last, lastError: last}
+		return lostResult{reason: last}
 	default:
 		return lostResult{reason: "the server closed the connection"}
 	}

@@ -96,7 +96,7 @@ func TestPaired(t *testing.T) {
 		backend := NewMemoryBackend()
 		backend.FailGet = true
 		_, _, paired, err := Paired(dir, NewStore(backend))
-		if paired || err == nil {
+		if paired || !errors.Is(err, ErrStoreUnreadable) {
 			t.Fatalf("Paired() = (%v, %v), want store error", paired, err)
 		}
 	})
@@ -122,7 +122,7 @@ func TestPaired(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _, paired, err := Paired(dir, NewStore(NewMemoryBackend()))
-		if paired || err == nil {
+		if paired || !errors.Is(err, ErrStateUnreadable) {
 			t.Fatalf("Paired() = (%v, %v), want state read error", paired, err)
 		}
 	})

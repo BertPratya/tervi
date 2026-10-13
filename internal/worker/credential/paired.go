@@ -7,12 +7,19 @@ import (
 	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
+var (
+	// ErrStateUnreadable identifies a state.json that could not be read or parsed.
+	ErrStateUnreadable = errors.New("state.json unreadable")
+	// ErrStoreUnreadable identifies a secret store that could not be read.
+	ErrStoreUnreadable = errors.New("secret store unreadable")
+)
+
 // Paired reports whether state.json is confirmed and the secret store holds a
 // usable entry. Missing state or an entry means the computer is not paired.
 func Paired(stateDir string, store *Store) (entry Entry, record state.State, paired bool, err error) {
 	record, exists, err := state.ReadState(stateDir)
 	if err != nil {
-		return Entry{}, record, false, fmt.Errorf("read state.json: %w", err)
+		return Entry{}, record, false, fmt.Errorf("read state.json: %w: %w", ErrStateUnreadable, err)
 	}
 	if !exists || !record.Confirmed {
 		return Entry{}, record, false, nil
@@ -22,7 +29,7 @@ func Paired(stateDir string, store *Store) (entry Entry, record state.State, pai
 		return Entry{}, record, false, ErrDamaged
 	}
 	if err != nil {
-		return Entry{}, record, false, fmt.Errorf("read secret store: %w", err)
+		return Entry{}, record, false, fmt.Errorf("read secret store: %w: %w", ErrStoreUnreadable, err)
 	}
 	if !exists {
 		return Entry{}, record, false, nil

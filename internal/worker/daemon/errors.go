@@ -76,7 +76,7 @@ func errorText(err error, response *http.Response, credentialValue string) (stri
 	if isStateReadError(err) {
 		return "can't read state.json", ""
 	}
-	if err != nil && strings.HasPrefix(err.Error(), "read secret store:") {
+	if errors.Is(err, credential.ErrStoreUnreadable) {
 		last := "can't read the secret store"
 		return last, upperFirst(last)
 	}
@@ -100,6 +100,10 @@ func errorText(err error, response *http.Response, credentialValue string) (stri
 		message = "network error"
 	}
 	return lowerFirst(message), upperFirst(message)
+}
+
+func isStateReadError(err error) bool {
+	return errors.Is(err, credential.ErrStateUnreadable)
 }
 
 func lowerFirst(value string) string {
