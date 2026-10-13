@@ -100,7 +100,7 @@ func Run(ctx context.Context, runtimeDir string, engine Engine) (runErr error) {
 		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			return fmt.Errorf("daemon control server: %w", serveErr)
 		}
-		return errors.New("daemon engine stopped unexpectedly")
+		return errors.New("engine ended")
 	case serveErr := <-serveDone:
 		stopServer()
 		engineErr := <-engineDone
@@ -140,7 +140,17 @@ func (tracker *handlerTracker) stopAndWait() {
 	tracker.mu.Lock()
 	tracker.stopping = true
 	tracker.mu.Unlock()
-	tracker.active.Wait()
+	waitDone := make(chan struct{})
+	go func() {
+		tracker.active.Wait()
+		close(waitDone)
+	}()
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case <-waitDone:
+	case <-timer.C:
+	}
 }
 
 func acquireLock(path string) (*os.File, error) {

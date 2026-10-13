@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -197,6 +198,14 @@ func TestStatusOverSocket(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("GET /status = %s, want %s", got, tc.want)
 			}
+			gotAnswer, err := (Client{RuntimeDir: runtimeDir}).Status(context.Background())
+			if err != nil {
+				t.Fatalf("Client.Status() error = %v", err)
+			}
+			wantAnswer := statusAnswer(tc.status)
+			if !reflect.DeepEqual(gotAnswer, wantAnswer) {
+				t.Errorf("Client.Status() = %+v, want %+v", gotAnswer, wantAnswer)
+			}
 		})
 	}
 }
@@ -228,6 +237,14 @@ func TestConnectOverSocket(t *testing.T) {
 			}
 			if got != tc.want {
 				t.Errorf("POST /connect = %s, want %s", got, tc.want)
+			}
+			gotAnswer, err := (Client{RuntimeDir: runtimeDir}).Connect(context.Background())
+			if err != nil {
+				t.Fatalf("Client.Connect() error = %v", err)
+			}
+			wantAnswer := connectAnswer(tc.result)
+			if !reflect.DeepEqual(gotAnswer, wantAnswer) {
+				t.Errorf("Client.Connect() = %+v, want %+v", gotAnswer, wantAnswer)
 			}
 		})
 	}
@@ -421,6 +438,89 @@ func TestRunWaitsForHandlersOnShutdown(t *testing.T) {
 		t.Fatal("Run() returned while the connect handler was still running")
 	}
 	<-requestDone
+}
+
+type blockedConnectEngine struct {
+	started chan struct{}
+	release <-chan struct{}
+}
+
+func (engine *blockedConnectEngine) Run(ctx context.Context) error {
+	<-ctx.Done()
+	return nil
+}
+
+func (engine *blockedConnectEngine) Status() daemon.Status {
+	return daemon.Status{State: "not_paired"}
+}
+
+func (engine *blockedConnectEngine) Connect(context.Context) daemon.ConnectResult {
+	close(engine.started)
+	<-engine.release
+	return daemon.ConnectResult{Result: "still_trying"}
+}
+
+func TestRunBoundsHandlerWaitOnShutdown(t *testing.T) {
+	runtimeDir := filepath.Join(t.TempDir(), "tervi")
+	ctx, stop := context.WithCancel(context.Background())
+	releaseHandler := make(chan struct{})
+	engine := &blockedConnectEngine{started: make(chan struct{}), release: releaseHandler}
+	done := startDaemon(t, ctx, runtimeDir, engine)
+	waitForSocket(t, filepath.Join(runtimeDir, "daemon.sock"))
+	requestDone := make(chan struct{})
+	go func() {
+		defer close(requestDone)
+		_, _ = (Client{RuntimeDir: runtimeDir}).Connect(context.Background())
+	}()
+	select {
+	case <-engine.started:
+	case <-time.After(2 * time.Second):
+		stop()
+		close(releaseHandler)
+		t.Fatal("connect handler did not start")
+	}
+
+	started := time.Now()
+	stop()
+	var runErr error
+	timedOut := false
+	select {
+	case runErr = <-done:
+	case <-time.After(2500 * time.Millisecond):
+		timedOut = true
+		close(releaseHandler)
+		runErr = <-done
+	}
+	if !timedOut {
+		close(releaseHandler)
+	}
+	if runErr != nil {
+		t.Fatalf("Run() error = %v", runErr)
+	}
+	if timedOut {
+		t.Fatalf("Run() did not return within 2.5s; elapsed %s", time.Since(started))
+	}
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Error("client request did not finish after daemon shutdown")
+	}
+}
+
+func TestUnexpectedEngineExitReason(t *testing.T) {
+	runtimeDir := filepath.Join(t.TempDir(), "tervi")
+	err := Run(context.Background(), runtimeDir, &returningEngine{})
+	if err == nil || err.Error() != "engine ended" {
+		t.Fatalf("Run() error = %v, want engine ended", err)
+	}
+}
+
+type returningEngine struct{}
+
+func (returningEngine) Run(context.Context) error { return nil }
+func (returningEngine) Status() daemon.Status     { return daemon.Status{State: "not_paired"} }
+func (returningEngine) Connect(context.Context) daemon.ConnectResult {
+	return daemon.ConnectResult{Result: "not_paired"}
 }
 
 func TestDaemonCommandStops(t *testing.T) {

@@ -17,12 +17,18 @@ type Client struct {
 	RuntimeDir string
 }
 
+type requestOutcome struct {
+	socketReached    bool
+	deadlineExceeded bool
+	err              error
+}
+
 // Status asks the running daemon for its current connection state.
 func (client Client) Status(ctx context.Context) (StatusAnswer, error) {
 	var answer StatusAnswer
-	_, _, err := request(ctx, client.RuntimeDir, http.MethodGet, "/status", statusTimeout, &answer)
-	if err != nil {
-		return StatusAnswer{}, err
+	outcome := request(ctx, client.RuntimeDir, http.MethodGet, "/status", statusTimeout, &answer)
+	if outcome.err != nil {
+		return StatusAnswer{}, outcome.err
 	}
 	return answer, nil
 }
@@ -30,17 +36,17 @@ func (client Client) Status(ctx context.Context) (StatusAnswer, error) {
 // Connect asks the daemon to enable its connection and waits for the result.
 func (client Client) Connect(ctx context.Context) (ConnectAnswer, error) {
 	var answer ConnectAnswer
-	reachedSocket, timedOut, err := request(ctx, client.RuntimeDir, http.MethodPost, "/connect", connectTimeout, &answer)
-	if err != nil {
-		if reachedSocket && timedOut {
+	outcome := request(ctx, client.RuntimeDir, http.MethodPost, "/connect", connectTimeout, &answer)
+	if outcome.err != nil {
+		if outcome.socketReached && outcome.deadlineExceeded {
 			return ConnectAnswer{Result: "still_trying"}, nil
 		}
-		return ConnectAnswer{}, err
+		return ConnectAnswer{}, outcome.err
 	}
 	return answer, nil
 }
 
-func request(ctx context.Context, runtimeDir, method, path string, timeout time.Duration, answer any) (bool, bool, error) {
+func request(ctx context.Context, runtimeDir, method, path string, timeout time.Duration, answer any) requestOutcome {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -58,7 +64,7 @@ func request(ctx context.Context, runtimeDir, method, path string, timeout time.
 	client := &http.Client{Transport: transport}
 	req, err := http.NewRequestWithContext(requestCtx, method, "http://tervi.local"+path, nil)
 	if err != nil {
-		return reachedSocket.Load(), false, err
+		return requestOutcome{socketReached: reachedSocket.Load(), err: err}
 	}
 	response, err := client.Do(req)
 	if err != nil {
@@ -66,26 +72,39 @@ func request(ctx context.Context, runtimeDir, method, path string, timeout time.
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return reachedSocket.Load(), false, fmt.Errorf("daemon answered HTTP %d", response.StatusCode)
+		return requestOutcome{
+			socketReached: reachedSocket.Load(),
+			err:           fmt.Errorf("daemon answered HTTP %d", response.StatusCode),
+		}
 	}
 	if err := json.NewDecoder(response.Body).Decode(answer); err != nil {
 		if ctx.Err() != nil {
-			return reachedSocket.Load(), false, ctx.Err()
+			return requestOutcome{socketReached: reachedSocket.Load(), err: ctx.Err()}
 		}
 		if errors.Is(requestCtx.Err(), context.DeadlineExceeded) {
 			return requestFailure(ctx, requestCtx, reachedSocket.Load(), fmt.Errorf("decode daemon response: %w", err))
 		}
-		return reachedSocket.Load(), false, fmt.Errorf("decode daemon response: %w", err)
+		return requestOutcome{
+			socketReached: reachedSocket.Load(),
+			err:           fmt.Errorf("decode daemon response: %w", err),
+		}
 	}
-	return reachedSocket.Load(), false, nil
+	return requestOutcome{socketReached: reachedSocket.Load()}
 }
 
-func requestFailure(ctx, requestCtx context.Context, reachedSocket bool, err error) (bool, bool, error) {
+func requestFailure(ctx, requestCtx context.Context, reachedSocket bool, err error) requestOutcome {
 	if ctx.Err() != nil {
-		return reachedSocket, false, ctx.Err()
+		return requestOutcome{socketReached: reachedSocket, err: ctx.Err()}
 	}
 	if errors.Is(requestCtx.Err(), context.DeadlineExceeded) {
-		return reachedSocket, true, fmt.Errorf("%w: %v", ErrNotRunning, err)
+		return requestOutcome{
+			socketReached:    reachedSocket,
+			deadlineExceeded: true,
+			err:              fmt.Errorf("%w: %v", ErrNotRunning, err),
+		}
 	}
-	return reachedSocket, false, fmt.Errorf("%w: %v", ErrNotRunning, err)
+	return requestOutcome{
+		socketReached: reachedSocket,
+		err:           fmt.Errorf("%w: %v", ErrNotRunning, err),
+	}
 }
