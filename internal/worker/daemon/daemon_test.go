@@ -413,13 +413,13 @@ func TestStoreUnreadableIsFailedTry(t *testing.T) {
 	}{
 		{
 			name:    "unreadable",
-			failed:  "Can't read the secret store",
+			failed:  "Can't read credential.json",
 			prepare: func(f *daemonFixture) { f.backend.FailGet = true },
 			repair:  func(f *daemonFixture) error { f.backend.FailGet = false; return nil },
 		},
 		{
 			name:   "damaged",
-			failed: "The secret store entry is damaged",
+			failed: "Credential.json is damaged",
 			prepare: func(f *daemonFixture) {
 				if err := f.backend.Set("worker", "broken"); err != nil {
 					t.Fatal(err)
@@ -431,7 +431,7 @@ func TestStoreUnreadableIsFailedTry(t *testing.T) {
 		},
 		{
 			name:   "missing",
-			failed: "The secret store entry is missing",
+			failed: "Credential.json is missing",
 			prepare: func(f *daemonFixture) {
 				if err := f.backend.Delete("worker"); err != nil {
 					t.Fatal(err)
@@ -602,7 +602,7 @@ func TestRefreshStateKeepsLastServer(t *testing.T) {
 	}
 }
 
-func TestStatusReconnectsWhenSecretStoreIsUnreadable(t *testing.T) {
+func TestStatusReconnectsWhenCredentialFileIsUnreadable(t *testing.T) {
 	f := newDaemonFixture(t, true, 10, 30, nil)
 	f.backend.FailGet = true
 	d := f.newDaemon(t, Options{Rand: func() float64 { return 0 }})
@@ -617,11 +617,11 @@ func TestStatusReconnectsWhenSecretStoreIsUnreadable(t *testing.T) {
 	}()
 
 	waitFor(t, time.Second, func() bool {
-		return d.Status().LastError == "can't read the secret store"
-	}, "secret-store failure in daemon status")
+		return d.Status().LastError == "can't read credential.json"
+	}, "credential-file failure in daemon status")
 	status := d.Status()
-	if status.State != StateReconnecting || status.Server != "" || status.LastError != "can't read the secret store" {
-		t.Fatalf("Status() = %+v, want reconnecting without a known server and with the secret-store error", status)
+	if status.State != StateReconnecting || status.Server != "" || status.LastError != "can't read credential.json" {
+		t.Fatalf("Status() = %+v, want reconnecting without a known server and with the credential-file error", status)
 	}
 }
 
@@ -650,9 +650,10 @@ func TestErrorTexts(t *testing.T) {
 		{name: "refused", err: &net.OpError{Err: syscall.ECONNREFUSED}, last: "connection refused", log: "Connection refused"},
 		{name: "timeout", err: context.DeadlineExceeded, last: "no answer from the server", log: "No answer from the server"},
 		{name: "http", response: &http.Response{StatusCode: 503}, last: "the server answered 503", log: "The server answered 503"},
-		{name: "secret store unreadable", err: fmt.Errorf("read secret store: %w: keyring locked", credential.ErrStoreUnreadable), last: "can't read the secret store", log: "Can't read the secret store"},
-		{name: "secret store damaged", err: credential.ErrDamaged, last: "the secret store entry is damaged", log: "The secret store entry is damaged"},
-		{name: "missing secret store entry", err: credential.ErrNotFound, last: "the secret store entry is missing", log: "The secret store entry is missing"},
+		{name: "credential file unreadable", err: fmt.Errorf("read credential file: %w", credential.ErrStoreUnreadable), last: "can't read credential.json", log: "Can't read credential.json"},
+		{name: "credential file damaged", err: credential.ErrDamaged, last: "credential.json is damaged", log: "Credential.json is damaged"},
+		{name: "missing credential file", err: credential.ErrNotFound, last: "credential.json is missing", log: "Credential.json is missing"},
+		{name: "unprotected credential file takes precedence", err: errors.Join(credential.ErrUnprotected, credential.ErrStoreUnreadable), last: "other users may be able to read credential.json", log: "Other users may be able to read credential.json"},
 		{name: "state unreadable", err: fmt.Errorf("read state.json: %w: malformed json", credential.ErrStateUnreadable), last: "can't read state.json", log: ""},
 		{name: "network", err: errors.New("Network is down"), last: "network is down", log: "Network is down"},
 	} {
@@ -662,6 +663,80 @@ func TestErrorTexts(t *testing.T) {
 				t.Fatalf("errorText() = (%q, %q), want (%q, %q)", last, logged, test.last, test.log)
 			}
 		})
+	}
+}
+
+func TestUnprotectedCredentialIsFailedTry(t *testing.T) {
+	dir := t.TempDir()
+	logs := &safeBuffer{}
+	releaseRetry := make(chan struct{})
+	waitingForRetry := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		if err := conn.Write(r.Context(), websocket.MessageText, mustJSON(protocol.Hello{Type: protocol.TypeHello, CheckIntervalSeconds: 10, TimeoutSeconds: 30})); err != nil {
+			_ = conn.CloseNow()
+			return
+		}
+		for {
+			if _, _, err := conn.Read(context.Background()); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	store := credential.NewStore(credential.NewFileBackend(dir))
+	if err := store.Save(credential.Entry{Server: server.URL, Credential: secret.FromString(daemonCredential)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.WriteState(dir, state.State{MachineID: "machine", CredentialSaved: true, Confirmed: true, Connect: true}); err != nil {
+		t.Fatal(err)
+	}
+	path := credential.Path(dir)
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	d := New(Options{StateDir: dir, Store: store, Log: logs, Rand: func() float64 { return 0 }})
+	d.waitOverride = func(_ time.Duration, ctx context.Context) bool {
+		close(waitingForRetry)
+		select {
+		case <-releaseRetry:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = d.Run(ctx); close(done) }()
+	waitFor(t, time.Second, func() bool { return d.Status().LastError == "other users may be able to read credential.json" }, "unprotected credential failure")
+	select {
+	case <-waitingForRetry:
+	case <-time.After(time.Second):
+		t.Fatal("daemon did not wait before retrying")
+	}
+	if status := d.Status(); status.State != StateReconnecting || status.Try != 2 || status.LastError != "other users may be able to read credential.json" {
+		t.Errorf("Status() after refused read = %+v, want failed retry with connect enabled", status)
+	}
+	if record, exists, err := state.ReadState(dir); err != nil || !exists || !record.Connect {
+		t.Errorf("state after refused read = (%+v, %v, %v), want Connect true", record, exists, err)
+	}
+	if !strings.Contains(logs.String(), "✗ Other users may be able to read credential.json. Next try in 2 seconds") {
+		t.Errorf("retry log = %q, want unprotected credential failure", logs.String())
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	close(releaseRetry)
+	waitFor(t, time.Second, func() bool { return d.Status().State == StateConnected }, "connection after credential file was made private")
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("daemon did not stop")
 	}
 }
 

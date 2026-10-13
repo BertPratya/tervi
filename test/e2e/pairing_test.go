@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -222,14 +221,15 @@ func newFixture(t *testing.T) *fixture {
 	origin := httptest.NewServer(server.New(server.Config{PublicURL: proxyServer.URL}, pool, logger, connection.NewList()))
 	t.Cleanup(origin.Close)
 	proxy.setTarget(origin.URL)
-	return &fixture{
+	f := &fixture{
 		serverURL:  proxyServer.URL,
-		store:      credential.NewStore(credential.NewMemoryBackend()),
 		stateDir:   filepath.Join(t.TempDir(), "state"),
 		serviceDir: t.TempDir(),
 		proxy:      proxy,
 		logs:       logs,
 	}
+	f.store = credential.NewStore(credential.NewFileBackend(f.stateDir))
+	return f
 }
 
 func (f *fixture) startWorker(parent context.Context) *workerRun {
@@ -640,25 +640,7 @@ func assertNoSecretLeaks(t *testing.T, audit secretAudit) {
 	}
 }
 
-func assertCredentialAbsentFromFiles(t *testing.T, stateDir, credential string) {
+func assertCredentialAbsentFromFiles(t *testing.T, stateDir, credentialValue string) {
 	t.Helper()
-	err := filepath.WalkDir(stateDir, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if bytes.Contains(data, []byte(credential)) {
-			t.Errorf("credential was written to local file %q", path)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("inspect state directory: %v", err)
-	}
+	assertCredentialInPrivateStateFile(t, stateDir, credentialValue)
 }

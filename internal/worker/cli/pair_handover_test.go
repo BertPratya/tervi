@@ -155,7 +155,7 @@ func TestPairHandsOver(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	env, runner, client, _, stdout, stderr := newPairHarness(t, false)
 	client.connectFunc = func(context.Context) (control.ConnectAnswer, error) {
-		if len(runner.calls) != 3 || !strings.Contains(stdout.String(), backgroundStartedMessage+"\n") {
+		if len(runner.calls) != 4 || !strings.Contains(stdout.String(), backgroundStartedMessage+"\n") {
 			t.Errorf("Connect called before service start and background message: systemctl=%v output=%q", runner.calls, stdout.String())
 		}
 		return control.ConnectAnswer{Result: "connected"}, nil
@@ -164,14 +164,15 @@ func TestPairHandsOver(t *testing.T) {
 	if code := Run(context.Background(), []string{"pair", "--server", pairServer}, env, &flow); code != 0 {
 		t.Fatalf("Run() = %d, want 0; output=%q", code, stdout.String())
 	}
-	want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
+	want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n"
 	if stdout.String() != want || stderr.Len() != 0 {
 		t.Errorf("output=(%q,%q), want %q", stdout.String(), stderr.String(), want)
 	}
-	if flow.starts != 1 || len(runner.calls) != 3 || client.statusCalls != 1 || client.connectCalls != 1 {
+	if flow.starts != 1 || len(runner.calls) != 4 || client.statusCalls != 1 || client.connectCalls != 1 {
 		t.Errorf("start steps: flow=%+v systemctl=%v status=%d connect=%d", flow, runner.calls, client.statusCalls, client.connectCalls)
 	}
 	wantCalls := [][]string{
+		{"loginctl", "enable-linger"},
 		{"systemctl", "--user", "daemon-reload"},
 		{"systemctl", "--user", "enable", "tervi"},
 		{"systemctl", "--user", "restart", "tervi"},
@@ -225,7 +226,7 @@ func TestPairHandsOverUsesEntryFromPairingFlow(t *testing.T) {
 	if code := Run(context.Background(), []string{"pair", "--server", pairServer}, env, &flow); code != 0 {
 		t.Fatalf("Run() = %d, output=%q", code, stdout.String())
 	}
-	want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
+	want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n"
 	if stdout.String() != want || stderr.Len() != 0 {
 		t.Errorf("output=(%q,%q), want %q", stdout.String(), stderr.String(), want)
 	}
@@ -275,7 +276,7 @@ func TestPairStillTrying(t *testing.T) {
 			if code := Run(context.Background(), []string{"pair", "--server", pairServer}, env, &flow); code != 0 {
 				t.Errorf("Run() = %d, want 0; output=%q", code, stdout.String())
 			}
-			want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n" + tc.line + "Check with: tervi status\n"
+			want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n" + tc.line + "Check with: tervi status\n"
 			if stdout.String() != want || stderr.Len() != 0 {
 				t.Errorf("output=(%q,%q), want %q", stdout.String(), stderr.String(), want)
 			}
@@ -310,7 +311,7 @@ func TestPairAlreadyConnected(t *testing.T) {
 	if code := Run(context.Background(), []string{"pair", "--server", pairServer}, env, &flow); code != 0 {
 		t.Fatalf("Run() = %d, output=%q", code, stdout.String())
 	}
-	want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
+	want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n"
 	if stdout.String() != want || stderr.Len() != 0 {
 		t.Errorf("output=(%q,%q), want %q", stdout.String(), stderr.String(), want)
 	}
@@ -367,7 +368,7 @@ func TestPairFinishEarlierHandsOver(t *testing.T) {
 	if code := Run(context.Background(), []string{"pair", "--server", pairServer}, env, &flow); code != 0 {
 		t.Fatalf("Run() = %d, output=%q", code, stdout.String())
 	}
-	want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
+	want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n"
 	if flow.finishes != 1 || flow.starts != 0 || stdout.String() != want || stderr.Len() != 0 {
 		t.Errorf("flow=%+v output=(%q,%q), want finish hand-over %q", flow, stdout.String(), stderr.String(), want)
 	}
@@ -404,7 +405,7 @@ func TestPairReturnsAfterLastLine(t *testing.T) {
 	if !daemonRunning {
 		t.Error("fake daemon stopped before pair returned")
 	}
-	if stdout.String() != "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n" || stderr.Len() != 0 {
+	if stdout.String() != "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n" || stderr.Len() != 0 {
 		t.Errorf("output=(%q,%q)", stdout.String(), stderr.String())
 	}
 	assertPairOutputSafe(t, stdout.String(), stderr.String())
@@ -466,7 +467,7 @@ func TestPairAgainDeleteFails(t *testing.T) {
 		if code := Run(context.Background(), []string{"pair", "--server", pairServer}, env, &flow); code != 1 {
 			t.Fatalf("Run() = %d, want 1", code)
 		}
-		want := "The server no longer accepts this computer's credential. Starting a new pairing.\n✗ Can't delete the secret store entry.\n  Make sure you are logged in to a desktop session and the keyring is unlocked.\n"
+		want := fmt.Sprintf("The server no longer accepts this computer's credential. Starting a new pairing.\n✗ Can't delete %s.\n", credential.Path(env.StateDir))
 		if stdout.String() != want || stderr.Len() != 0 || flow.starts != 0 {
 			t.Errorf("output=(%q,%q), flow=%+v, want %q", stdout.String(), stderr.String(), flow, want)
 		}
@@ -524,7 +525,7 @@ func TestHandOverCtrlC(t *testing.T) {
 	if code := Run(ctx, []string{"pair", "--server", pairServer}, env, &flow); code != 130 {
 		t.Errorf("Run() = %d, want 130; output=%q", code, stdout.String())
 	}
-	want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\nPairing finished. Connecting was cancelled; tervi keeps trying in the background.\n"
+	want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\nPairing finished. Connecting was cancelled; tervi keeps trying in the background.\n"
 	if stdout.String() != want || stderr.Len() != 0 {
 		t.Errorf("output=(%q,%q), want %q", stdout.String(), stderr.String(), want)
 	}

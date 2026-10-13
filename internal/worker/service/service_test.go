@@ -111,7 +111,7 @@ func TestServiceFileRewrittenWhenPathChanges(t *testing.T) {
 	if _, err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
+	want := [][]string{{"loginctl", "enable-linger"}, {"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("systemctl calls = %#v, want %#v", runner.calls, want)
 	}
@@ -120,7 +120,7 @@ func TestServiceFileRewrittenWhenPathChanges(t *testing.T) {
 	if _, err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want = [][]string{{"systemctl", "--user", "enable", "--now", "tervi"}}
+	want = [][]string{{"loginctl", "enable-linger"}, {"systemctl", "--user", "enable", "--now", "tervi"}}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Errorf("same path calls = %#v, want %#v", runner.calls, want)
 	}
@@ -136,7 +136,7 @@ func TestServiceFileRewrittenWhenPathChanges(t *testing.T) {
 	if _, err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want = [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
+	want = [][]string{{"loginctl", "enable-linger"}, {"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Errorf("same-path unquoted ExecStart calls = %#v, want %#v", runner.calls, want)
 	}
@@ -172,7 +172,7 @@ func TestEnsureRunningReportsStoppedDaemonStarted(t *testing.T) {
 	if !started {
 		t.Error("EnsureRunning() started = false, want true for a stopped daemon")
 	}
-	wantCalls := [][]string{{"systemctl", "--user", "enable", "--now", "tervi"}}
+	wantCalls := [][]string{{"loginctl", "enable-linger"}, {"systemctl", "--user", "enable", "--now", "tervi"}}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Errorf("systemctl calls = %#v, want %#v", runner.calls, wantCalls)
 	}
@@ -193,16 +193,77 @@ func TestEnsureRunningSteps(t *testing.T) {
 	if _, err := New(serviceTestOptions(dir, "/usr/bin/true", runner, client)).EnsureRunning(context.Background()); err != nil {
 		t.Fatalf("EnsureRunning() error = %v", err)
 	}
-	want := [][]string{{"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
+	want := [][]string{{"loginctl", "enable-linger"}, {"systemctl", "--user", "daemon-reload"}, {"systemctl", "--user", "enable", "tervi"}, {"systemctl", "--user", "restart", "tervi"}}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Errorf("systemctl calls = %#v, want %#v", runner.calls, want)
 	}
 	if client.calls != 3 {
 		t.Errorf("Status calls = %d, want 3 including socket readiness wait", client.calls)
 	}
-	wantEvents := []string{"systemctl --user daemon-reload", "systemctl --user enable tervi", "systemctl --user restart tervi", "status", "status", "status"}
+	wantEvents := []string{"loginctl enable-linger", "systemctl --user daemon-reload", "systemctl --user enable tervi", "systemctl --user restart tervi", "status", "status", "status"}
 	if !reflect.DeepEqual(events, wantEvents) {
 		t.Errorf("systemd and socket readiness events = %#v, want %#v", events, wantEvents)
+	}
+}
+
+func TestEnsureRunningTurnsOnLinger(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		currentService bool
+		wantCalls      [][]string
+	}{
+		{
+			name: "rewrite path",
+			wantCalls: [][]string{
+				{"loginctl", "enable-linger"},
+				{"systemctl", "--user", "daemon-reload"},
+				{"systemctl", "--user", "enable", "tervi"},
+				{"systemctl", "--user", "restart", "tervi"},
+			},
+		},
+		{
+			name:           "enable now path",
+			currentService: true,
+			wantCalls: [][]string{
+				{"loginctl", "enable-linger"},
+				{"systemctl", "--user", "enable", "--now", "tervi"},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			program := "/usr/bin/true"
+			if tc.currentService {
+				resolved, err := filepath.EvalSymlinks(program)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, serviceFile), serviceContents(resolved), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runner := &serviceTestRunner{}
+			client := &serviceTestClient{answers: []control.StatusAnswer{{State: "connected"}}}
+			if _, err := New(serviceTestOptions(dir, program, runner, client)).EnsureRunning(context.Background()); err != nil {
+				t.Fatalf("EnsureRunning() error = %v", err)
+			}
+			if !reflect.DeepEqual(runner.calls, tc.wantCalls) {
+				t.Errorf("commands = %#v, want %#v", runner.calls, tc.wantCalls)
+			}
+		})
+	}
+
+	dir := t.TempDir()
+	runner := &serviceTestRunner{
+		outputs: map[string]string{"loginctl enable-linger": "linger is unavailable\n"},
+		errors:  map[string]error{"loginctl enable-linger": errors.New("exit status 1")},
+	}
+	_, err := New(serviceTestOptions(dir, "/usr/bin/true", runner, &serviceTestClient{})).EnsureRunning(context.Background())
+	if err == nil || err.Error() != "linger is unavailable" {
+		t.Fatalf("EnsureRunning() error = %v, want linger output", err)
+	}
+	if want := [][]string{{"loginctl", "enable-linger"}}; !reflect.DeepEqual(runner.calls, want) {
+		t.Errorf("commands after linger failure = %#v, want only %#v", runner.calls, want)
 	}
 }
 

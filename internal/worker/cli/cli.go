@@ -156,7 +156,7 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 	var entryExists bool
 	var entryErr error
 	if env.Store == nil {
-		entryErr = errors.New("secret store unavailable")
+		entryErr = errors.New("credential file unavailable")
 	} else {
 		entry, entryExists, entryErr = env.Store.Get()
 	}
@@ -164,11 +164,15 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 	if cancelled(ctx, env.Stdout, candidate, cmd.server) {
 		return 130
 	}
+	if errors.Is(entryErr, credential.ErrUnprotected) {
+		printUnprotectedCredential(env.Stdout, credential.Path(env.StateDir))
+		return 1
+	}
 	if errors.Is(entryErr, credential.ErrDamaged) {
-		return runLeftover(ctx, env, true, stateExists, "Found a damaged secret store entry for tervi.", true, cmd.server, flow)
+		return runLeftover(ctx, env, true, stateExists, fmt.Sprintf("Found a damaged %s.", credential.Path(env.StateDir)), true, cmd.server, flow)
 	}
 	if entryErr != nil {
-		printStoreReadFailure(env.Stdout)
+		printStoreReadFailure(env.Stdout, credential.Path(env.StateDir))
 		return 1
 	}
 	if stateExists && record.Confirmed && entryExists && record.StopReason != nil && *record.StopReason == state.StopReasonCredentialRejected {
@@ -179,7 +183,7 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		return checkAndStart(ctx, env, flow, cmd.server)
 	}
 	if !stateExists && entryExists {
-		return runLeftover(ctx, env, true, false, "Found incomplete pairing data: the secret store entry exists, but state.json is missing.", true, cmd.server, flow)
+		return runLeftover(ctx, env, true, false, "Found incomplete pairing data: credential.json exists, but state.json is missing.", true, cmd.server, flow)
 	}
 	if stateExists && !record.CredentialSaved && !entryExists {
 		return runLeftover(ctx, env, false, true, "The earlier pairing was interrupted before the credential was saved.", true, cmd.server, flow)
@@ -210,7 +214,7 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		return runPairFinish(ctx, env, flow, entry)
 	}
 	if stateExists && record.CredentialSaved && !entryExists {
-		return runLeftover(ctx, env, false, true, "Found incomplete pairing data: state.json exists, but the secret store entry is missing.", true, cmd.server, flow)
+		return runLeftover(ctx, env, false, true, "Found incomplete pairing data: state.json exists, but credential.json is missing.", true, cmd.server, flow)
 	}
 	if stateExists && record.Confirmed && entryExists {
 		fmt.Fprintf(env.Stdout, "This computer is already paired with %s. Nothing was changed.\n", entry.Server)
@@ -234,9 +238,8 @@ func cancelled(ctx context.Context, output io.Writer, resumable bool, server ...
 	return true
 }
 
-func printStoreReadFailure(output io.Writer) {
-	fmt.Fprintln(output, "✗ Can't read the secret store entry.")
-	fmt.Fprintln(output, "  Make sure you are logged in to a desktop session and the keyring is unlocked.")
+func printStoreReadFailure(output io.Writer, path string) {
+	fmt.Fprintf(output, "✗ Can't read %s.\n", path)
 }
 
 func requireRuntimeFolder(output io.Writer) bool {
@@ -251,12 +254,15 @@ func printStateReadFailure(output io.Writer, stateDir string) {
 	fmt.Fprintf(output, "✗ Can't read %s.\n", state.StatePath(stateDir))
 }
 
-func printStoreDeleteFailure(output io.Writer) {
-	fmt.Fprintln(output, "✗ Can't delete the secret store entry.")
-	fmt.Fprintln(output, "  Make sure you are logged in to a desktop session and the keyring is unlocked.")
+func printStoreDeleteFailure(output io.Writer, path string) {
+	fmt.Fprintf(output, "✗ Can't delete %s.\n", path)
 }
 
-func printUnusableStore(output io.Writer) {
-	fmt.Fprintln(output, "✗ Can't use this computer's secret store (GNOME Keyring). Pairing needs it to keep the credential safe.")
-	fmt.Fprintln(output, "  Make sure you are logged in to a desktop session and the keyring is unlocked.")
+func printUnusableStore(output io.Writer, path string) {
+	fmt.Fprintf(output, "✗ Can't write %s.\n", path)
+}
+
+func printUnprotectedCredential(output io.Writer, path string) {
+	fmt.Fprintf(output, "✗ Other users may be able to read %s, so tervi won't use it.\n", path)
+	fmt.Fprintf(output, "  Make it private with: chmod 600 %s\n", path)
 }

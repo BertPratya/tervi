@@ -78,6 +78,9 @@ func (service *Service) EnsureRunning(ctx context.Context) (bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := enableLinger(ctx, options.Runner); err != nil {
+		return false, err
+	}
 
 	programPath, err := resolvedAbsolutePath(options.ProgramPath)
 	if err != nil {
@@ -113,6 +116,17 @@ func (service *Service) EnsureRunning(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return startedOrRestarted, nil
+}
+
+func enableLinger(ctx context.Context, runner Runner) error {
+	output, err := runner.Run(ctx, "loginctl", "enable-linger")
+	if err == nil {
+		return nil
+	}
+	if message := strings.TrimSpace(output); message != "" {
+		return errors.New(message)
+	}
+	return err
 }
 
 func (service *Service) waitForDaemon(ctx context.Context, options Options) error {

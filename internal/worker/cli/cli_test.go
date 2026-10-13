@@ -148,7 +148,7 @@ func TestUsageErrors(t *testing.T) {
 		if flow.startCalls != 1 || flow.server != "http://localhost" {
 			t.Errorf("flow = %+v, want one start at standard address", flow)
 		}
-		wantOutput := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
+		wantOutput := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n"
 		if stdout.String() != wantOutput || stderr.Len() != 0 {
 			t.Errorf("output: stdout=%q stderr=%q, want stdout=%q", stdout.String(), stderr.String(), wantOutput)
 		}
@@ -377,17 +377,18 @@ func TestStepZero(t *testing.T) {
 		wantEntryExists bool
 	}{
 		{name: "missing both", wantCode: 0, start: 1},
-		{name: "missing state", entry: entryRaw(server), wantOut: "Found incomplete pairing data: the secret store entry exists, but state.json is missing.\n" + baseMessage, wantCode: 0, start: 1},
+		{name: "missing state", entry: entryRaw(server), wantOut: "Found incomplete pairing data: credential.json exists, but state.json is missing.\n" + baseMessage, wantCode: 0, start: 1},
 		{name: "saved false but entry missing", state: &state.State{MachineID: "m"}, wantOut: "The earlier pairing was interrupted before the credential was saved.\n" + baseMessage, wantCode: 0, start: 1},
 		{name: "saved false and entry exists", state: &state.State{MachineID: "m"}, entry: entryRaw(server), wantCode: 0, finish: 1, wantState: &state.State{MachineID: "m", CredentialSaved: true}, wantStateExists: true, wantEntry: entryRaw(server), wantEntryExists: true},
 		{name: "saved true and entry exists", state: &state.State{MachineID: "m", CredentialSaved: true}, entry: entryRaw(server), wantCode: 0, finish: 1, wantState: &state.State{MachineID: "m", CredentialSaved: true}, wantStateExists: true, wantEntry: entryRaw(server), wantEntryExists: true},
-		{name: "saved true but entry missing", state: &state.State{MachineID: "m", CredentialSaved: true}, wantOut: "Found incomplete pairing data: state.json exists, but the secret store entry is missing.\n" + baseMessage, wantCode: 0, start: 1},
+		{name: "saved true but entry missing", state: &state.State{MachineID: "m", CredentialSaved: true}, wantOut: "Found incomplete pairing data: state.json exists, but credential.json is missing.\n" + baseMessage, wantCode: 0, start: 1},
 		{name: "confirmed", state: &state.State{MachineID: "m", CredentialSaved: true, Confirmed: true}, entry: entryRaw(server), wantOut: "This computer is already paired with http://localhost. Nothing was changed.\n", wantCode: 1, wantState: &state.State{MachineID: "m", CredentialSaved: true, Confirmed: true}, wantStateExists: true, wantStateSame: true, wantEntry: entryRaw(server), wantEntryExists: true},
-		{name: "damaged entry", state: &state.State{MachineID: "m"}, entry: "damaged json", wantOut: "Found a damaged secret store entry for tervi.\n" + baseMessage, wantCode: 0, start: 1},
+		{name: "damaged entry", state: &state.State{MachineID: "m"}, entry: "damaged json", wantOut: "Found a damaged {{credential}}.\n" + baseMessage, wantCode: 0, start: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
+			wantOut := strings.ReplaceAll(tc.wantOut, "{{credential}}", credential.Path(dir))
 			backend := credential.NewMemoryBackend()
 			if tc.state != nil {
 				if err := state.WriteState(dir, *tc.state); err != nil {
@@ -411,7 +412,7 @@ func TestStepZero(t *testing.T) {
 			flow := &flowRecorder{}
 			code := Run(context.Background(), []string{"pair", "--server", "HTTP://LOCALHOST/"}, env, flow)
 			if code == 0 && flow.startCalls+flow.finishCalls > 0 {
-				tc.wantOut += "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
+				wantOut += "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n"
 			}
 			if code != tc.wantCode || flow.startCalls != tc.start || flow.finishCalls != tc.finish {
 				t.Errorf("Run()=%d flow=%+v; want code=%d start=%d finish=%d", code, flow, tc.wantCode, tc.start, tc.finish)
@@ -422,8 +423,8 @@ func TestStepZero(t *testing.T) {
 			if flow.finishCalls > 0 && (flow.entry.Server != server || flow.entry.Credential.Reveal() != testCredential) {
 				t.Errorf("FinishEarlier received an unexpected entry")
 			}
-			if got := stdout.String(); got != tc.wantOut {
-				t.Errorf("stdout = %q, want %q", got, tc.wantOut)
+			if got := stdout.String(); got != wantOut {
+				t.Errorf("stdout = %q, want %q", got, wantOut)
 			}
 			if stderr.Len() != 0 {
 				t.Errorf("stderr = %q, want empty", stderr.String())
@@ -504,7 +505,7 @@ func TestUnusableStoreStopsBeforeFlow(t *testing.T) {
 	if code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow); code != 1 {
 		t.Fatalf("Run() = %d, want 1", code)
 	}
-	want := "✗ Can't use this computer's secret store (GNOME Keyring). Pairing needs it to keep the credential safe.\n  Make sure you are logged in to a desktop session and the keyring is unlocked.\n"
+	want := fmt.Sprintf("✗ Can't write %s.\n", credential.Path(env.StateDir))
 	if stdout.String() != want || stderr.Len() != 0 || flow.startCalls != 0 {
 		t.Errorf("stdout=%q stderr=%q flow=%+v", stdout.String(), stderr.String(), flow)
 	}
@@ -653,7 +654,7 @@ func TestDamagedEntryWins(t *testing.T) {
 			if code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow); code != 0 {
 				t.Fatalf("Run() = %d, want 0", code)
 			}
-			want := "Found a damaged secret store entry for tervi.\n  Removed the leftover pairing data. Starting a new pairing.\n✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
+			want := fmt.Sprintf("Found a damaged %s.\n  Removed the leftover pairing data. Starting a new pairing.\n✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n", credential.Path(dir))
 			if stdout.String() != want || stderr.Len() != 0 || flow.startCalls != 1 || flow.finishCalls != 0 {
 				t.Errorf("stdout=%q stderr=%q flow=%+v", stdout.String(), stderr.String(), flow)
 			}
@@ -674,8 +675,8 @@ func TestLeftoverThenStartNew(t *testing.T) {
 		entry bool
 		msg   string
 	}{
-		{"A", nil, true, "Found incomplete pairing data: the secret store entry exists, but state.json is missing."},
-		{"B", &state.State{MachineID: "m", CredentialSaved: true}, false, "Found incomplete pairing data: state.json exists, but the secret store entry is missing."},
+		{"A", nil, true, "Found incomplete pairing data: credential.json exists, but state.json is missing."},
+		{"B", &state.State{MachineID: "m", CredentialSaved: true}, false, "Found incomplete pairing data: state.json exists, but credential.json is missing."},
 		{"D", &state.State{MachineID: "m"}, false, "The earlier pairing was interrupted before the credential was saved."},
 	}
 	for _, tc := range cases {
@@ -693,7 +694,7 @@ func TestLeftoverThenStartNew(t *testing.T) {
 			if code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow); code != 0 {
 				t.Fatalf("Run() = %d, want 0", code)
 			}
-			want := tc.msg + "\n  Removed the leftover pairing data. Starting a new pairing.\n✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
+			want := tc.msg + "\n  Removed the leftover pairing data. Starting a new pairing.\n✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n"
 			if stdout.String() != want || stderr.Len() != 0 || flow.startCalls != 1 {
 				t.Errorf("stdout=%q stderr=%q flow=%+v, want %q and StartNew", stdout.String(), stderr.String(), flow, want)
 			}
@@ -719,7 +720,7 @@ func TestLeftoverDeleteFails(t *testing.T) {
 		if code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow); code != 1 {
 			t.Fatalf("Run() = %d, want 1", code)
 		}
-		want := "✗ Can't delete the secret store entry.\n  Make sure you are logged in to a desktop session and the keyring is unlocked.\n"
+		want := fmt.Sprintf("✗ Can't delete %s.\n", credential.Path(dir))
 		if stdout.String() != want || stderr.Len() != 0 || flow.startCalls != 0 {
 			t.Errorf("stdout=%q stderr=%q flow=%+v", stdout.String(), stderr.String(), flow)
 		}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/bertpratya/tervi/internal/worker/credential"
 	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
@@ -16,7 +17,7 @@ func checkAndStart(ctx context.Context, env Env, flow Flow, server string) int {
 		if cancelled(ctx, env.Stdout, false) {
 			return 130
 		}
-		printUnusableStore(env.Stdout)
+		printUnusableStore(env.Stdout, credential.Path(env.StateDir))
 		return 1
 	}
 	if cancelled(ctx, env.Stdout, false) {
@@ -48,7 +49,7 @@ func deletePairing(ctx context.Context, env Env, entryExists, stateExists bool) 
 			if cancelled(ctx, env.Stdout, false) {
 				return 130, false
 			}
-			printStoreDeleteFailure(env.Stdout)
+			printStoreDeleteFailure(env.Stdout, credential.Path(env.StateDir))
 			return 1, false
 		}
 		if cancelled(ctx, env.Stdout, false) {

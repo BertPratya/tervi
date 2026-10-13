@@ -106,7 +106,11 @@ func printPairingReadFailure(output io.Writer, stateDir string, err error) {
 		printStateReadFailure(output, stateDir)
 		return
 	}
-	printStoreReadFailure(output)
+	if errors.Is(err, credential.ErrUnprotected) {
+		printUnprotectedCredential(output, credential.Path(stateDir))
+		return
+	}
+	printStoreReadFailure(output, credential.Path(stateDir))
 }
 
 func printConnectNotPaired(output io.Writer) {
