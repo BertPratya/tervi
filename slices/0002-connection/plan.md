@@ -386,3 +386,9 @@ contract test) are the largest, and tasks 06, 07, and 08 are small. This is
 accepted: splitting task 03 would separate the connection loop from the
 methods that drive it; task 01's parts are one route and what it needs, and
 the shared helpers it used to carry are now task 08; task 07 is tests only.
+
+This slice has 11 design decisions, one more than the 10 after which
+`AGENTS.md` says a slice is probably too big. The user accepted 11 for this
+slice: a split into a server half and a worker half would leave neither
+half demonstrable end to end, and every decision was already made one at a
+time.
