@@ -276,7 +276,7 @@ injected clock and `Rand`, and short test timings.
 | `TestReconnectWaits` — after a loss: wait before try 1, then 2, 4, 8, 16, 30, 30 s as bases; the first try after start has no wait; the logged "Next try in" is the wait before the next try; with `Rand` 0 and almost 1 each wait is within 0.8–1.2 × base; the count resets after `hello` | R9, R8 |
 | `TestStoreUnreadableIsFailedTry` — while `connect` is true, an unreadable store, a damaged entry, and a missing entry each give a failed try with its log line and wait, `connect` stays true, and the next try reads the store again and connects | R2, R5 |
 | `TestStatusWhileTrying` — `Status` during a try under way (`next_try_in_seconds` 0) and before any failure (no last error) | R16 support |
-| `TestStatusReconnectsWhenSecretStoreIsUnreadable`, `TestRefreshStateKeepsLastServer` — with the store unreadable, `Status` is `reconnecting` with its last error, never `not_connecting`; the last server read is kept (added in fix 1) | R2, R16 support |
+| `TestStatusReconnectsWhenCredentialFileIsUnreadable`, `TestRefreshStateKeepsLastServer` — with the store unreadable, `Status` is `reconnecting` with its last error, never `not_connecting`; the last server read is kept (added in fix 1) | R2, R16 support |
 | `TestErrorTexts` — each failure's `last error` and log forms from the table | R8, R16 support |
 | `TestSecondsText` — `1 second` for 1, `2 seconds` for 2, the one rule the log and `tervi status` share (added in fix 1) | R8, R16 support |
 | `TestPaired` — `credential.Paired` for: paired; no `state.json`; not confirmed; no entry; unreadable store; damaged entry | R4, R16 support |

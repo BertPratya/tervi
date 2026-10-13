@@ -36,7 +36,14 @@ systemctl --user stop tervi       # stops a daemon still running the old program
 ls -la ~/.config/tervi/           # see "Earlier pairings" below
 ```
 
-If `which tervi` prints nothing, add `$(go env GOPATH)/bin` to your `PATH`.
+If `which tervi` prints nothing, `~/go/bin` is not on your `PATH`. Add it
+for good, once, so every new terminal (rows 24 and 57–68 open new ones)
+finds `tervi`:
+
+```bash
+echo 'export PATH="$PATH:$(go env GOPATH)/bin"' >> ~/.bashrc && source ~/.bashrc
+which tervi                       # now prints the path
+```
 `systemctl --user stop tervi` may say
 `Failed to stop tervi.service: Unit tervi.service not loaded.` on a computer
 that never ran tervi in the background; that is fine, carry on. It is needed
@@ -66,7 +73,7 @@ slice 1's.
 | # | Requirement | Do this | You should see | Result |
 | --- | --- | --- | --- | --- |
 | 1 | R28 | Terminal 2: `go run ./cmd/tervi pair --server http://localhost:8080` | `tervi must be installed to run in the background. Install it with: go install ./cmd/tervi`, and it stops before contacting the server | ⬜ |
-| 2 | slice 1 R1 | `tervi pair` (no `--server`) | `Usage: tervi pair --server <url>`, and it stops | ⬜ |
+| 2 | slice 1 R1 | `tervi pair` (no `--server`) | The usage lines, starting with `Usage: tervi pair --server <url>`, and it stops | ⬜ |
 | 3 | slice 1 R4 | With the server **not** started yet: `tervi pair --server http://localhost:8080` | `✗ Can't reach http://localhost:8080. Check that the server is running, then run the command again.` | ⬜ |
 | 4 | slice 1 R21 | Terminal 1: `go run ./cmd/server`. Terminal 2: `curl -i -H 'Host: evil.example' http://localhost:8080/health` | The server keeps running. `HTTP/1.1 403 Forbidden` and `{"error": "unknown_host"}` | ⬜ |
 | 5 | slice 1 R5 | Terminal 2: `tervi pair --server http://localhost:8080` | `Pairing this computer with http://localhost:8080`, your computer name, your OS, a link, and `Waiting for approval... (expires at HH:MM)`, about 10 minutes from now | ⬜ |
@@ -82,7 +89,7 @@ slice 1's.
 | # | Requirement | Do this | You should see | Result |
 | --- | --- | --- | --- | --- |
 | 12 | R35 | `stat -c '%a %U %n' ~/.config/tervi ~/.config/tervi/credential.json` | `700 <you> …/.config/tervi`, then `600 <you> …/credential.json`. Do not print the file itself: it holds the credential | ⬜ |
-| 13 | R25, R35 | `cat ~/.config/tervi/state.json` | `machine_id`, `"credential_saved": true`, `"confirmed": true`, `"connect": true`, `"stop_reason": null`. No credential, no server address | ⬜ |
+| 13 | R25, R35 | `cat ~/.config/tervi/state.json` | One line of JSON with `"machine_id":…`, `"credential_saved":true`, `"confirmed":true`, `"connect":true`, `"stop_reason":null`. No credential, no server address | ⬜ |
 | 14 | R5 | `loginctl show-user $USER -p Linger` | `Linger=yes` | ⬜ |
 
 **Starting tervi in the background**
@@ -154,7 +161,7 @@ slice 1's.
 | # | Requirement | Do this | You should see | Result |
 | --- | --- | --- | --- | --- |
 | 54 | R5 | Restart the computer (`sudo reboot`). Do **not** log in on its desktop. Wait about a minute, then connect terminal 1 again with the port forward | You can log in by SSH as usual | ⬜ |
-| 55 | R5 | Terminal 1: `systemctl --user show tervi -p ActiveEnterTimestamp; who am i` | The first time (when tervi started) is **earlier** than the time `who am i` shows for your login: tervi started at boot, before anyone logged in | ⬜ |
+| 55 | R5 | Terminal 1: `systemctl --user show tervi -p ActiveEnterTimestamp; loginctl show-session $XDG_SESSION_ID -p Timestamp` | Two times with seconds. The first (when tervi started) is **earlier** than the second (when you logged in by SSH): tervi started at boot, before anyone logged in | ⬜ |
 | 56 | R5 | Terminal 1, from the project folder: `docker compose up -d`, then `go run ./cmd/server` (no `tervi` command). Open the page | Within about 40 seconds, the page shows Online | ⬜ |
 
 **A rejected credential, and pairing again**
@@ -167,12 +174,12 @@ Open terminal 2 again (plain SSH) and go to the project folder for these rows.
 | 58 | R18 | Restart the server | It starts as usual | ⬜ |
 | 59 | R18 | `tervi logs` | The log ends with `✗ The server doesn't accept this computer's credential. Pair again with: tervi pair --server http://localhost:8080`, with no tries after it | ⬜ |
 | 60 | R3 | `systemctl --user is-active tervi` | `active`: the daemon keeps running | ⬜ |
-| 61 | R18 | `cat ~/.config/tervi/state.json` | `"connect": false` and `"stop_reason": "credential_rejected"`; the other fields as before; no credential | ⬜ |
+| 61 | R18 | `cat ~/.config/tervi/state.json` | `"connect":false` and `"stop_reason":"credential_rejected"`; the other fields as before; no credential | ⬜ |
 | 62 | R16 | `tervi status` | `✗ Not connecting: the server doesn't accept this computer's credential.` and `Pair again with: tervi pair --server http://localhost:8080` | ⬜ |
 | 63 | R20, R4 | `tervi connect; echo $?` | `✗ The server doesn't accept this computer's credential.` and `Pair again with: tervi pair --server http://localhost:8080`; then `1` | ⬜ |
 | 64 | R33 | `tervi pair --server http://localhost:8080` | First `The server no longer accepts this computer's credential. Starting a new pairing.`, then the slice-1 pairing screen with a new link | ⬜ |
 | 65 | R10, R31, R1 | Open the link, click **Accept**, type the code | `✓ Paired successfully.`, `✓ tervi now runs in the background and starts when the computer starts.`, `✓ Connected.`, and the prompt comes back. The page shows the new pairing Online | ⬜ |
-| 66 | R1 | `cat ~/.config/tervi/state.json` | `"connect": true`, `"stop_reason": null` | ⬜ |
+| 66 | R1 | `cat ~/.config/tervi/state.json` | `"connect":true`, `"stop_reason":null` | ⬜ |
 | 67 | R35 | `stat -c %a ~/.config/tervi/credential.json` | `600`: the new pairing's file is private too | ⬜ |
 | 68 | R25 | Look back over everything terminals 1 and 2 printed, `tervi logs`, the page, and `state.json` | No credential, no long random string anywhere. The only place it exists is `credential.json`, which you never printed | ⬜ |
 
@@ -193,7 +200,7 @@ Open terminal 2 again (plain SSH) and go to the project folder for these rows.
 | R13 | The worker side of the timeout, and the server side at short timings | `TestServerSilenceTimesOut`, `TestServerTimeout` | ⬜ |
 | R14 | The server's settings reach the worker in `hello` | `TestHelloCarriesTiming`, `TestUsesServerTiming`, `TestConnectionTimingSettings` | ⬜ |
 | R15 | Newest wins, the warning, and the replaced connection never removes the new one | `TestNewestWins`, `TestReplacedCloseKeepsNewEntry`, `TestListSafeUnderLoad`, `TestNewestWinsEndToEnd` | ⬜ |
-| R16 | Every status wording, including while a try is under way, and when tervi in the background has not read the server yet | `TestStatusOutputs`, `TestStatusSince`, `TestStatusWhileTrying`, `TestStatusReconnectsWhenSecretStoreIsUnreadable` | ⬜ |
+| R16 | Every status wording, including while a try is under way, and when tervi in the background has not read the server yet | `TestStatusOutputs`, `TestStatusSince`, `TestStatusWhileTrying`, `TestStatusReconnectsWhenCredentialFileIsUnreadable` | ⬜ |
 | R18 | Only `401 unknown_credential` stops the daemon | `TestUnknownCredentialRefused`, `TestRejectionStops`, `TestRejectionAndPairAgainEndToEnd` | ⬜ |
 | R19 | Every other failure leads to another try | `TestOnlyUnknownCredentialStops`, `TestDatabaseFailureIsNotRejection` | ⬜ |
 | R20 | One try after `tervi connect`, and stopping again | `TestConnectAfterRejection` | ⬜ |
