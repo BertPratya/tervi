@@ -176,3 +176,14 @@ to `done`.
 ## If anything is unclear
 
 Stop and report the question. Do not guess.
+
+## Decision during building: the credential file and linger (fix 4)
+
+The credential moved from the OS secret store to the private file
+`~/.config/tervi/credential.json` (spec R35, R36), and pairing turns on
+linger (R5). For this task's code: R33 now removes `credential.json`
+instead of the secret store entry; the line after `✓ Paired successfully.`
+becomes `✓ tervi now runs in the background and starts when the computer starts.`
+(R10); and the secret store messages in `tervi pair` change as listed in
+task 05's section "Decision during building: the credential file and
+linger (fix 4)", which has the full instruction and its tests.

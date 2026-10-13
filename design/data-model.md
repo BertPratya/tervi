@@ -145,16 +145,27 @@ accepted for nothing except acknowledging or reporting a failure while
 
 ## Worker local data
 
-The worker keeps four things on the paired computer: the secret store
-entry, `state.json`, the systemd service file, and the runtime folder.
+The worker keeps four things on the paired computer: `credential.json`,
+`state.json`, the systemd service file, and the runtime folder.
 Later worker versions
 must still read the first two, so changing their format needs a migration
 plan of its own.
 
-### Secret store entry
+Until slice 0002's fix 4, the credential was kept in the OS secret store
+(GNOME Keyring, service `tervi`, user `worker`) with the same JSON. There is
+no migration: a computer paired that way has `state.json` but no
+`credential.json`, so `tervi pair` reports the incomplete pairing data,
+removes `state.json`, and starts a new pairing. The old keyring entry is
+left as it was.
 
-One entry in the OS secret store (GNOME Keyring on Linux), service `tervi`,
-user `worker`. Its value is JSON:
+### `credential.json`
+
+`~/.config/tervi/credential.json`, next to `state.json`. Mode `0600`: only
+the user's own account can read or write it; the folder is `0700`. Written
+once, at pairing, to a temporary file in the same folder that is then
+renamed over the old one. The worker refuses a file with any group or other
+permission, or owned by another account, and never changes its permissions
+itself (slice 0002, R36). Its content is JSON:
 
 ```json
 { "server": "http://localhost:8080", "credential": "<credential>" }
@@ -183,7 +194,7 @@ secret and no server address, so editing it cannot redirect the credential.
 | Field | Meaning |
 | --- | --- |
 | `machine_id` | The machine this computer became |
-| `credential_saved` | `false` from just before the secret store entry is saved; `true` once it was saved and read back |
+| `credential_saved` | `false` from just before `credential.json` is saved; `true` once it was saved and read back |
 | `confirmed` | `true` once the server answered OK to the acknowledgment |
 | `connect` | Whether this computer wants to be connected. A missing field (a computer paired in slice 0001) means `false`. Added by slice 0002. |
 | `stop_reason` | Why the daemon stopped trying to connect: `null`, or `"credential_rejected"`. Later slices may add values. Added by slice 0002. |
@@ -195,11 +206,11 @@ a new pairing, which starts with no `state.json`). Only the daemon changes
 `connect` and `stop_reason`; `tervi pair` and `tervi connect` ask the
 running daemon to change them, starting it first if it is not running.
 
-The first write, `credential_saved: false`, comes **before** the secret
-store entry is saved, so a stop at any moment leaves a note saying what was
-about to happen. The later writes record what finished: `credential_saved:
-true` after the entry was saved and read back, `confirmed: true` after the
-server's OK.
+The first write, `credential_saved: false`, comes **before**
+`credential.json` is saved, so a stop at any moment leaves a note saying
+what was about to happen. The later writes record what finished:
+`credential_saved: true` after the file was saved and read back,
+`confirmed: true` after the server's OK.
 
 ### systemd service file
 
@@ -224,13 +235,14 @@ WantedBy=default.target
 | --- | --- |
 | `ExecStart` | The full path of the `tervi` program that wrote the file, so systemd finds it without the user's `PATH`. The path is in double quotes, so a path with a space stays one word; inside the quotes, `\` and `"` are written `\\` and `\"`, and systemd's special characters `%` and `$` are written `%%` and `$$` |
 | `Restart=on-failure`, `RestartSec=5` | Started again 5 seconds after it stops unexpectedly; a clean stop stays stopped |
-| `WantedBy=default.target` | Started each time the user logs in, once enabled |
+| `WantedBy=default.target` | Started whenever the user's service manager starts, once enabled: at boot, because pairing turns on linger (`loginctl enable-linger`, slice 0002 fix 4), and it keeps running when no one is logged in |
 
 ### Runtime folder
 
 `$XDG_RUNTIME_DIR/tervi/` (usually `/run/user/<user id>/tervi/`), mode
-`0700`, created by the daemon (slice 0002). Linux keeps it in memory and
-removes it when the user's last session ends. Holds nothing secret.
+`0700`, created by the daemon (slice 0002). Linux keeps it in memory; with
+linger on, it exists from boot and stays while the user's service manager
+runs. Holds nothing secret.
 
 | File | Mode | Meaning |
 | --- | --- | --- |

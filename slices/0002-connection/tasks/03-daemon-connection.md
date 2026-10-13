@@ -305,3 +305,14 @@ to `done`.
 ## If anything is unclear
 
 Stop and report the question. Do not guess.
+
+## Decision during building: the credential file (fix 4)
+
+The credential moved from the OS secret store to the private file
+`~/.config/tervi/credential.json` (spec R35, R36). For this task's code it
+changes only the "Error texts" table: the four credential texts become
+`credential.json is missing`, `credential.json is damaged`,
+`can't read credential.json`, and the new
+`other users may be able to read credential.json`, which is a failed try
+like any other. Task 05's section "Decision during building: the credential
+file and linger (fix 4)" has the full instruction and its tests.

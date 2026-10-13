@@ -342,3 +342,171 @@ to `done`.
 ## If anything is unclear
 
 Stop and report the question. Do not guess.
+
+## Decision during building: the credential file and linger (fix 4)
+
+Decided by the user while trying the slice: GNOME Keyring cannot be opened
+over SSH, so the user could not pair or run the checklist there. The
+credential moves from the OS secret store to a private file, and pairing
+turns on linger. This section is the full instruction for fix 4
+(branch `fix/0002-4`). It touches code that slice 1 and tasks 03 and 06
+built; their task files point here.
+
+### Requirements (copied from the spec)
+
+- R5. When pairing succeeds, the worker shall set up the daemon as a systemd
+  user service named `tervi`, start it, and enable it so that it starts every
+  time the computer starts, also when the user is not logged in: the worker
+  turns on systemd's "linger" for the user's account
+  (`loginctl enable-linger`). The service shall run the same `tervi` program
+  file that set it up.
+- R10. When pairing succeeds, the terminal shall show `✓ Paired successfully.`,
+  then `✓ tervi now runs in the background and starts when the computer starts.`,
+  then `✓ Connected.` once the daemon is connected.
+- R29. If the background service cannot be set up or started (for example,
+  systemd is not available, or linger cannot be turned on), then the worker
+  shall say so with the reason, keep the pairing, and print
+  `Try again with: tervi connect`.
+- R33. When `tervi pair` runs on a computer whose credential was rejected
+  (R18), the worker shall print
+  `The server no longer accepts this computer's credential. Starting a new pairing.`,
+  remove the old pairing (`credential.json` and the pairing in
+  `state.json`), and start a new pairing. On a paired computer whose
+  credential was not rejected, `tervi pair` shall still refuse, as in slice 1
+  (R2 of slice 1).
+- R35. The worker shall keep the credential, with the server address, only
+  in `~/.config/tervi/credential.json`, a file only the user's own account
+  can read or write (mode `0600`, in a folder with mode `0700`). This
+  replaces slice 1's OS secret store (slice 1's R3 and R18), so pairing and
+  the daemon work the same over SSH, on a computer without a desktop, and
+  before anyone logs in. If `tervi pair` cannot write that file, it shall
+  print `✗ Can't write <path>.` and stop, before contacting the server.
+- R36. If `credential.json` can be read or written by any other account
+  (any permission beyond `0600`), or belongs to another account, then the
+  worker shall not use it and never change its permissions itself.
+  `tervi pair`, `tervi status`, and `tervi connect` shall print
+  `✗ Other users may be able to read <path>, so tervi won't use it.` then
+  `Make it private with: chmod 600 <path>`, and exit with `1`. The daemon
+  shall count each try as failed, with the last error
+  `other users may be able to read credential.json`, and keep trying (R2),
+  so it connects once the file is private again.
+
+### What changes
+
+**1. A file backend in `internal/worker/credential`** (new file `file.go`;
+`keyring.go` is deleted).
+
+- `NewFileBackend(dir string) Backend`, where `dir` is the worker's state
+  folder (`cli.Env.StateDir`, `~/.config/tervi`). The user name `worker`
+  is stored in `<dir>/credential.json`, and `worker-check` (used by
+  `Store.CheckContext`) in `<dir>/credential-check.json`. Any other user
+  name is an error.
+- `Path(dir string) string` returns `<dir>/credential.json`; the messages
+  below use it.
+- `Set`: create the folder with mode `0700` if it is missing (as
+  `state.WriteState` does); write the value to a temporary file in the same
+  folder with mode `0600`, sync it, and rename it over the target, so a
+  crash never leaves a half-written file.
+- `Get`: a missing file returns `ErrNotFound`. Otherwise open the file and
+  check the opened file (not the path a second time): it must be a regular
+  file; its permission bits must have nothing for group or others
+  (`mode & 0o077 == 0`); and its owner must be this process's user. A
+  failed permission or owner check returns the new exported error
+  `ErrUnprotected` ("credential file is not private"). Never change the
+  file's mode.
+- The owner check compares with `os.Getuid()`. Give the backend an
+  unexported way to use another user ID, so a test can pretend the file
+  belongs to someone else.
+- `Delete`: remove the file; a missing file is success.
+- `Store`, `Backend`, `Entry`, `Paired`, `ErrNotFound`, `ErrDamaged`, and
+  `ErrStoreUnreadable` keep their names, so callers change little. Their
+  comments and internal error texts may say "credential file" instead of
+  "secret store".
+- `Paired` passes `ErrUnprotected` through as itself (`errors.Is(err,
+  ErrUnprotected)` is true), not as `ErrStoreUnreadable`.
+- `MemoryBackend` stays for tests.
+- Remove `github.com/zalando/go-keyring` from `go.mod` and `go.sum`
+  (`go mod tidy`). Add no library.
+
+**2. `cmd/tervi/main.go`**: the store is
+`credential.NewStore(credential.NewFileBackend(<the same folder as StateDir>))`.
+
+**3. The messages.** `<path>` is `credential.Path(env.StateDir)`, the full
+path. Exit codes stay as they are (`1`).
+
+| Where | Now | Becomes |
+| --- | --- | --- |
+| `tervi pair`, the check before contacting the server (`printUnusableStore`) | `✗ Can't use this computer's secret store (GNOME Keyring). Pairing needs it to keep the credential safe.` + hint | `✗ Can't write <path>.` |
+| The entry cannot be read (`printStoreReadFailure`; `tervi pair`, `tervi status`, `tervi connect`) | `✗ Can't read the secret store entry.` + hint | `✗ Can't read <path>.` |
+| The entry cannot be deleted (`printStoreDeleteFailure`, and `cleanupAndReport` in `internal/worker/pair/confirm.go`) | `✗ Can't delete the secret store entry.` + hint | `✗ Can't delete <path>.` |
+| A failed save cannot clean up (`saveFailed` in `confirm.go`) | `✗ Couldn't remove the partly saved secret store entry.` + hint | `✗ Couldn't remove the partly saved <path>.` then `  Delete it, then run the same command again.` |
+| `tervi pair` finds a damaged entry | `Found a damaged secret store entry for tervi.` | `Found a damaged <path>.` |
+| `tervi pair` finds only the entry | `Found incomplete pairing data: the secret store entry exists, but state.json is missing.` | `Found incomplete pairing data: credential.json exists, but state.json is missing.` |
+| `tervi pair` finds only `state.json` | `Found incomplete pairing data: state.json exists, but the secret store entry is missing.` | `Found incomplete pairing data: state.json exists, but credential.json is missing.` |
+| Any read that returns `ErrUnprotected` (`tervi pair` at its start, `tervi status`, `tervi connect`) | — | `✗ Other users may be able to read <path>, so tervi won't use it.` then `  Make it private with: chmod 600 <path>`; exit `1`, before any server request or `systemctl` call |
+| After pairing (`backgroundStartedMessage` in `handover.go`) | `✓ tervi now runs in the background and starts when you log in.` | `✓ tervi now runs in the background and starts when the computer starts.` |
+
+Every hint line `Make sure you are logged in to a desktop session and the
+keyring is unlocked…` is removed. Every other message stays as it is.
+
+**4. The daemon's error texts** (`internal/worker/daemon/errors.go`, task
+03's "Error texts" table). The last error, and the log line with its first
+letter in capitals:
+
+| Cause | Last error |
+| --- | --- |
+| `ErrNotFound` | `credential.json is missing` |
+| `ErrDamaged` | `credential.json is damaged` |
+| `ErrUnprotected` (checked before `ErrStoreUnreadable`) | `other users may be able to read credential.json` |
+| `ErrStoreUnreadable` | `can't read credential.json` |
+
+An `ErrUnprotected` try is a failed try like any other: `connect` stays
+true, the wait grows as in R9, and the file is read again on the next try.
+
+**5. Linger in `internal/worker/service`.** `EnsureRunning` runs
+`loginctl enable-linger` (no other arguments) through `Runner.Run` once, as
+its first command, before any `systemctl` call, on both paths (the rewrite
+path and `enable --now`). It changes nothing when linger is already on. If
+it fails, `EnsureRunning` returns the command's trimmed output as the
+reason (or the error, when there is no output), as `runSystemctl` does, and
+runs no `systemctl` call; the callers then print R29's lines as they do
+today. The service file does not change.
+
+**6. The end-to-end test.** The worker in `test/e2e` uses
+`credential.NewFileBackend` on the test's temporary state folder instead
+of the in-memory store, so the real file is created, read, and deleted.
+`TestNoSecretsEndToEnd` also checks that `credential.json` has mode `0600`,
+and that the credential appears in no other file in the state folder or
+the service folder.
+
+### Boundaries (fix 4)
+
+- May create or change: `internal/worker/credential/`,
+  `internal/worker/cli/`, `internal/worker/pair/` (the messages above
+  only), `internal/worker/daemon/errors.go`, `internal/worker/service/`,
+  `cmd/tervi/main.go`, `test/e2e/`, `go.mod`, `go.sum`, and their tests.
+  Existing tests may change to expect the new messages, the extra
+  `loginctl` call, and the file backend.
+- Must not change: `internal/server/`, `internal/worker/control/`,
+  `internal/worker/state/`, the rest of `internal/worker/daemon/`, `api/`,
+  `design/`, `slices/`.
+
+### Definition of done (fix 4)
+
+| Test | Proves |
+| --- | --- |
+| `TestFileBackendSavesPrivateFile` — `Set` creates a missing folder with mode `0700` and writes `credential.json` with mode `0600`; `Get` returns the value; no temporary file is left; `Store.CheckContext` leaves no `credential-check.json` | R35 |
+| `TestFileBackendMissingIsNotFound` — `Get` of a missing file is `ErrNotFound`; `Delete` of a missing file succeeds | R35 |
+| `TestFileBackendRefusesOpenPermissions` — modes `0640`, `0604`, `0660`, and `0644` each give `ErrUnprotected`, and the mode is unchanged afterwards | R36 |
+| `TestFileBackendRefusesOtherOwner` — a backend using another user ID gives `ErrUnprotected` | R36 |
+| `TestPairUnwritableCredentialStopsBeforeServer` — with a regular file where the state folder should be, `tervi pair` prints `✗ Can't write <path>.`, exits `1`, and sends no request to the server | R35 |
+| `TestCredentialFileMessages` — each message in the table above, with the full path, and no keyring hint anywhere in the worker's output | R35 |
+| `TestUnprotectedCredentialMessages` — with a `0644` `credential.json`, `tervi pair`, `tervi status`, and `tervi connect` each print the two lines and exit `1`, with no server request and no `systemctl` call; the mode is still `0644` | R36 |
+| `TestUnprotectedCredentialIsFailedTry` — the daemon with a real file backend and a `0644` file: the try fails with the last error above and its log line, `connect` stays true, and after the test sets `0600` the next try connects | R36, R2 |
+| `TestErrorTexts` — extended with the four texts above | R8, R36 |
+| `TestEnsureRunningTurnsOnLinger` — `loginctl enable-linger` runs once, before any `systemctl` call, on the rewrite path and on the `enable --now` path; when it fails, its output is the reason and no `systemctl` call runs | R5, R29 |
+| `TestPairHandsOver` — updated: the R10 line with `starts when the computer starts.` | R10 |
+| `TestNoSecretsEndToEnd` — extended as in "The end-to-end test" | R25, R35 |
+
+`go vet ./...` and `go test ./...` pass, and `go.mod` no longer lists
+`github.com/zalando/go-keyring`.
