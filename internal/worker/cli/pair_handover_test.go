@@ -29,6 +29,10 @@ type successfulPairFlow struct {
 	entry            credential.Entry
 	credential       string
 	err              error
+	inspectStart     bool
+	stateAtStart     bool
+	entryAtStart     bool
+	inspectStartErr  error
 }
 
 type requestingPairFlow struct{}
@@ -46,6 +50,17 @@ func (requestingPairFlow) FinishEarlier(context.Context, Env, credential.Entry) 
 func (flow *successfulPairFlow) StartNew(_ context.Context, env Env, server string) int {
 	flow.starts++
 	flow.server = server
+	if flow.inspectStart {
+		_, err := os.Stat(state.StatePath(env.StateDir))
+		flow.stateAtStart = err == nil
+		if err != nil && !os.IsNotExist(err) {
+			flow.inspectStartErr = err
+		}
+		_, flow.entryAtStart, err = env.Store.Get()
+		if err != nil && flow.inspectStartErr == nil {
+			flow.inspectStartErr = err
+		}
+	}
 	value := flow.credential
 	if value == "" {
 		value = testCredential
@@ -53,6 +68,9 @@ func (flow *successfulPairFlow) StartNew(_ context.Context, env Env, server stri
 	if err := flow.save(env, server, value); err != nil {
 		flow.err = err
 		return 1
+	}
+	if env.OnPairingSuccess != nil {
+		env.OnPairingSuccess(credential.Entry{Server: server, Credential: secret.FromString(value)})
 	}
 	fmt.Fprintln(env.Stdout, "✓ Paired successfully.")
 	return 0
@@ -166,7 +184,11 @@ func TestPairHandsOver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("service file not written in ServiceDir: %v", err)
 	}
-	if !strings.Contains(string(contents), "ExecStart=/usr/bin/true daemon\n") {
+	programPath, err := filepath.EvalSymlinks("/usr/bin/true")
+	if err != nil {
+		t.Fatalf("resolve /usr/bin/true: %v", err)
+	}
+	if !strings.Contains(string(contents), "ExecStart="+programPath+" daemon\n") {
 		t.Errorf("service file uses wrong program: %q", contents)
 	}
 	otherServiceFile := filepath.Join(os.Getenv("HOME"), ".config", "systemd", "user", "tervi.service")
@@ -175,6 +197,40 @@ func TestPairHandsOver(t *testing.T) {
 	}
 	if got := strings.Index(stdout.String(), "✓ Paired successfully."); got < 0 || got > strings.Index(stdout.String(), "✓ tervi now runs") || strings.Index(stdout.String(), "✓ tervi now runs") > strings.Index(stdout.String(), "✓ Connected.") {
 		t.Errorf("handover lines are out of order: %q", stdout.String())
+	}
+	assertPairOutputSafe(t, stdout.String(), stderr.String())
+}
+
+type failWorkerGetBackend struct {
+	*credential.MemoryBackend
+	workerGets int
+	failAt     int
+}
+
+func (backend *failWorkerGetBackend) Get(user string) (string, error) {
+	if user == "worker" {
+		backend.workerGets++
+		if backend.workerGets == backend.failAt {
+			return "", errors.New("unexpected second pairing entry read")
+		}
+	}
+	return backend.MemoryBackend.Get(user)
+}
+
+func TestPairHandsOverUsesEntryFromPairingFlow(t *testing.T) {
+	env, _, _, backend, stdout, stderr := newPairHarness(t, false)
+	trackingBackend := &failWorkerGetBackend{MemoryBackend: backend, failAt: 3}
+	env.Store = credential.NewStore(trackingBackend)
+	flow := successfulPairFlow{}
+	if code := Run(context.Background(), []string{"pair", "--server", pairServer}, env, &flow); code != 0 {
+		t.Fatalf("Run() = %d, output=%q", code, stdout.String())
+	}
+	want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
+	if stdout.String() != want || stderr.Len() != 0 {
+		t.Errorf("output=(%q,%q), want %q", stdout.String(), stderr.String(), want)
+	}
+	if trackingBackend.workerGets != 2 {
+		t.Errorf("worker entry reads = %d, want only the preflight and pairing save verification", trackingBackend.workerGets)
 	}
 	assertPairOutputSafe(t, stdout.String(), stderr.String())
 }
@@ -357,12 +413,15 @@ func TestPairReturnsAfterLastLine(t *testing.T) {
 func TestPairAgainAfterRejection(t *testing.T) {
 	env, _, _, backend, stdout, stderr := newPairHarness(t, false)
 	prepareRejectedPairing(t, env, backend)
-	flow := successfulPairFlow{credential: replacementCredential}
+	flow := successfulPairFlow{credential: replacementCredential, inspectStart: true}
 	if code := Run(context.Background(), []string{"pair", "--server", pairServer}, env, &flow); code != 0 {
 		t.Fatalf("Run() = %d, output=%q", code, stdout.String())
 	}
 	if !strings.HasPrefix(stdout.String(), "The server no longer accepts this computer's credential. Starting a new pairing.\n") || flow.starts != 1 || flow.server != pairServer {
 		t.Errorf("re-pair output=%q flow=%+v", stdout.String(), flow)
+	}
+	if flow.inspectStartErr != nil || flow.stateAtStart || flow.entryAtStart {
+		t.Errorf("old pairing still existed when replacement flow started: state=%v entry=%v inspection error=%v", flow.stateAtStart, flow.entryAtStart, flow.inspectStartErr)
 	}
 	entry, exists, err := env.Store.Get()
 	if err != nil || !exists || entry.Credential.Reveal() != replacementCredential {

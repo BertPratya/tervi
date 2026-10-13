@@ -141,15 +141,16 @@ func TestUsageErrors(t *testing.T) {
 			Stdin: bytes.NewReader(nil), Stdout: &stdout, Stderr: &stderr, Store: credential.NewStore(credential.NewMemoryBackend()), StateDir: filepath.Join(t.TempDir(), "state"),
 			ProgramPath: "/usr/bin/true", Runner: &commandRunner{}, ServiceDir: t.TempDir(), ControlClient: &commandControl{connect: control.ConnectAnswer{Result: "connected"}},
 		}
-		flow := &flowRecorder{startCode: 1}
-		if code := Run(context.Background(), args, env, flow); code != 1 {
-			t.Errorf("Run(%q) = %d, want fake flow failure 1", args, code)
+		flow := &flowRecorder{}
+		if code := Run(context.Background(), args, env, flow); code != 0 {
+			t.Errorf("Run(%q) = %d, want success", args, code)
 		}
 		if flow.startCalls != 1 || flow.server != "http://localhost" {
 			t.Errorf("flow = %+v, want one start at standard address", flow)
 		}
-		if stdout.Len() != 0 || stderr.Len() != 0 {
-			t.Errorf("unexpected output: stdout=%q stderr=%q", stdout.String(), stderr.String())
+		wantOutput := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
+		if stdout.String() != wantOutput || stderr.Len() != 0 {
+			t.Errorf("output: stdout=%q stderr=%q, want stdout=%q", stdout.String(), stderr.String(), wantOutput)
 		}
 	}
 }

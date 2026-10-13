@@ -75,11 +75,16 @@ func TestCodeReplyMayArriveAfterDeadline(t *testing.T) {
 
 	var out bytes.Buffer
 	env := finishEnv(t, &out, &delayedReader{reader: bytes.NewReader([]byte(testCode + "\n")), delay: 650 * time.Millisecond})
+	var savedEntry credential.Entry
+	env.OnPairingSuccess = func(entry credential.Entry) { savedEntry = entry }
 	flow := newFlow(Options{RequestTimeout: 800 * time.Millisecond, PollInterval: time.Millisecond})
 	got := flow.StartNew(context.Background(), env, server.URL)
 	record, exists, err := state.ReadState(env.StateDir)
 	if got != 0 || !strings.Contains(out.String(), "✓ Paired successfully.\n") || err != nil || !exists || !record.Confirmed {
 		t.Errorf("StartNew() = %d, state=%#v exists=%t err=%v output=%q; want accepted reply and completed save", got, record, exists, err, safeOutput(out.String()))
+	}
+	if savedEntry.Server != server.URL || savedEntry.Credential.Reveal() != testCredential {
+		t.Errorf("pairing success entry server=%q matchesCredential=%t, want server %q and the saved credential", savedEntry.Server, savedEntry.Credential.Reveal() == testCredential, server.URL)
 	}
 }
 

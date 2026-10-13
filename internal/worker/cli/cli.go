@@ -18,14 +18,15 @@ const usageLine = "Usage: tervi pair --server <url>\n       tervi connect\n     
 
 // Env supplies the worker's local inputs, outputs, and state locations.
 type Env struct {
-	Stdin          io.Reader
-	Stdout, Stderr io.Writer
-	Store          *credential.Store
-	StateDir       string
-	Runner         service.Runner
-	ProgramPath    string
-	ServiceDir     string
-	ControlClient  ControlClient
+	Stdin            io.Reader
+	Stdout, Stderr   io.Writer
+	Store            *credential.Store
+	StateDir         string
+	Runner           service.Runner
+	ProgramPath      string
+	ServiceDir       string
+	ControlClient    ControlClient
+	OnPairingSuccess func(credential.Entry)
 }
 
 // ControlClient is the private client used by commands to talk to the daemon.
