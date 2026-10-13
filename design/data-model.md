@@ -169,6 +169,9 @@ itself (slice 0002, R36). Before a new pairing, `tervi pair` checks that it
 can store a file there by writing, reading, and removing
 `credential-check.json` in the same folder; it holds a fixed test value,
 nothing secret, and a crash at that moment can leave it behind harmlessly.
+A crash in the middle of writing `credential.json` can leave its temporary
+file (`.credential-` and a random suffix) in the same folder; it holds the
+credential but has mode `0600` too, and the next pairing writes a new one.
 Its content is JSON:
 
 ```json
