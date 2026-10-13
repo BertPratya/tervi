@@ -133,7 +133,7 @@ address.
      the test's WebSocket receives close code `4000`.
    - The server has now logged the warning twice for that machine, and the
      machine stayed Online throughout (check the list between the steps).
-   Wait for each step with a deadline of a few seconds; never wait for the
+   Wait for each step with a deadline of 5 seconds; never wait for the
    test's own connection to close first.
 4. **Rejection, then pairing again.** Set the machine's status to `failed`
    in the database, then stop and start the server as in scenario 2. The

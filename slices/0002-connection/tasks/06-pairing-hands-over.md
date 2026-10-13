@@ -79,7 +79,10 @@ is, and the printed `Try again with: tervi connect` is how the user finishes.
 
 1. Parse the command as today (wrong usage still exits `2` first).
 2. **Installed check (R28)**, before reading anything or contacting the
-   server: the message, exit `1`.
+   server: the message, exit `1`. If the program path in `cli.Env` is empty,
+   print `✗ tervi is missing an internal setting (<field name>).` and exit
+   `1` before anything else; `TestMissingInternalSetting` covers this case
+   for `tervi pair` too.
 3. Step zero as today, with one change (R33): when `state.json` is confirmed,
    the secret store entry exists, and `stop_reason` is
    `"credential_rejected"`, print
