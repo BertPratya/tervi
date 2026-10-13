@@ -44,7 +44,7 @@ command prints its exit code on the next line.
 | 2 | R16, R17 | `tervi status; echo $?` | `✗ tervi isn't running in the background.` and `Start it with: tervi connect`; then `1` | ⬜ |
 | 3 | R4, R5, R31 | `tervi connect` | `✓ Connected.`, and the prompt comes back | ⬜ |
 | 4 | R5 | `systemctl --user is-enabled tervi` | `enabled` | ⬜ |
-| 5 | R5, R6 | `cat ~/.config/systemd/user/tervi.service` | `ExecStart=` followed by the path from `which tervi` and ` daemon`; `Restart=on-failure`; `RestartSec=5` | ⬜ |
+| 5 | R5, R6 | `cat ~/.config/systemd/user/tervi.service` | `ExecStart="<the path from which tervi>" daemon` (the path in double quotes); `Restart=on-failure`; `RestartSec=5` | ⬜ |
 | 6 | R21, R23 | Open the page | `Machines`, and a row for your computer: `● <your computer>   <your OS>   Online` | ⬜ |
 | 7 | R16, R17 | `tervi status; echo $?` | `● Connected to http://localhost:8080`, `Machine: <your computer>`, `Since: <time> (less than a minute)`; then `0` | ⬜ |
 | 8 | R4 | `tervi connect` | `Already connected.` | ⬜ |
@@ -121,7 +121,7 @@ command prints its exit code on the next line.
 | R2 | Retries never stop or change `connect`, including while the secret store cannot be read | `TestKeepsTryingForever`, `TestStoreUnreadableIsFailedTry`, `TestServerRestartEndToEnd` | ⬜ |
 | R3 | No network while `connect` is false; it still answers | `TestIdleWhileConnectFalse`, `TestStatusOverSocket`, `TestConnectOverSocket` | ⬜ |
 | R4 | Every `tervi connect` result, including still trying after 30 s, a control error, and Ctrl+C | `TestConnectCommandResults`, `TestDaemonConnectResults`, `TestConnectNotPaired`, `TestConnectStartsStoppedService`, `TestConnectControlError`, `TestConnectCtrlC` | ⬜ |
-| R5 | The service file and the `systemctl` steps | `TestServiceFileContents`, `TestServiceFileRewrittenWhenPathChanges`, `TestEnsureRunningSteps`, `TestPairHandsOver` | ⬜ |
+| R5 | The service file and the `systemctl` steps, and `tervi connect` from a different installed `tervi` switching to it | `TestServiceFileContents`, `TestServiceFileRewrittenWhenPathChanges`, `TestEnsureRunningSteps`, `TestPairHandsOver`, `TestConnectFromDifferentInstallPrintsConnected` | ⬜ |
 | R7 | Only one daemon; the lock is released after a crash or exit | `TestSecondDaemonExits`, `TestLockReleasedWhenDaemonEnds`, `TestOldSocketFileReplaced` | ⬜ |
 | R8 | The exact log lines, and none for the checks | `TestLogLines`, `TestErrorTexts`, `TestDaemonPrintsLogLines` | ⬜ |
 | R9 | Each wait is within 0.8–1.2 × 1, 2, 4, 8, 16, 30 s, and resets after connecting | `TestReconnectWaits` | ⬜ |
@@ -130,7 +130,7 @@ command prints its exit code on the next line.
 | R13 | The worker side of the timeout, and the server side at short timings | `TestServerSilenceTimesOut`, `TestServerTimeout` | ⬜ |
 | R14 | The server's settings reach the worker in `hello` | `TestHelloCarriesTiming`, `TestUsesServerTiming`, `TestConnectionTimingSettings` | ⬜ |
 | R15 | Newest wins, the warning, and the replaced connection never removes the new one | `TestNewestWins`, `TestReplacedCloseKeepsNewEntry`, `TestListSafeUnderLoad`, `TestNewestWinsEndToEnd` | ⬜ |
-| R16 | Every status wording, including while a try is under way, and while the keyring is still locked | `TestStatusOutputs`, `TestStatusSince`, `TestStatusWhileTrying`, `TestStatusReconnectsWhenSecretStoreIsUnreadable` | ⬜ |
+| R16 | Every status wording, including while a try is under way, and when tervi in the background has not read the server yet | `TestStatusOutputs`, `TestStatusSince`, `TestStatusWhileTrying`, `TestStatusReconnectsWhenSecretStoreIsUnreadable` | ⬜ |
 | R18 | Only `401 unknown_credential` stops the daemon | `TestUnknownCredentialRefused`, `TestRejectionStops`, `TestRejectionAndPairAgainEndToEnd` | ⬜ |
 | R19 | Every other failure leads to another try | `TestOnlyUnknownCredentialStops`, `TestDatabaseFailureIsNotRejection` | ⬜ |
 | R20 | One try after `tervi connect`, and stopping again | `TestConnectAfterRejection` | ⬜ |

@@ -74,6 +74,8 @@ Serve HTTP over the socket with `net/http`:
 `server` may be empty while `reconnecting` if the daemon has not read the
 secret store yet (see task 03, `Status()`; added in fix 1).
 `last_error` is `null` before any try has failed (see task 03's `Status`).
+A request that arrives while the daemon is stopping gets `503` with no
+body; the client treats it as `ErrNotRunning` (added in fix 1).
 
 ### The client
 
@@ -150,6 +152,7 @@ secret store) through `cli.Env` or a similar existing pattern.
 | `TestRuntimeFolderPrivate` — the folder is `0700`, the socket and the lock file `0600` | R26 |
 | `TestOtherUserRefused` — the peer check refuses a different user id and accepts the same one | R26 |
 | `TestStatusOverSocket` — each state's JSON | R3 |
+| `TestStoppingHandlerReturnsServiceUnavailable`, `TestClientTreatsServiceUnavailableAsNotRunning` — a request while the daemon is stopping gets `503`, and the client reports `ErrNotRunning` (added in fix 1) | R3 |
 | `TestConnectOverSocket` — each result's JSON | R3 |
 | `TestClientNotRunning` — missing socket, refused socket, and a daemon that does not answer `Status` within 5 s give `ErrNotRunning` | R16 support |
 | `TestClientCancelAndSlowConnect` — a cancelled caller `ctx` gives `ctx.Err()` from both methods; a `Connect` that reaches the socket but gets no answer within its own limit (shortened in the test) gives `still_trying` with no last error | R3 |

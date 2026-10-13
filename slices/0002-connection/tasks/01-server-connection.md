@@ -39,7 +39,8 @@ the shared message types both sides use.
 - R24. The server shall record when it last heard from each machine: when it
   connects, at least once a minute while connected, and when the connection
   ends (the time of the last message received). "Last seen" may be up to one
-  minute early if the server itself stopped suddenly.
+  minute early if the server itself stopped suddenly, or if the machine had
+  stopped answering when the server stopped.
 - R25. The credential shall never appear in terminal output, logs, the
   Machines page, or `state.json`. *This task: server logs.*
 - R34. When the server answers `internal_error`, it shall log what kind of
@@ -273,6 +274,8 @@ Never log the credential, the `Authorization` header, or the hash.
 | `TestCloseAllOnStop` — cancelling `Run`'s context closes every connection with `1001`, and each connection's final `last_seen_at` is written before `Run` returns | R12, R24 |
 | `TestAddAfterCloseAll` — a connection added after `CloseAll` is closed at once with `1001`, is never Online, and its handler is waited for | R12, R24 |
 | `TestCloseAllSharesDeadlineAndForcesClose` — three `CloseAll` calls with a worker that never answers the close finish within about 5 s together, and the connection is closed with `CloseNow` (added in fix 1) | R12 |
+| `TestRunBoundsStopWhenWorkerDoesNotAnswerClose` — `Run` returns within about 5 s after its context ends while a worker never answers the close (added in fix 1) | R12 |
+| `TestLastSeenThresholdUsesTenSecondInterval` — with a 10 s interval, a message at 50 s − 1 ms does not write and one at 50 s does (added in fix 1) | R24 |
 | `TestNotAnUpgradeRequest` — a known credential without the upgrade headers, or with a missing or malformed `Sec-WebSocket-Key`, gets `400 invalid_input` in JSON | contract |
 | `TestNewestWins` — a second connection for the same machine closes the first with `4000`, logs the warning with the machine id, and the machine stays Online | R15 |
 | `TestReplacedCloseKeepsNewEntry` — the old connection's end does not remove the new entry | R15, R23 |

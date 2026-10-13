@@ -153,11 +153,15 @@ with the database's clock, so the two never disagree.
 ### Server stopping
 
 Covers R12, R24. On Ctrl+C, the server closes every connection with code
-`1001` and waits until each connection has written its final
-`last_seen_at`, before it stops serving and closes the database. Each worker
-notices at once and starts reconnecting. Closing every connection is final:
-a connection that finishes opening after it is closed at once with `1001`
-and waited for too, so nothing writes after the database is closed.
+`1001` and waits for each connection to write its final `last_seen_at`,
+before it stops serving and closes the database. Each worker notices at
+once and starts reconnecting. Closing every connection is final: a
+connection that finishes opening after it is closed at once with `1001` and
+waited for too. All this waiting shares one 5-second limit (decided during
+the slice review): a connection whose worker does not answer the close by
+then is closed at once, and its final `last_seen_at` write may be lost or
+fail after the database is closed, so its "last seen" can be up to a minute
+early (R24).
 
 ### Starting the background service
 

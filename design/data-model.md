@@ -114,9 +114,11 @@ pairing request never does.
 
 **`last_seen_at`** is set when the machine connects, at least once a minute
 while it stays connected, and when the connection ends (the time of the last
-message received). If the server stops suddenly, it may be up to one minute
-early. Whether a machine is Online is not stored: it is true exactly while
-the server holds the machine's connection in memory.
+message received). If the server stops suddenly, or the machine had stopped
+answering when the server stopped (the server waits at most 5 seconds in
+all), it may be up to one minute early. Whether a machine is Online is not
+stored: it is true exactly while the server holds the machine's connection
+in memory.
 
 #### Lifecycle
 

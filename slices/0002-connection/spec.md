@@ -231,7 +231,8 @@ The daemon obeys it at all times.
 - R24. The server shall record when it last heard from each machine: when it
   connects, at least once a minute while connected, and when the connection
   ends (the time of the last message received). "Last seen" may be up to one
-  minute early if the server itself stopped suddenly.
+  minute early if the server itself stopped suddenly, or if the machine had
+  stopped answering when the server stopped.
 
 **Secrets**
 
@@ -379,3 +380,11 @@ None.
   reconnects, and prints `✓ Connected.` (R5 wins over R4's "change nothing")
   — the service must run the program the user just used; the connection
   drops only for a moment. Decided during the slice review.
+- Stopping the server takes at most about 5 seconds, even when a machine has
+  stopped answering: the server closes that machine's connection without
+  waiting for it, so its "last seen" can be up to a minute early (R24) — a
+  silent machine must not hold up Ctrl+C. Decided during the slice review.
+- On the Machines page, a screen reader announces only the
+  `Can't reach the server. Trying again…` line, not the whole list on every
+  refresh — the list repeats every 5 seconds. Decided during the slice
+  review.

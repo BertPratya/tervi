@@ -278,6 +278,7 @@ injected clock and `Rand`, and short test timings.
 | `TestStatusWhileTrying` — `Status` during a try under way (`next_try_in_seconds` 0) and before any failure (no last error) | R16 support |
 | `TestStatusReconnectsWhenSecretStoreIsUnreadable`, `TestRefreshStateKeepsLastServer` — with the store unreadable, `Status` is `reconnecting` with its last error, never `not_connecting`; the last server read is kept (added in fix 1) | R2, R16 support |
 | `TestErrorTexts` — each failure's `last error` and log forms from the table | R8, R16 support |
+| `TestSecondsText` — `1 second` for 1, `2 seconds` for 2, the one rule the log and `tervi status` share (added in fix 1) | R8, R16 support |
 | `TestPaired` — `credential.Paired` for: paired; no `state.json`; not confirmed; no entry; unreadable store; damaged entry | R4, R16 support |
 | `TestKeepsTryingForever` — many failed tries never stop the loop or change `connect` | R2, R19 |
 | `TestOnlyUnknownCredentialStops` — `500`, `404`, other `401` bodies, refused connections, and timeouts all lead to another try | R19 |

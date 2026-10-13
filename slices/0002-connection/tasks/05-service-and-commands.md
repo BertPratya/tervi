@@ -202,7 +202,7 @@ Neither command writes, deletes, or starts anything in these cases.
 | Result | Output | Exit |
 | --- | --- | --- |
 | `connected` | `✓ Connected.` | `0` |
-| `already_connected` | `Already connected.` | `0` |
+| `already_connected` | `Already connected.` — but `✓ Connected.` when step 3 rewrote the service file and restarted the daemon (a different installed `tervi`; decided by the user during the slice review, spec "Decisions"). `EnsureRunning` tells its caller whether it restarted | `0` |
 | `still_trying` | `Not connected yet: <last error>. tervi keeps trying in the background.` then `Check with: tervi status` | `1` |
 | `still_trying` with no last error (no try has failed yet) | `Not connected yet. tervi keeps trying in the background.` then `Check with: tervi status` (decided by the user during task 03) | `1` |
 | `failed` (`state.json` could not be written) | `✗ Can't write <path>.` (decided by the user during task 03) | `1` |
@@ -311,6 +311,7 @@ never reads the secret store. Anything else after `logs` is wrong usage
 | `TestEnsureRunningSteps` — the `systemctl` calls in order, then waiting for the socket | R5 |
 | `TestEnsureRunningFailures` — `systemctl` failing, systemd missing, and no socket after 10 s each give the reason | R29 |
 | `TestConnectCommandResults` — every row of the result table, with output and exit code | R4 |
+| `TestConnectFromDifferentInstallPrintsConnected` — the service file names another path, so it is rewritten and the daemon restarted; an `already_connected` answer then prints `✓ Connected.`, exit `0`; with the same path, `already_connected` still prints `Already connected.` (added in fix 2) | R4, R5 |
 | `TestConnectNotPaired` | R4 |
 | `TestConnectStartsStoppedService` — with no daemon answering, `connect` runs the start steps, then connects | R4 |
 | `TestConnectServiceFails` — the two lines, exit `1`, `state.json` and the secret store entry unchanged | R29 |

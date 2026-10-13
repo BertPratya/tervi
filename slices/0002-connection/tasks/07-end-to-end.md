@@ -46,7 +46,8 @@ a fake that runs the real daemon in the same test process.
 - R24. The server shall record when it last heard from each machine: when it
   connects, at least once a minute while connected, and when the connection
   ends (the time of the last message received). "Last seen" may be up to one
-  minute early if the server itself stopped suddenly.
+  minute early if the server itself stopped suddenly, or if the machine had
+  stopped answering when the server stopped.
 - R25. The credential shall never appear in terminal output, logs, the
   Machines page, or `state.json`.
 - R33. When `tervi pair` runs on a computer whose credential was rejected
