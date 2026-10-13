@@ -147,8 +147,13 @@ runs behind the existing Host check like every route.
    - `ping` → send `pong`.
    - An unknown `type` is ignored. A message that is not a JSON object with a
      string `type` closes the connection with `1008`.
-   - When a message arrives and `last_seen_at` was last written a minute or
-     more ago, write `last_seen_at = now()`.
+   - When a message arrives and `last_seen_at` was last written
+     `60 seconds − check interval` or more ago (50 seconds with the default
+     interval; every message when the interval is 60), write
+     `last_seen_at = now()`. A write that fails does not count as written,
+     so the next message tries again. (Decided by the user during task 01:
+     the first rule, "a minute or more ago", could leave a gap of nearly 70
+     seconds.)
 7. Timeout: when nothing has been received for the timeout (counted from the
    last message received, or from when the connection opened), close with
    `4001`.
@@ -252,7 +257,7 @@ Never log the credential, the `Authorization` header, or the hash.
 | `TestReplacedCloseKeepsNewEntry` — the old connection's end does not remove the new entry | R15, R23 |
 | `TestListSafeUnderLoad` — many goroutines add, replace, remove, and read at once, under `go test -race` | R15, R23 |
 | `TestOnlineListStartsEmpty` | R23 |
-| `TestLastSeen` — set on connect; rewritten on a message only after a minute (use an injected clock); set to the last message time when the connection ends, using the database's clock | R24 |
+| `TestLastSeen` — set on connect; rewritten on a message only once `60 s − check interval` has passed since the last write, and not before (use an injected clock); set to the last message time when the connection ends, using the database's clock | R24 |
 | `TestOversizedMessageCloses` | contract rule |
 | `TestUnknownTypeIgnored` | contract rule |
 | `TestCredentialNeverLogged` — the log output of every test above contains no credential | R25 |

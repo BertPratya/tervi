@@ -138,10 +138,14 @@ same moment.
 ### Last seen
 
 Covers R24. The server writes `last_seen_at` when a machine connects, when
-a message arrives and the last write was a minute or more ago, and when the
-connection ends (the time of the last message received). The check
-interval is at most 60 seconds, so a connected machine sends a message, and
-gets a write, at least once a minute. Every write uses the database's
+a message arrives and the last write was 60 seconds minus the check interval
+or more ago (50 seconds with the default interval), and when the connection
+ends (the time of the last message received). A connected machine sends a
+message every interval, and the interval is at most 60 seconds, so the first
+message after that threshold arrives less than a minute after the last
+write: a connected machine gets a write at least once a minute. A write that
+fails does not count as a write, so the next message tries again. Every
+write uses the database's
 clock: `now()`, or at the end `now()` minus the time since the last message
 as measured by the server. The machines list also computes "seconds ago"
 with the database's clock, so the two never disagree.
@@ -303,10 +307,15 @@ with `0`.
   folder; "is it the `tervi` on `PATH`" — wrongly refuses a tervi installed
   outside `PATH`.
 - `last_seen_at` is rewritten when a message arrives and the last write was
-  a minute or more ago, with the check interval capped at 60 seconds so the
-  minute always holds — no extra timer.
+  60 seconds minus the check interval or more ago, with the check interval
+  capped at 60 seconds, so the next message always lands within the minute
+  — no extra timer, and about one write a minute. (Changed during task 01:
+  the first rule, "a minute or more ago", could leave a gap of nearly 70
+  seconds, breaking R24.)
   Not chosen: a timer per connection writing every minute — works with no
-  messages, but adds a timer for every machine.
+  messages, but adds a timer for every machine; a write on every message —
+  six writes a minute per machine instead of one; "a minute or more ago"
+  with R24 loosened to two minutes — changes the spec for no gain.
 - The connection route refuses any
   request that carries an `Origin` header with `403 forbidden_origin`,
   before anything else — only browsers send `Origin`, and the worker never
