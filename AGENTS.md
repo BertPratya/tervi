@@ -112,8 +112,9 @@ pull requests of their own.
       300–400 lines, not counting tests, so that one review can check it
       closely.
 3. **Plan review.** The reviewer checks the spec, plan, and task files. The
-   architect fixes findings marked `Architect`, up to 2 fix rounds. Findings
-   marked `User` go to the user.
+   architect fixes findings marked `Architect`, up to 3 fix rounds; findings
+   still open after that go to the user. Findings marked `User` go to the
+   user.
 4. **Plan pull request.** The architect opens it with one comment per review
    round, and sets the slice to `in progress` in `slices/index.md` in the same
    pull request. The user reads the spec, `plan.md`, `checklist.md`, and the
@@ -126,7 +127,7 @@ pull requests of their own.
    work as it lands.
 7. **Slice review.** When every task is in, the reviewer reviews the whole
    slice once (`git diff main...slice/NNNN-name`), looking for problems that
-   no single task shows. Findings are fixed like a task's, up to 2 fix rounds.
+   no single task shows. Findings are fixed like a task's, up to 3 fix rounds.
 8. **Try it.** The user goes through `checklist.md` on the slice branch, with
    the architect guiding, and marks each hand check pass or fail. The
    architect runs the tests and fills in the automatic part. A failed row,
@@ -188,7 +189,7 @@ reviewer checks these against the task file and the code layout rules.
 4. **Commit.** The architect commits with the worker's suggested message.
 5. **Review.** The architect sends the code review message to the reviewer.
 6. **Fix.** If the reviewer reports `changes needed`, the architect sends the
-   findings to the worker and repeats steps 3–5. After 2 fix rounds without a
+   findings to the worker and repeats steps 3–5. After 3 fix rounds without a
    pass, the task stops and the open findings go to the user as a decision
    (see "When the user must decide").
 7. **Merge into the slice branch.** On `pass`, the architect merges the task
