@@ -1,6 +1,6 @@
 # 0003 Disconnect and unpair — slice 3
 
-Status: approved
+Status: draft
 
 ## What the user does
 
