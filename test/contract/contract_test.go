@@ -119,6 +119,19 @@ func TestServerMatchesContract(t *testing.T) {
 	expectStatus(t, response, http.StatusOK)
 	expectJSONField(t, response, "status", "paired")
 	expectJSONFieldPresent(t, response, "display_name")
+	response = client.call(t, http.MethodGet, "/api/v1/machines", "", nil, callOptions{})
+	expectStatus(t, response, http.StatusOK)
+	var listedMachines struct {
+		Machines []map[string]any `json:"machines"`
+	}
+	if err := json.Unmarshal(response.body, &listedMachines); err != nil {
+		t.Fatalf("decode listMachines response: %v", err)
+	}
+	if len(listedMachines.Machines) == 0 {
+		t.Fatal("listMachines returned no active machine after pairing")
+	}
+	response = client.call(t, http.MethodGet, "/machines", "", nil, callOptions{})
+	expectStatus(t, response, http.StatusOK)
 
 	startB := client.startPairing(t, "worker-b")
 	approvalHeadersB := bearerHeaders(approvalKey(t, startB.ApprovalURL))
@@ -205,6 +218,8 @@ func TestServerMatchesContract(t *testing.T) {
 		{operation: "acknowledgeMachine", method: http.MethodPost, path: "/api/v1/machines/current/acknowledgment"},
 		{operation: "reportSaveFailure", method: http.MethodPost, path: "/api/v1/machines/current/save-failure"},
 		{operation: "openConnection", method: http.MethodGet, path: "/api/v1/machines/current/connection", headers: bearerHeaders(credentialA)},
+		{operation: "listMachines", method: http.MethodGet, path: "/api/v1/machines"},
+		{operation: "machinesPage", method: http.MethodGet, path: "/machines"},
 		{operation: "approvalPage", method: http.MethodGet, path: "/pair/host-check"},
 		{operation: "readApproval", method: http.MethodGet, path: "/api/v1/approvals/current"},
 		{operation: "acceptApproval", method: http.MethodPost, path: "/api/v1/approvals/current/accept"},

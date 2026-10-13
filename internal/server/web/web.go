@@ -7,19 +7,32 @@ import (
 	"strings"
 )
 
-//go:embed static/index.html static/app.js static/view.js
+//go:embed static/index.html static/app.js static/view.js static/machines.html static/machines.js static/machines-view.js
 var staticFiles embed.FS
 
 // Register registers web page routes.
 func Register(mux *http.ServeMux) {
 	page := staticPageHandler()
 	mux.Handle("GET /pair/{approval_key}", page)
+	mux.Handle("GET /machines", machinesPageHandler())
 	mux.Handle("GET /static/", withPageHeaders(staticFileHandler()))
 }
 
 func staticPageHandler() http.Handler {
 	return withPageHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		page, err := staticFiles.ReadFile("static/index.html")
+		if err != nil {
+			http.Error(w, "page unavailable", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(page)
+	}))
+}
+
+func machinesPageHandler() http.Handler {
+	return withPageHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page, err := staticFiles.ReadFile("static/machines.html")
 		if err != nil {
 			http.Error(w, "page unavailable", http.StatusInternalServerError)
 			return
@@ -36,7 +49,7 @@ func staticFileHandler() http.Handler {
 		switch name {
 		case "index.html":
 			contentType = "text/html; charset=utf-8"
-		case "app.js", "view.js":
+		case "app.js", "view.js", "machines.js", "machines-view.js":
 			contentType = "application/javascript; charset=utf-8"
 		default:
 			http.NotFound(w, r)
