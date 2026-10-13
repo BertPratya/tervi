@@ -13,7 +13,7 @@ slices/
   backlog.md               # deferred work
   NNNN-name/
     spec.md                # what to build. Written by the user.
-    plan.md                # how to build it, and the task list. Drafted by the architect, approved by the user.
+    plan.md                # how to build it, and the task list. Written by the architect with the user, who chooses every design decision.
     checklist.md           # how the user tests the slice, and the results. Drafted by the architect, filled in by the user.
     tasks/
       NN-name.md           # one file per task. Drafted by the architect, checked by the reviewer. The user does not read them.
@@ -35,7 +35,7 @@ creation order: `0001-pairing`, `tasks/02-start-pairing.md`.
 
 | Role | Reads | Writes |
 | --- | --- | --- |
-| User | `spec.md`, `plan.md`, `checklist.md`, the contracts (`api/`, `design/`), and the running slice. Not task files or code | `spec.md`; decisions; the hand-check results in `checklist.md`; approves the plan and the slice |
+| User | `spec.md`, `plan.md`, `checklist.md`, the contracts (`api/`, `design/`), and the running slice. Not task files or code | `spec.md`; chooses every design decision, which the architect writes into `plan.md`; answers questions; the hand-check results in `checklist.md`; approves the plan and the slice |
 | Architect | Everything | `plan.md`, task files, `backlog.md`, `index.md`, commits, pull requests and their comments |
 | Worker | Its worker message, its task file, the code, `AGENTS.md`, `api/`, `design/` | Code and tests, in its worktree |
 | Reviewer | Only what the review message lists | Nothing; it reports to the architect |
@@ -108,10 +108,10 @@ what it applies to, which requirements it covers, and how it works.
 
 ## Technical decisions
 - <decision> — <one-line why>
-(Every choice the user would care about: libraries, files kept on the user's
-computer, and any behavior the user can notice that the spec leaves open.
-Such a choice is written here, never only in a task file, because the user
-does not read task files.)
+  Not chosen: <option> — <why not>; <option> — <why not>
+  (or "Not chosen: none — <why no other option is realistic>")
+(Every design decision, as defined in AGENTS.md, is here, chosen by the
+user. A task file repeats what its task needs from here.)
 
 ## Requirement coverage
 | Requirement | Tasks |
@@ -169,8 +169,9 @@ Stop and report the question. Do not guess.
 ```
 
 A task file is complete when a worker holding only this file and the code
-could finish it. After approval, the instructions do not change; reports and
-reviews go on the slice pull request.
+could finish it. After approval, the instructions change only to add a
+decision the user made during building; reports and reviews go on the slice
+pull request.
 
 ## checklist.md
 
@@ -283,7 +284,7 @@ Suggested commit message: <what changed>
 ```text
 Review the plan for slice NNNN-name. This is plan review round N.
 
-Read only: slices/NNNN-name/spec.md, slices/NNNN-name/plan.md,
+Read only: AGENTS.md, slices/NNNN-name/spec.md, slices/NNNN-name/plan.md,
 slices/NNNN-name/checklist.md, and every file in slices/NNNN-name/tasks/.
 
 Answer in the review report format from slices/README.md.
