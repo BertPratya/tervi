@@ -85,7 +85,8 @@ The daemon obeys it at all times.
 | Slice | Adds |
 | --- | --- |
 | 0002 (this one) | The daemon as a systemd user service that starts at login; the connection; Online/Offline; `tervi status`, `tervi connect`, and `tervi logs` |
-| Later | `tervi disconnect`, unpairing (which also removes the service), revoking a machine from the server, running agents over this connection |
+| 0003 | `tervi disconnect`, and unpairing (which also removes the service) |
+| Later | Revoking a machine from the server, running agents over this connection |
 
 ## Must always be true (this slice)
 
@@ -208,6 +209,13 @@ The daemon obeys it at all times.
   another try, never to `connect` false.
 - R20. When `tervi connect` runs after a rejection, the daemon shall try once.
   If the credential is rejected again, it shall stop as in R18.
+- R33. When `tervi pair` runs on a computer whose credential was rejected
+  (R18), the worker shall print
+  `The server no longer accepts this computer's credential. Starting a new pairing.`,
+  remove the old pairing (the secret store entry and the pairing in
+  `state.json`), and start a new pairing. On a paired computer whose
+  credential was not rejected, `tervi pair` shall still refuse, as in slice 1
+  (R2 of slice 1).
 
 **Machines page**
 
@@ -279,6 +287,10 @@ None.
   on a clear "unknown credential" answer — retrying can never succeed, and
   treating temporary errors the same way could switch off every worker after
   one bad server deploy.
+- `tervi pair` may replace a pairing only after the server rejected its
+  credential (R33) — otherwise the advice to pair again would be refused;
+  the old credential is already worthless, so nothing of value is lost.
+  General unpairing comes in slice 0003.
 - Online is not stored in the database — it is true exactly while a
   connection is open; storing it would go stale whenever the server stops.
 - The Machines page is plain HTML and JavaScript, like the approval page — the
