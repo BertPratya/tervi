@@ -379,7 +379,7 @@ user finishes with `tervi connect` (R29).
 | 04 | [Worker: the daemon's socket, its lock, and `tervi daemon`](tasks/04-daemon-socket.md) | 03 | core | done |
 | 05 | [Worker: the background service, `tervi connect`, `tervi status`, `tervi logs`](tasks/05-service-and-commands.md) | 04 | core | done |
 | 06 | [Worker: pairing hands over to the daemon](tasks/06-pairing-hands-over.md) | 05 | core | done |
-| 07 | [End-to-end test of the connection](tasks/07-end-to-end.md) | 01–06, 08 | normal | todo |
+| 07 | [End-to-end test of the connection](tasks/07-end-to-end.md) | 01–06, 08 | normal | done |
 
 The table is in build order. Task 08 is built first and numbered 08 only
 because it was split out of task 01 during plan review, after the other

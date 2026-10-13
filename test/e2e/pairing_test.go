@@ -232,13 +232,6 @@ func newFixture(t *testing.T) *fixture {
 	}
 }
 
-type workerRun struct {
-	input  *io.PipeWriter
-	stdout *safeBuffer
-	stderr *safeBuffer
-	done   chan int
-}
-
 func (f *fixture) startWorker(parent context.Context) *workerRun {
 	stdin, input := io.Pipe()
 	stdout, stderr := &safeBuffer{}, &safeBuffer{}
@@ -353,9 +346,9 @@ func runHappyPath(t *testing.T) secretAudit {
 		t.Fatal("approval API did not return the pairing code")
 	}
 	pairingCode := approval.PairingCode
-	waitFor(t, run.stdout, "Code: ")
-	writeCode(t, run, pairingCode)
-	if code := awaitRun(t, run); code != 0 {
+	waitFor(t, run.stdout, "Code: ", quickWait)
+	writeCode(t, run, pairingCode, quickWait)
+	if code := awaitRun(t, run, quickWait); code != 0 {
 		t.Fatalf("worker exit = %d, want 0; stdout=%q stderr=%q", code, run.stdout.String(), run.stderr.String())
 	}
 	if !strings.Contains(run.stdout.String(), "✓ Paired successfully.") {
@@ -391,7 +384,7 @@ func runReject(t *testing.T) secretAudit {
 	approvalKey := waitForApprovalKey(t, run.stdout)
 	_ = approvalRequest(t, f.serverURL, approvalKey, http.MethodPost, "/reject")
 	approval := waitForApprovalStatus(t, f.serverURL, approvalKey, "rejected")
-	if code := awaitRun(t, run); code != 1 {
+	if code := awaitRun(t, run, quickWait); code != 1 {
 		t.Fatalf("worker exit = %d, want 1; stdout=%q", code, run.stdout.String())
 	}
 	if !strings.Contains(run.stdout.String(), "✗ Pairing was rejected in the browser.") {
@@ -411,18 +404,18 @@ func runFiveWrongCodes(t *testing.T) secretAudit {
 	_ = approvalRequest(t, f.serverURL, approvalKey, http.MethodPost, "/accept")
 	approval := waitForApprovalStatus(t, f.serverURL, approvalKey, "waiting_for_code")
 	pairingCode := approval.PairingCode
-	waitFor(t, run.stdout, "Code: ")
+	waitFor(t, run.stdout, "Code: ", quickWait)
 	wrongCode := "0000-0000"
 	if wrongCode == approval.PairingCode {
 		wrongCode = "1111-1111"
 	}
 	for triesLeft := 4; triesLeft > 0; triesLeft-- {
-		writeCode(t, run, wrongCode)
-		waitFor(t, run.stdout, fmt.Sprintf("Wrong code. %d tries left.", triesLeft))
+		writeCode(t, run, wrongCode, quickWait)
+		waitFor(t, run.stdout, fmt.Sprintf("Wrong code. %d tries left.", triesLeft), quickWait)
 	}
-	writeCode(t, run, wrongCode)
+	writeCode(t, run, wrongCode, quickWait)
 	approval = waitForApprovalStatus(t, f.serverURL, approvalKey, "failed")
-	if code := awaitRun(t, run); code != 1 {
+	if code := awaitRun(t, run, quickWait); code != 1 {
 		t.Fatalf("worker exit = %d, want 1; stdout=%q", code, run.stdout.String())
 	}
 	if !strings.Contains(run.stdout.String(), "✗ Too many wrong codes. Pairing failed.") {
@@ -444,8 +437,8 @@ func runCtrlCAfterSavingThenFinish(t *testing.T) secretAudit {
 	_ = approvalRequest(t, f.serverURL, approvalKey, http.MethodPost, "/accept")
 	approval := waitForApprovalStatus(t, f.serverURL, approvalKey, "waiting_for_code")
 	pairingCode := approval.PairingCode
-	waitFor(t, run.stdout, "Code: ")
-	writeCode(t, run, pairingCode)
+	waitFor(t, run.stdout, "Code: ", quickWait)
+	writeCode(t, run, pairingCode, quickWait)
 	select {
 	case <-f.proxy.heldAck:
 	case <-time.After(quickWait):
@@ -462,7 +455,7 @@ func runCtrlCAfterSavingThenFinish(t *testing.T) secretAudit {
 	assertCredentialAbsentFromFiles(t, f.stateDir, entry.Credential.Reveal())
 	cancel()
 	close(f.proxy.releaseAck)
-	if code := awaitRun(t, run); code != 130 {
+	if code := awaitRun(t, run, quickWait); code != 130 {
 		t.Fatalf("cancelled worker exit = %d, want 130; stdout=%q", code, run.stdout.String())
 	}
 	if !strings.Contains(run.stdout.String(), "Pairing cancelled before it was confirmed.") ||
@@ -472,7 +465,7 @@ func runCtrlCAfterSavingThenFinish(t *testing.T) secretAudit {
 
 	f.proxy.setHoldAck(false)
 	resume := f.startWorker(context.Background())
-	if code := awaitRun(t, resume); code != 0 {
+	if code := awaitRun(t, resume, quickWait); code != 0 {
 		t.Fatalf("finish worker exit = %d, want 0; stdout=%q", code, resume.stdout.String())
 	}
 	if !strings.Contains(resume.stdout.String(), "✓ Paired successfully.") {
@@ -491,14 +484,14 @@ func runLostAcknowledgmentThenFinish(t *testing.T) secretAudit {
 	_ = approvalRequest(t, f.serverURL, approvalKey, http.MethodPost, "/accept")
 	approval := waitForApprovalStatus(t, f.serverURL, approvalKey, "waiting_for_code")
 	pairingCode := approval.PairingCode
-	waitFor(t, run.stdout, "Code: ")
-	writeCode(t, run, pairingCode)
+	waitFor(t, run.stdout, "Code: ", quickWait)
+	writeCode(t, run, pairingCode, quickWait)
 	select {
 	case <-f.proxy.threeAcks:
 	case <-time.After(quickWait):
 		t.Fatal("proxy did not observe three acknowledgment requests")
 	}
-	if code := awaitRun(t, run); code != 1 {
+	if code := awaitRun(t, run, quickWait); code != 1 {
 		t.Fatalf("worker exit = %d, want 1; stdout=%q", code, run.stdout.String())
 	}
 	if got := f.proxy.ackRequests(); got != 3 {
@@ -516,7 +509,7 @@ func runLostAcknowledgmentThenFinish(t *testing.T) secretAudit {
 		}
 	}
 	resume := f.startWorker(context.Background())
-	if code := awaitRun(t, resume); code != 0 {
+	if code := awaitRun(t, resume, quickWait); code != 0 {
 		t.Fatalf("finish worker exit = %d, want 0; stdout=%q", code, resume.stdout.String())
 	}
 	if !strings.Contains(resume.stdout.String(), "✓ Paired successfully.") {
@@ -576,7 +569,7 @@ func waitForApprovalStatus(t *testing.T, serverURL, key, wanted string) approval
 
 func waitForApprovalKey(t *testing.T, output *safeBuffer) string {
 	t.Helper()
-	waitFor(t, output, "/pair/")
+	waitFor(t, output, "/pair/", quickWait)
 	for _, line := range strings.Split(output.String(), "\n") {
 		line = strings.TrimSpace(line)
 		parsed, err := url.Parse(line)
@@ -589,49 +582,6 @@ func waitForApprovalKey(t *testing.T, output *safeBuffer) string {
 	}
 	t.Fatalf("approval URL not found in worker output: %q", output.String())
 	return ""
-}
-
-func waitFor(t *testing.T, output *safeBuffer, text string) {
-	t.Helper()
-	deadline := time.Now().Add(quickWait)
-	for time.Now().Before(deadline) {
-		if strings.Contains(output.String(), text) {
-			return
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	t.Fatalf("worker output did not contain %q before timeout: %q", text, output.String())
-}
-
-func writeCode(t *testing.T, run *workerRun, code string) {
-	t.Helper()
-	written := make(chan error, 1)
-	go func() {
-		_, err := io.WriteString(run.input, code+"\n")
-		written <- err
-	}()
-	select {
-	case err := <-written:
-		if err != nil {
-			t.Fatalf("write code to worker: %v", err)
-		}
-	case <-time.After(quickWait):
-		_ = run.input.Close()
-		t.Fatalf("worker did not read code within %s", quickWait)
-	}
-}
-
-func awaitRun(t *testing.T, run *workerRun) int {
-	t.Helper()
-	select {
-	case code := <-run.done:
-		_ = run.input.Close()
-		return code
-	case <-time.After(quickWait):
-		_ = run.input.Close()
-		t.Fatalf("worker did not exit; stdout=%q stderr=%q", run.stdout.String(), run.stderr.String())
-		return -1
-	}
 }
 
 func (f *fixture) audit(approvalKey, pairingCode string, runs ...*workerRun) secretAudit {
