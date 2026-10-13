@@ -171,7 +171,8 @@ can store a file there by writing, reading, and removing
 nothing secret, and a crash at that moment can leave it behind harmlessly.
 A crash in the middle of writing `credential.json` can leave its temporary
 file (`.credential-` and a random suffix) in the same folder; it holds the
-credential but has mode `0600` too, and the next pairing writes a new one.
+credential but has mode `0600` too; tervi never reads it, and it can be
+deleted.
 Its content is JSON:
 
 ```json
