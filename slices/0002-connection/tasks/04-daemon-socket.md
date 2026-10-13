@@ -68,7 +68,7 @@ Serve HTTP over the socket with `net/http`:
 | Request | Answer (JSON) |
 | --- | --- |
 | `GET /status` | `{"state": "connected", "server": "…", "since": "<RFC 3339>"}`, `{"state": "reconnecting", "server": "…", "try": 3, "next_try_in_seconds": 4, "last_error": "…"}`, `{"state": "not_connecting", "stop_reason": "credential_rejected"}` (or `null`), or `{"state": "not_paired"}` |
-| `POST /connect` | `{"result": "connected"}`, `already_connected`, `rejected`, `not_paired`, or `{"result": "still_trying", "last_error": "…"}` — from `Daemon.Connect` |
+| `POST /connect` | `{"result": "connected"}`, `already_connected`, `rejected`, `not_paired`, `{"result": "still_trying", "last_error": "…"}` (`last_error` is `null` if no try has failed yet), or `{"result": "failed", "path": "<path of state.json>"}` (`state.json` could not be written; added during task 03) — from `Daemon.Connect` |
 
 `next_try_in_seconds` is rounded to the nearest whole second, at least 0.
 `last_error` is `null` before any try has failed (see task 03's `Status`).

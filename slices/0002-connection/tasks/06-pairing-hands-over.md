@@ -54,8 +54,9 @@ rejected pair again.
 - `internal/worker/service`: the installed check (R28 message) and
   `EnsureRunning(ctx) error`.
 - `internal/worker/control`: `Client.Connect(ctx)` with results
-  `connected`, `already_connected`, `still_trying` (with the last error),
-  `rejected`, `not_paired`.
+  `connected`, `already_connected`, `still_trying` (with the last error, or
+  none if no try has failed yet), `rejected`, `not_paired`, `failed` (with
+  the path of `state.json`).
 - `internal/worker/cli` (task 05): `cli.Env` carries the program path, the
   systemd `Runner`, the service-file folder (`ServiceDir`), and the control
   client, so tests set fakes; an empty or nil one stops the hand-over with
@@ -103,6 +104,8 @@ is, and the printed `Try again with: tervi connect` is how the user finishes.
 | --- | --- | --- |
 | `connected`, `already_connected` | `✓ Connected.` | `0` |
 | `still_trying` | `Paired, but not connected yet: <last error>. tervi keeps trying in the background.` then `Check with: tervi status` | `0` |
+| `still_trying` with no last error (no try has failed yet) | `Paired, but not connected yet. tervi keeps trying in the background.` then `Check with: tervi status` (decided by the user during task 03) | `0` |
+| `failed` (`state.json` could not be written) | `✗ Can't write <path>.` (decided by the user during task 03) | `1` |
 | `rejected` | `✗ The server doesn't accept this computer's credential.` then `Pair again with: tervi pair --server <server>` | `1` |
 | a control error | `✗ Can't reach tervi in the background: <reason>` then `Check with: tervi status` (task 05's function) | `1` |
 
@@ -137,7 +140,8 @@ and exits `130`. The pairing stays saved.
 | `TestMissingInternalSetting` — extended: `tervi pair` with an empty program path prints the internal-setting line and exits `1` before reading anything | R28 |
 | `TestPairHandsOver` — after `✓ Paired successfully.`, the start steps run, then the two lines in order, exit `0`; the service file is written in the test's `t.TempDir()` `ServiceDir` and nowhere else | R5, R10 |
 | `TestPairSetsConnectThroughDaemon` — the hand-over calls `Connect`, and the fake daemon wrote `connect: true` | R1 |
-| `TestPairStillTrying` — the R11 lines, exit `0` | R11 |
+| `TestPairStillTrying` — the R11 lines, exit `0`; and with no last error, the same lines without the error | R11 |
+| `TestPairConnectFailed` — `failed` prints `✗ Can't write <path>.`, exit `1`, and the pairing stays saved | R11 |
 | `TestPairServiceFails` — the R29 lines, exit `1`, `state.json` and the secret store entry still hold the pairing | R29 |
 | `TestPairFinishEarlierHandsOver` — finishing an earlier pairing also hands over | R5, R10 |
 | `TestPairReturnsAfterLastLine` — the command returns while the fake daemon keeps running | R31 |
