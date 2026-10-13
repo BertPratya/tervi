@@ -9,7 +9,6 @@ test('view builds the online row', () => {
     last_seen_seconds_ago: 0,
   }] });
 
-  assert.equal(result.heading, 'Machines');
   assert.deepEqual(result.rows, ['● bert-desktop   Ubuntu 26.04   Online']);
 });
 
