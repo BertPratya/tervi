@@ -205,6 +205,11 @@ failed:
   none before any try has failed.
 
 `server` is read from the secret store entry, never from `state.json`.
+While `reconnecting`, `server` is the last server the daemon read; it is
+empty if the daemon has not read one yet (for example, the keyring was
+locked from the start). The daemon never answers `not_connecting` while
+`connect` is true: an unknown server does not change the state (added
+during fix 1; `tervi status` fills in the server, see task 05).
 
 ### Error texts
 
