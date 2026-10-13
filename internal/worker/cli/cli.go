@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/bertpratya/tervi/internal/worker/control"
@@ -17,14 +18,15 @@ const usageLine = "Usage: tervi pair --server <url>\n       tervi connect\n     
 
 // Env supplies the worker's local inputs, outputs, and state locations.
 type Env struct {
-	Stdin          io.Reader
-	Stdout, Stderr io.Writer
-	Store          *credential.Store
-	StateDir       string
-	Runner         service.Runner
-	ProgramPath    string
-	ServiceDir     string
-	ControlClient  ControlClient
+	Stdin            io.Reader
+	Stdout, Stderr   io.Writer
+	Store            *credential.Store
+	StateDir         string
+	Runner           service.Runner
+	ProgramPath      string
+	ServiceDir       string
+	ControlClient    ControlClient
+	OnPairingSuccess func(credential.Entry)
 }
 
 // ControlClient is the private client used by commands to talk to the daemon.
@@ -128,6 +130,13 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		fmt.Fprintln(env.Stderr, usageLine)
 		return 2
 	}
+	if env.ProgramPath == "" {
+		return missingSetting(env.Stdout, "ProgramPath")
+	}
+	if service.IsTemporaryProgram(env.ProgramPath, os.TempDir()) {
+		fmt.Fprintln(env.Stdout, installRequiredMessage)
+		return 1
+	}
 	if cancelled(ctx, env.Stdout, false) {
 		return 130
 	}
@@ -162,6 +171,9 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		printStoreReadFailure(env.Stdout)
 		return 1
 	}
+	if stateExists && record.Confirmed && entryExists && record.StopReason != nil && *record.StopReason == "credential_rejected" {
+		return runRejectedRePair(ctx, env, flow, cmd.server)
+	}
 
 	if !stateExists && !entryExists {
 		return checkAndStart(ctx, env, flow, cmd.server)
@@ -195,7 +207,7 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		if flow == nil {
 			return 1
 		}
-		return flow.FinishEarlier(ctx, env, entry)
+		return runPairFinish(ctx, env, flow, entry)
 	}
 	if stateExists && record.CredentialSaved && !entryExists {
 		return runLeftover(ctx, env, false, true, "Found incomplete pairing data: state.json exists, but the secret store entry is missing.", true, cmd.server, flow)

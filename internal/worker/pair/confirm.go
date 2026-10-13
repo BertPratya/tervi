@@ -164,6 +164,9 @@ func (f *pairingFlow) confirm(ctx context.Context, env cli.Env, entry credential
 			if ctx.Err() != nil {
 				return cancelAfterSaving(env, entry.Server)
 			}
+			if env.OnPairingSuccess != nil {
+				env.OnPairingSuccess(entry)
+			}
 			fmt.Fprintln(output(env), "✓ Paired successfully.")
 			return 0
 		case "expired":

@@ -29,15 +29,21 @@ type flowRecorder struct {
 	finishCode  int
 }
 
-func (f *flowRecorder) StartNew(_ context.Context, _ Env, server string) int {
+func (f *flowRecorder) StartNew(_ context.Context, env Env, server string) int {
 	f.startCalls++
 	f.server = server
+	if f.startCode == 0 {
+		fmt.Fprintln(env.Stdout, "✓ Paired successfully.")
+	}
 	return f.startCode
 }
 
-func (f *flowRecorder) FinishEarlier(_ context.Context, _ Env, entry credential.Entry) int {
+func (f *flowRecorder) FinishEarlier(_ context.Context, env Env, entry credential.Entry) int {
 	f.finishCalls++
 	f.entry = entry
+	if f.finishCode == 0 {
+		fmt.Fprintln(env.Stdout, "✓ Paired successfully.")
+	}
 	return f.finishCode
 }
 
@@ -130,16 +136,21 @@ func TestUsageErrors(t *testing.T) {
 	}
 	for _, args := range [][]string{{"pair", "--server=http://localhost"}, {"pair", "--server", "http://localhost"}} {
 		var stdout, stderr bytes.Buffer
-		env := Env{Stdin: bytes.NewReader(nil), Stdout: &stdout, Stderr: &stderr, Store: credential.NewStore(credential.NewMemoryBackend()), StateDir: filepath.Join(t.TempDir(), "state")}
+		t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+		env := Env{
+			Stdin: bytes.NewReader(nil), Stdout: &stdout, Stderr: &stderr, Store: credential.NewStore(credential.NewMemoryBackend()), StateDir: filepath.Join(t.TempDir(), "state"),
+			ProgramPath: "/usr/bin/true", Runner: &commandRunner{}, ServiceDir: t.TempDir(), ControlClient: &commandControl{connect: control.ConnectAnswer{Result: "connected"}},
+		}
 		flow := &flowRecorder{}
 		if code := Run(context.Background(), args, env, flow); code != 0 {
-			t.Errorf("Run(%q) = %d, want 0", args, code)
+			t.Errorf("Run(%q) = %d, want success", args, code)
 		}
 		if flow.startCalls != 1 || flow.server != "http://localhost" {
 			t.Errorf("flow = %+v, want one start at standard address", flow)
 		}
-		if stdout.Len() != 0 || stderr.Len() != 0 {
-			t.Errorf("unexpected output: stdout=%q stderr=%q", stdout.String(), stderr.String())
+		wantOutput := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
+		if stdout.String() != wantOutput || stderr.Len() != 0 {
+			t.Errorf("output: stdout=%q stderr=%q, want stdout=%q", stdout.String(), stderr.String(), wantOutput)
 		}
 	}
 }
@@ -399,6 +410,9 @@ func TestStepZero(t *testing.T) {
 			env, stdout, stderr := runEnv(t, dir, backend)
 			flow := &flowRecorder{}
 			code := Run(context.Background(), []string{"pair", "--server", "HTTP://LOCALHOST/"}, env, flow)
+			if code == 0 && flow.startCalls+flow.finishCalls > 0 {
+				tc.wantOut += "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
+			}
 			if code != tc.wantCode || flow.startCalls != tc.start || flow.finishCalls != tc.finish {
 				t.Errorf("Run()=%d flow=%+v; want code=%d start=%d finish=%d", code, flow, tc.wantCode, tc.start, tc.finish)
 			}
@@ -639,7 +653,7 @@ func TestDamagedEntryWins(t *testing.T) {
 			if code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow); code != 0 {
 				t.Fatalf("Run() = %d, want 0", code)
 			}
-			want := "Found a damaged secret store entry for tervi.\n  Removed the leftover pairing data. Starting a new pairing.\n"
+			want := "Found a damaged secret store entry for tervi.\n  Removed the leftover pairing data. Starting a new pairing.\n✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
 			if stdout.String() != want || stderr.Len() != 0 || flow.startCalls != 1 || flow.finishCalls != 0 {
 				t.Errorf("stdout=%q stderr=%q flow=%+v", stdout.String(), stderr.String(), flow)
 			}
@@ -679,7 +693,7 @@ func TestLeftoverThenStartNew(t *testing.T) {
 			if code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow); code != 0 {
 				t.Fatalf("Run() = %d, want 0", code)
 			}
-			want := tc.msg + "\n  Removed the leftover pairing data. Starting a new pairing.\n"
+			want := tc.msg + "\n  Removed the leftover pairing data. Starting a new pairing.\n✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
 			if stdout.String() != want || stderr.Len() != 0 || flow.startCalls != 1 {
 				t.Errorf("stdout=%q stderr=%q flow=%+v, want %q and StartNew", stdout.String(), stderr.String(), flow, want)
 			}
@@ -752,8 +766,12 @@ func TestCredentialNeverPrinted(t *testing.T) {
 
 func runEnv(t *testing.T, dir string, backend credential.Backend) (Env, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	var stdout, stderr bytes.Buffer
-	return Env{Stdin: bytes.NewReader(nil), Stdout: &stdout, Stderr: &stderr, Store: credential.NewStore(backend), StateDir: dir}, &stdout, &stderr
+	return Env{
+		Stdin: bytes.NewReader(nil), Stdout: &stdout, Stderr: &stderr, Store: credential.NewStore(backend), StateDir: dir,
+		Runner: &commandRunner{}, ProgramPath: "/usr/bin/true", ServiceDir: t.TempDir(), ControlClient: &commandControl{connect: control.ConnectAnswer{Result: "connected"}},
+	}, &stdout, &stderr
 }
 
 func assertNoCredential(t *testing.T, streams ...string) {

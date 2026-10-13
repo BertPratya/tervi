@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 	"github.com/bertpratya/tervi/internal/server/connection"
 	"github.com/bertpratya/tervi/internal/server/db/dbtest"
 	"github.com/bertpratya/tervi/internal/worker/cli"
+	"github.com/bertpratya/tervi/internal/worker/control"
 	"github.com/bertpratya/tervi/internal/worker/credential"
 	"github.com/bertpratya/tervi/internal/worker/pair"
 	workerstate "github.com/bertpratya/tervi/internal/worker/state"
@@ -201,15 +203,17 @@ func (p *testProxy) recordSecrets(path string, body []byte) {
 }
 
 type fixture struct {
-	serverURL string
-	store     *credential.Store
-	stateDir  string
-	proxy     *testProxy
-	logs      *safeBuffer
+	serverURL  string
+	store      *credential.Store
+	stateDir   string
+	serviceDir string
+	proxy      *testProxy
+	logs       *safeBuffer
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	pool := dbtest.New(t)
 	logs := &safeBuffer{}
 	logger := slog.New(slog.NewTextHandler(logs, nil))
@@ -219,11 +223,12 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(origin.Close)
 	proxy.setTarget(origin.URL)
 	return &fixture{
-		serverURL: proxyServer.URL,
-		store:     credential.NewStore(credential.NewMemoryBackend()),
-		stateDir:  filepath.Join(t.TempDir(), "state"),
-		proxy:     proxy,
-		logs:      logs,
+		serverURL:  proxyServer.URL,
+		store:      credential.NewStore(credential.NewMemoryBackend()),
+		stateDir:   filepath.Join(t.TempDir(), "state"),
+		serviceDir: t.TempDir(),
+		proxy:      proxy,
+		logs:       logs,
 	}
 }
 
@@ -241,10 +246,38 @@ func (f *fixture) startWorker(parent context.Context) *workerRun {
 	go func() {
 		run.done <- cli.Run(parent, []string{"pair", "--server", f.serverURL}, cli.Env{
 			Stdin: stdin, Stdout: stdout, Stderr: stderr, Store: f.store, StateDir: f.stateDir,
+			ProgramPath: "/usr/bin/true", Runner: fixtureServiceRunner{}, ServiceDir: f.serviceDir, ControlClient: fixtureControlClient{stateDir: f.stateDir},
 		}, pair.New(pair.Options{RequestTimeout: 300 * time.Millisecond, PollInterval: 10 * time.Millisecond}))
 		_ = stdin.Close()
 	}()
 	return run
+}
+
+type fixtureServiceRunner struct{}
+
+func (fixtureServiceRunner) Run(context.Context, string, ...string) (string, error) { return "", nil }
+
+func (fixtureServiceRunner) Stream(context.Context, io.Writer, string, ...string) error { return nil }
+
+type fixtureControlClient struct{ stateDir string }
+
+func (client fixtureControlClient) Status(context.Context) (control.StatusAnswer, error) {
+	return control.StatusAnswer{State: "reconnecting", Server: "http://localhost"}, nil
+}
+
+func (client fixtureControlClient) Connect(context.Context) (control.ConnectAnswer, error) {
+	record, exists, err := workerstate.ReadState(client.stateDir)
+	if err != nil {
+		return control.ConnectAnswer{}, fmt.Errorf("read state for fake daemon: %w", err)
+	}
+	if !exists {
+		return control.ConnectAnswer{}, errors.New("state for fake daemon is missing")
+	}
+	record.Connect = true
+	if err := workerstate.WriteState(client.stateDir, record); err != nil {
+		return control.ConnectAnswer{}, fmt.Errorf("write state for fake daemon: %w", err)
+	}
+	return control.ConnectAnswer{Result: "connected"}, nil
 }
 
 func TestPairingHappyPath(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/bertpratya/tervi/internal/worker/control"
 	"github.com/bertpratya/tervi/internal/worker/credential"
 	"github.com/bertpratya/tervi/internal/worker/service"
 )
@@ -41,51 +42,16 @@ func runConnect(ctx context.Context, args []string, env Env) int {
 	}
 
 	if err := ensureRunning(ctx, env); err != nil {
-		var missing *missingServiceSettingError
-		if errors.As(err, &missing) {
-			return missingSetting(env.Stdout, missing.field)
-		}
-		if ctx.Err() != nil {
-			return printConnectCancelled(env.Stdout)
-		}
-		printServiceStartFailure(env.Stdout, err, entry)
-		return 1
+		return handleEnsureRunningFailure(ctx, env.Stdout, err, entry, printConnectCancelled)
 	}
 
 	answer, err := env.ControlClient.Connect(ctx)
-	if err != nil {
-		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
-			return printConnectCancelled(env.Stdout)
-		}
-		printControlFailure(env.Stdout, err, entry)
-		return 1
-	}
-	if ctx.Err() != nil {
-		return printConnectCancelled(env.Stdout)
-	}
-	switch answer.Result {
-	case "connected":
-		fmt.Fprintln(env.Stdout, "✓ Connected.")
-		return 0
-	case "already_connected":
-		fmt.Fprintln(env.Stdout, "Already connected.")
-		return 0
-	case "still_trying":
-		printStillTrying(env.Stdout, answer.LastError, entry)
-		return 1
-	case "failed":
-		fmt.Fprintf(env.Stdout, "✗ Can't write %s.\n", redactText(answer.Path, entry))
-		return 1
-	case "rejected":
-		printConnectRejected(env.Stdout, entry.Server)
-		return 1
-	case "not_paired":
-		printConnectNotPaired(env.Stdout)
-		return 1
-	default:
-		printControlFailure(env.Stdout, fmt.Errorf("unexpected daemon response"), entry)
-		return 1
-	}
+	return handleConnectResult(ctx, env.Stdout, answer, err, entry, connectResultBehavior{
+		alreadyConnectedMessage: "Already connected.",
+		stillTryingPrefix:       "Not connected yet",
+		stillTryingExitCode:     1,
+		printCancelled:          printConnectCancelled,
+	})
 }
 
 type missingServiceSettingError struct{ field string }
@@ -117,6 +83,18 @@ func missingSetting(output io.Writer, name string) int {
 	return 1
 }
 
+func handleEnsureRunningFailure(ctx context.Context, output io.Writer, err error, entry credential.Entry, printCancelled func(io.Writer) int) int {
+	var missing *missingServiceSettingError
+	if errors.As(err, &missing) {
+		return missingSetting(output, missing.field)
+	}
+	if ctx.Err() != nil {
+		return printCancelled(output)
+	}
+	printServiceStartFailure(output, err, entry)
+	return 1
+}
+
 func printPairingReadFailure(output io.Writer, stateDir string, err error) {
 	if errors.Is(err, credential.ErrStateUnreadable) {
 		printStateReadFailure(output, stateDir)
@@ -144,13 +122,61 @@ func printControlFailure(output io.Writer, err error, entry credential.Entry) {
 	fmt.Fprintln(output, "Check with: tervi status")
 }
 
-func printStillTrying(output io.Writer, lastError *string, entry credential.Entry) {
+func printStillTrying(output io.Writer, lastError *string, entry credential.Entry, prefix string) {
 	if lastError != nil && *lastError != "" {
-		fmt.Fprintf(output, "Not connected yet: %s. tervi keeps trying in the background.\n", redactText(*lastError, entry))
+		fmt.Fprintf(output, "%s: %s. tervi keeps trying in the background.\n", prefix, redactText(*lastError, entry))
 	} else {
-		fmt.Fprintln(output, "Not connected yet. tervi keeps trying in the background.")
+		fmt.Fprintf(output, "%s. tervi keeps trying in the background.\n", prefix)
 	}
 	fmt.Fprintln(output, "Check with: tervi status")
+}
+
+func printConnectWriteFailure(output io.Writer, path string, entry credential.Entry) {
+	fmt.Fprintf(output, "✗ Can't write %s.\n", redactText(path, entry))
+}
+
+type connectResultBehavior struct {
+	alreadyConnectedMessage string
+	stillTryingPrefix       string
+	stillTryingExitCode     int
+	printCancelled          func(io.Writer) int
+}
+
+func handleConnectResult(ctx context.Context, output io.Writer, answer control.ConnectAnswer, err error, entry credential.Entry, behavior connectResultBehavior) int {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+		return behavior.printCancelled(output)
+	}
+	if err != nil {
+		printControlFailure(output, err, entry)
+		return 1
+	}
+	switch answer.Result {
+	case "connected":
+		fmt.Fprintln(output, "✓ Connected.")
+		return 0
+	case "already_connected":
+		message := behavior.alreadyConnectedMessage
+		if message == "" {
+			message = "✓ Connected."
+		}
+		fmt.Fprintln(output, message)
+		return 0
+	case "still_trying":
+		printStillTrying(output, answer.LastError, entry, behavior.stillTryingPrefix)
+		return behavior.stillTryingExitCode
+	case "failed":
+		printConnectWriteFailure(output, answer.Path, entry)
+		return 1
+	case "rejected":
+		printConnectRejected(output, entry.Server)
+		return 1
+	case "not_paired":
+		printConnectNotPaired(output)
+		return 1
+	default:
+		printControlFailure(output, errors.New("unexpected daemon response"), entry)
+		return 1
+	}
 }
 
 func printConnectCancelled(output io.Writer) int {
