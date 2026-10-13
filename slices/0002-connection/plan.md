@@ -22,3 +22,35 @@ Spec: [spec.md](spec.md)
 
 The new server packages register their own routes, as in slice 1, so tasks
 that add routes do not edit the same file.
+
+## Data
+
+This slice adds the `last_seen_at` column to `machines` (migration `0002`),
+the `connect` and `stop_reason` fields to `state.json`, and the systemd
+service file. All of it is described in
+[`design/data-model.md`](../../design/data-model.md). Which machines are
+Online is kept only in the server's memory (R23).
+
+## Technical decisions
+
+- Only the daemon writes `connect` and `stop_reason` in `state.json`;
+  `tervi pair` and `tervi connect` ask the running daemon, starting it first
+  if needed — with one writer, no change can be lost, and the daemon always
+  runs anyway (R3); `tailscale` and `tailscaled` work the same way.
+  Not chosen: every program writes the whole file — two writes at the same
+  moment lose one change; every program writes with a file lock — works,
+  but every writer must take the lock correctly, and one that forgets
+  loses changes again.
+- `state.json` gains `connect` and `stop_reason`; a missing `connect` means
+  `false` — a computer paired in slice 0001 has no background service yet,
+  so it needs `tervi connect` once anyway.
+  Not chosen: a missing `connect` means `true` — the daemon would not be
+  running to act on it, so it would change nothing.
+- The service file is `~/.config/systemd/user/tervi.service`, runs the full
+  path of the installed `tervi` with `daemon`, restarts only after a crash
+  (5 seconds later), and starts at login — `~/.config` is the folder for
+  services a user sets up; systemd does not use the user's `PATH`; R6 asks
+  for a restart only when it stops unexpectedly.
+  Not chosen: `~/.local/share/systemd/user/` — meant for software installed
+  by a package; `ExecStart=tervi daemon` — systemd might not find it;
+  `Restart=always` — it would also restart after a clean stop.
