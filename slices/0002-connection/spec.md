@@ -299,7 +299,9 @@ quote. `<…>` is filled in.
 
 | When | Message |
 | --- | --- |
-| `tervi daemon` without a desktop session's runtime folder | `✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).` |
+| `tervi daemon`, `tervi status`, `tervi connect`, or the end of `tervi pair` without a desktop session's runtime folder | `✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).`; exit `1`. `tervi pair` prints it after `✓ Paired successfully.`, and the pairing stays saved |
+| tervi cannot find its own program file | `✗ Can't find tervi's program file.`; exit `1` |
+| `tervi status`: tervi in the background answers, but the answer is broken | `✗ Can't reach tervi in the background: <reason>`; exit `1` |
 | `tervi logs` cannot read the log | `✗ Can't read the log: <reason>` |
 | `tervi daemon` fails unexpectedly (for example, it cannot open its socket) | `✗ tervi stopped unexpectedly: <reason>`; exit `1` |
 | tervi was built without one of its internal settings | `✗ tervi is missing an internal setting (<field name>).` |

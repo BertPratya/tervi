@@ -95,7 +95,12 @@ is, and the printed `Try again with: tervi connect` is how the user finishes.
    stays exactly as it is.
 4. Pairing as today.
 5. **Hand-over**, only when the pairing flow returned `0`:
-   - `service.EnsureRunning(ctx)`. On failure: `✗ Can't start tervi in the background: <reason>`,
+   - Without `XDG_RUNTIME_DIR`: print
+     `✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).`,
+     exit `1`, and do nothing else. The pairing stays saved. (Decided by the
+     user during task 05.)
+   - `ensureRunning(ctx, env)`, task 05's helper in `cli` that calls
+     `service.EnsureRunning`. On failure: `✗ Can't start tervi in the background: <reason>`,
      `Try again with: tervi connect`, exit `1`. The pairing stays saved.
    - Print `✓ tervi now runs in the background and starts when you log in.`
    - `control.Client.Connect(ctx)`, then:
@@ -143,6 +148,7 @@ and exits `130`. The pairing stays saved.
 | `TestPairStillTrying` — the R11 lines, exit `0`; and with no last error, the same lines without the error | R11 |
 | `TestPairConnectFailed` — `failed` prints `✗ Can't write <path>.`, exit `1`, and the pairing stays saved | R11 |
 | `TestPairServiceFails` — the R29 lines, exit `1`, `state.json` and the secret store entry still hold the pairing | R29 |
+| `TestPairNoRuntimeFolder` — without `XDG_RUNTIME_DIR`, after `✓ Paired successfully.` the runtime-folder line, exit `1`, no `systemctl` call, and the pairing still saved | R29 |
 | `TestPairFinishEarlierHandsOver` — finishing an earlier pairing also hands over | R5, R10 |
 | `TestPairReturnsAfterLastLine` — the command returns while the fake daemon keeps running | R31 |
 | `TestPairAgainAfterRejection` — with `stop_reason: credential_rejected`, the R33 line, both deleted, a new pairing starts | R33 |
