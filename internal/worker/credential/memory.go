@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-// MemoryBackend is an in-memory secret store backend for worker tests.
+// MemoryBackend is an in-memory credential file backend for worker tests.
 type MemoryBackend struct {
 	FailGet, FailSet, FailDelete bool
 	ChangeOnRead                 bool
@@ -23,7 +23,7 @@ func (m *MemoryBackend) Get(user string) (string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.FailGet {
-		return "", errors.New("secret store get failed")
+		return "", errors.New("credential file get failed")
 	}
 	value, ok := m.values[user]
 	if !ok {
@@ -39,7 +39,7 @@ func (m *MemoryBackend) Set(user, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.FailSet {
-		return errors.New("secret store set failed")
+		return errors.New("credential file set failed")
 	}
 	if m.values == nil {
 		m.values = make(map[string]string)
@@ -52,7 +52,7 @@ func (m *MemoryBackend) Delete(user string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.FailDelete {
-		return errors.New("secret store delete failed")
+		return errors.New("credential file delete failed")
 	}
 	delete(m.values, user)
 	return nil

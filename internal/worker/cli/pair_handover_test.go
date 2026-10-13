@@ -299,7 +299,7 @@ func TestPairConnectFailed(t *testing.T) {
 		t.Errorf("pairing state was not kept: exists=%v err=%v", exists, err)
 	}
 	if _, exists := backend.Value("worker"); !exists {
-		t.Error("secret store entry was not kept")
+		t.Error("credential file entry was not kept")
 	}
 	assertPairOutputSafe(t, stdout.String(), stderr.String())
 }
@@ -334,7 +334,7 @@ func TestPairServiceFails(t *testing.T) {
 		t.Errorf("pairing state was not kept: exists=%v err=%v", exists, err)
 	}
 	if _, exists := backend.Value("worker"); !exists {
-		t.Error("secret store entry was not kept")
+		t.Error("credential file entry was not kept")
 	}
 	assertPairOutputSafe(t, stdout.String(), stderr.String())
 }
@@ -354,7 +354,7 @@ func TestPairNoRuntimeFolder(t *testing.T) {
 		t.Errorf("pairing state was not kept: exists=%v err=%v", exists, err)
 	}
 	if _, exists := backend.Value("worker"); !exists {
-		t.Error("secret store entry was not kept")
+		t.Error("credential file entry was not kept")
 	}
 	assertPairOutputSafe(t, stdout.String(), stderr.String())
 }
@@ -453,13 +453,13 @@ func TestAlreadyPairedStillRefused(t *testing.T) {
 	after, _ := os.ReadFile(state.StatePath(env.StateDir))
 	entryAfter, entryExists := backend.Value("worker")
 	if !bytes.Equal(before, after) || !entryExists || entryBefore != entryAfter {
-		t.Error("already paired state or secret store entry changed")
+		t.Error("already paired state or credential file entry changed")
 	}
 	assertPairOutputSafe(t, stdout.String(), stderr.String())
 }
 
 func TestPairAgainDeleteFails(t *testing.T) {
-	t.Run("secret store", func(t *testing.T) {
+	t.Run("credential file", func(t *testing.T) {
 		env, _, _, backend, stdout, stderr := newPairHarness(t, false)
 		prepareRejectedPairing(t, env, backend)
 		backend.FailDelete = true
@@ -533,7 +533,7 @@ func TestHandOverCtrlC(t *testing.T) {
 		t.Errorf("pairing state was not kept: exists=%v err=%v", exists, err)
 	}
 	if _, exists := backend.Value("worker"); !exists {
-		t.Error("secret store entry was not kept")
+		t.Error("credential file entry was not kept")
 	}
 	assertPairOutputSafe(t, stdout.String(), stderr.String())
 }

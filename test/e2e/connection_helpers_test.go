@@ -406,7 +406,7 @@ func completeLivePair(t *testing.T, f *connectedFixture, run *workerRun) livePai
 	}
 	entry, exists, err := f.store.Get()
 	if err != nil || !exists || entry.Credential.Reveal() == "" {
-		t.Fatalf("secret store did not contain the paired credential: exists=%t err=%v", exists, err)
+		t.Fatalf("credential file did not contain the paired credential: exists=%t err=%v", exists, err)
 	}
 	machine := f.machine(t, state.MachineID)
 	if !machine.Online {

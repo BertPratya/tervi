@@ -277,7 +277,7 @@ func TestHappyPath(t *testing.T) {
 	env.Store = credential.NewStore(&recordingBackend{backend: backend, observe: func(event string) {
 		record, exists, err := state.ReadState(env.StateDir)
 		if err != nil || !exists || record.MachineID != testMachineID || record.CredentialSaved || record.Confirmed {
-			t.Errorf("state before secret store %s = %#v, exists %t, err %v", event, record, exists, err)
+			t.Errorf("state before credential file %s = %#v, exists %t, err %v", event, record, exists, err)
 		}
 		appendEvent(event)
 	}})

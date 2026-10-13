@@ -406,7 +406,7 @@ func TestConnectServiceFails(t *testing.T) {
 	}
 	entryAfter, _ := backend.Value("worker")
 	if entryAfter != entryBefore {
-		t.Error("secret store entry changed")
+		t.Error("credential file entry changed")
 	}
 }
 
