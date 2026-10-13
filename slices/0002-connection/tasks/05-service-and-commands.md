@@ -142,12 +142,14 @@ when there is one (the command's output, trimmed), or
 `Try again with: tervi connect`.
 
 Export one function that the pairing (task 06) also uses:
-`EnsureRunning(ctx) error` doing steps 1–2. Put whatever the commands need
+`EnsureRunning(ctx) (bool, error)` doing steps 1–2; the `bool` is true when
+it rewrote the service file and restarted the daemon (added in fix 2, for
+the `already_connected` row below). Put whatever the commands need
 into `cli.Env`, so tests can replace them: the `Runner`, the program path,
 the service-file folder (`ServiceDir`), and the control client.
 
 Added during task 05 review:
-- In `internal/worker/cli`, one helper `ensureRunning(ctx, env) error`
+- In `internal/worker/cli`, one helper `ensureRunning(ctx, env) (bool, error)`
   builds the service's settings from `cli.Env` and calls `EnsureRunning`;
   `tervi connect` and task 06's hand-over both use it.
 - The installed check lives in `internal/worker/service` as an exported
@@ -311,7 +313,7 @@ never reads the secret store. Anything else after `logs` is wrong usage
 | `TestEnsureRunningSteps` — the `systemctl` calls in order, then waiting for the socket | R5 |
 | `TestEnsureRunningFailures` — `systemctl` failing, systemd missing, and no socket after 10 s each give the reason | R29 |
 | `TestConnectCommandResults` — every row of the result table, with output and exit code | R4 |
-| `TestConnectFromDifferentInstallPrintsConnected` — the service file names another path, so it is rewritten and the daemon restarted; an `already_connected` answer then prints `✓ Connected.`, exit `0`; with the same path, `already_connected` still prints `Already connected.` (added in fix 2) | R4, R5 |
+| `TestConnectFromDifferentInstallPrintsConnected` — the service file names another path, so it is rewritten and the daemon restarted; an `already_connected` answer then prints `✓ Connected.`, exit `0` (added in fix 2; the same-path case, `Already connected.`, is the `already connected` row of `TestConnectCommandResults`) | R4, R5 |
 | `TestConnectNotPaired` | R4 |
 | `TestConnectStartsStoppedService` — with no daemon answering, `connect` runs the start steps, then connects | R4 |
 | `TestConnectServiceFails` — the two lines, exit `1`, `state.json` and the secret store entry unchanged | R29 |
