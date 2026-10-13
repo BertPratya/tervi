@@ -106,6 +106,11 @@ When a request fails: keep the last list and show `Can't reach the server. Tryin
 above it until a request succeeds. Names come from the computer, so insert
 them as text, never as HTML.
 
+Screen readers (decided by the user during the slice review): only the
+`Can't reach the server. Trying again…` line is announced (`aria-live`
+on that line alone), so a screen reader does not read the whole list aloud
+on every 5-second refresh.
+
 ### Contract
 
 Remove `x-planned: true` from `listMachines` and `machinesPage` in

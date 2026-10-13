@@ -232,7 +232,7 @@ Each line starts with the local time `15:04:05` and a space. Exact texts:
 | Connected | `✓ Connected to <server>` |
 | Lost | `✗ Connection lost: <reason>` |
 | A try starts | `… Reconnecting (try <n>)` |
-| A try failed | `✗ <error>. Next try in <s> seconds` |
+| A try failed | `✗ <error>. Next try in <s> seconds` (`1 second` when `<s>` is 1, decided by the user during the slice review) |
 | Rejected | `✗ The server doesn't accept this computer's credential. Pair again with: tervi pair --server <server>` |
 
 `<reason>`: `the server is stopping` (1001), `replaced by a newer connection`

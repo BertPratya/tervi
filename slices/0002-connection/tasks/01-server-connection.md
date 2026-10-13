@@ -202,6 +202,13 @@ read at the same moment (protect it with a mutex; run its tests with
   `CloseAll` (or a second call to it) waits for that connection's handler
   too, within the same 5 seconds. A server that keeps running never calls
   `CloseAll`.
+- **One 5-second limit for the whole stop** (decided by the user during
+  the slice review): the server's stop never takes much more than 5
+  seconds, however many times `Run` calls `CloseAll`. All the calls share
+  one deadline that starts at the first call. A connection whose worker
+  does not answer the `1001` close before the deadline is closed at once
+  (`CloseNow`); its final `last_seen_at` write still runs if the deadline
+  allows. Today a silent worker can make the stop take about 15 seconds.
 
 Every machine is Offline after a restart because the list starts empty.
 

@@ -110,7 +110,11 @@ and exit `1`.
 
 **The service file.** `tervi.service` in the service-file folder, exactly the
 contents in `design/data-model.md`, with
-`ExecStart=<absolute program path> daemon`. Create the folder if needed. The
+`ExecStart="<absolute program path>" daemon`: the path in double quotes,
+with `\` and `"` inside it written `\\` and `\"`, and `%` and `$` written
+`%%` and `$$` (decided by the user during the slice review, so a path with a
+space works). Reading the file back to compare paths undoes the same
+escaping. Create the folder if needed. The
 folder is a field of the service options and of `cli.Env`
 (`ServiceDir`); `main` sets it to `<os.UserConfigDir()>/systemd/user`,
 which is `~/.config/systemd/user`.
@@ -263,7 +267,8 @@ Exit `0` only when connected. For the rejected lines, `<server>` comes from
 the secret store entry.
 
 While a try is under way (`next_try_in_seconds` is `0`), the second line is
-`  Try <n>, trying now` instead of `  Try <n>, next in <s> seconds`. Before
+`  Try <n>, trying now` instead of `  Try <n>, next in <s> seconds`
+(`1 second` when `<s>` is 1, decided by the user during the slice review). Before
 any try has failed (no last error), the `Last error:` line is left out.
 `TestStatusOutputs` covers both.
 
