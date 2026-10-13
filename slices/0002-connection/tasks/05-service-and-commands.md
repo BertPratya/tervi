@@ -162,7 +162,10 @@ fills in a default: if `connect`, `status`, `logs`, or the pairing hand-over
 finds any of the four it needs empty or nil, it prints
 `✗ tervi is missing an internal setting (<field name>).` and exits `1`,
 without calling systemd or writing a file. Tests set fakes, and
-`t.TempDir()` for `ServiceDir`.
+`t.TempDir()` for `ServiceDir`. The checks for the four that starting the
+service needs (program path, `Runner`, `ServiceDir`, control client) are
+written once, in or next to `ensureRunning(ctx, env)`, so `tervi connect`
+and task 06's hand-over share them (added during task 05 review).
 
 Put the printing of the shared messages (the two R29 lines, the two
 rejected lines, the not-paired line, the two control-error lines) in
@@ -223,7 +226,10 @@ in. The command then exits; it never stops the daemon.
    `  Start it with: tervi connect`, exit `1`. Any other error (the daemon
    answered, but the answer is broken) →
    `✗ Can't reach tervi in the background: <reason>` alone, with no
-   `Check with` line, exit `1` (decided by the user during task 05).
+   `Check with` line, exit `1` (decided by the user during task 05). An
+   answer with a `state` that is none of the four is a broken answer too.
+   Ctrl+C while waiting for the answer prints nothing and exits `130`
+   (decided by the user during task 05).
 3. Otherwise:
 
 ```text
@@ -302,7 +308,7 @@ never reads the secret store. Anything else after `logs` is wrong usage
 | `TestConnectStartsStoppedService` — with no daemon answering, `connect` runs the start steps, then connects | R4 |
 | `TestConnectServiceFails` — the two lines, exit `1`, `state.json` and the secret store entry unchanged | R29 |
 | `TestConnectReturnsAfterLastLine` — the command returns after printing; the fake daemon is still running | R31 |
-| `TestStatusOutputs` — each of the five R16 cases, the slice-1 case, a daemon answering `not_paired`, and a broken answer (the one `Can't reach` line), with exit codes | R16, R17 |
+| `TestStatusOutputs` — each of the five R16 cases, the slice-1 case, a daemon answering `not_paired`, a broken answer and an unknown `state` (the one `Can't reach` line each), and Ctrl+C while waiting (no output, exit `130`), with exit codes | R16, R17 |
 | `TestNoRuntimeFolder` — extended: `tervi status` and `tervi connect` without `XDG_RUNTIME_DIR` print the runtime-folder line, exit `1`, and never call the control client or `systemctl` | R4, R16 |
 | `TestStatusSince` — each `Since` wording at 0, 59, 60, 119, 120, 3599, 3600, 86399, 86400 seconds | R16 |
 | `TestLogsCommand` — the exact `journalctl` arguments with and without `-f`, passed to `Runner.Stream`; the output equals the stream, and a line is shown as soon as it arrives; the failure message when `journalctl` cannot start; exit `1` with no extra line when it exits with an error; wrong usage | R32 |
