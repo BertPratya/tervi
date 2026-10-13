@@ -27,11 +27,15 @@ type commandRunner struct {
 	runError    error
 	streamError error
 	streamCheck func()
+	runFunc     func(context.Context, string, ...string) (string, error)
 }
 
-func (r *commandRunner) Run(_ context.Context, name string, args ...string) (string, error) {
+func (r *commandRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
 	call := append([]string{name}, args...)
 	r.calls = append(r.calls, call)
+	if r.runFunc != nil {
+		return r.runFunc(ctx, name, args...)
+	}
 	return r.runOutput, r.runError
 }
 
@@ -623,6 +627,7 @@ func TestMissingInternalSetting(t *testing.T) {
 	}{
 		{command: "status", field: "ControlClient"},
 		{command: "logs", field: "Runner"},
+		{command: "pair", field: "ProgramPath"},
 	} {
 		t.Run(tc.command+"/"+tc.field, func(t *testing.T) {
 			runner := &commandRunner{}
@@ -633,8 +638,23 @@ func TestMissingInternalSetting(t *testing.T) {
 			} else {
 				env.ControlClient = nil
 			}
-			if code := Run(context.Background(), []string{tc.command}, env, nil); code != 1 || stdout.String() != fmt.Sprintf("✗ tervi is missing an internal setting (%s).\n", tc.field) || stderr.Len() != 0 {
+			args := []string{tc.command}
+			if tc.command == "pair" {
+				args = []string{"pair", "--server", "http://localhost:8080"}
+				env.ProgramPath = ""
+				stateFile := state.StatePath(env.StateDir)
+				if err := os.Remove(stateFile); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(stateFile, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if code := Run(context.Background(), args, env, nil); code != 1 || stdout.String() != fmt.Sprintf("✗ tervi is missing an internal setting (%s).\n", tc.field) || stderr.Len() != 0 {
 				t.Errorf("Run(%s) = (%d, %q, %q)", tc.command, code, stdout.String(), stderr.String())
+			}
+			if tc.command == "pair" && (len(runner.calls) != 0 || client.statusCalls != 0 || client.connectCalls != 0) {
+				t.Errorf("pair with missing ProgramPath did work: systemctl=%v status=%d connect=%d", runner.calls, client.statusCalls, client.connectCalls)
 			}
 		})
 	}

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/bertpratya/tervi/internal/worker/state"
 )
@@ -24,7 +25,7 @@ func checkAndStart(ctx context.Context, env Env, flow Flow, server string) int {
 	if flow == nil {
 		return 1
 	}
-	return flow.StartNew(ctx, env, server)
+	return runPairStart(ctx, env, flow, server)
 }
 
 func runLeftover(ctx context.Context, env Env, entryExists, stateExists bool, message string, start bool, server string, flow Flow) int {
@@ -50,7 +51,7 @@ func runLeftover(ctx context.Context, env Env, entryExists, stateExists bool, me
 		if err := state.DeleteState(env.StateDir); cancelled(ctx, env.Stdout, false) {
 			return 130
 		} else if err != nil {
-			fmt.Fprintf(env.Stdout, "✗ Can't delete %s.\n  Check that you can change files in %s, then run the same command again.\n", state.StatePath(env.StateDir), env.StateDir)
+			printStateDeleteFailure(env.Stdout, env.StateDir)
 			return 1
 		}
 	}
@@ -59,4 +60,8 @@ func runLeftover(ctx context.Context, env Env, entryExists, stateExists bool, me
 		return 0
 	}
 	return checkAndStart(ctx, env, flow, server)
+}
+
+func printStateDeleteFailure(output io.Writer, stateDir string) {
+	fmt.Fprintf(output, "✗ Can't delete %s.\n  Check that you can change files in %s, then run the same command again.\n", state.StatePath(stateDir), stateDir)
 }
