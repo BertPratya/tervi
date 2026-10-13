@@ -22,9 +22,6 @@ func runConnect(ctx context.Context, args []string, env Env) int {
 	if !requireRuntimeFolder(env.Stdout) {
 		return 1
 	}
-	if env.ProgramPath == "" {
-		return missingSetting(env.Stdout, "ProgramPath")
-	}
 	if service.IsTemporaryProgram(env.ProgramPath, os.TempDir()) {
 		fmt.Fprintln(env.Stdout, installRequiredMessage)
 		return 1
@@ -39,20 +36,15 @@ func runConnect(ctx context.Context, args []string, env Env) int {
 		printConnectNotPaired(env.Stdout)
 		return 1
 	}
-	if env.Runner == nil {
-		return missingSetting(env.Stdout, "Runner")
-	}
-	if env.ServiceDir == "" {
-		return missingSetting(env.Stdout, "ServiceDir")
-	}
-	if env.ControlClient == nil {
-		return missingSetting(env.Stdout, "ControlClient")
-	}
 	if ctx.Err() != nil {
 		return printConnectCancelled(env.Stdout)
 	}
 
 	if err := ensureRunning(ctx, env); err != nil {
+		var missing *missingServiceSettingError
+		if errors.As(err, &missing) {
+			return missingSetting(env.Stdout, missing.field)
+		}
 		if ctx.Err() != nil {
 			return printConnectCancelled(env.Stdout)
 		}
@@ -96,7 +88,24 @@ func runConnect(ctx context.Context, args []string, env Env) int {
 	}
 }
 
+type missingServiceSettingError struct{ field string }
+
+func (err *missingServiceSettingError) Error() string { return err.field + " is missing" }
+
 func ensureRunning(ctx context.Context, env Env) error {
+	for _, setting := range []struct {
+		field string
+		valid bool
+	}{
+		{field: "ProgramPath", valid: env.ProgramPath != ""},
+		{field: "Runner", valid: env.Runner != nil},
+		{field: "ServiceDir", valid: env.ServiceDir != ""},
+		{field: "ControlClient", valid: env.ControlClient != nil},
+	} {
+		if !setting.valid {
+			return &missingServiceSettingError{field: setting.field}
+		}
+	}
 	manager := service.New(service.Options{
 		Runner: env.Runner, ProgramPath: env.ProgramPath, ServiceDir: env.ServiceDir, Client: env.ControlClient,
 	})

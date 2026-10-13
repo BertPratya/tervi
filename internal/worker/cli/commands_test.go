@@ -61,13 +61,18 @@ type statusResult struct {
 type commandControl struct {
 	statuses     []statusResult
 	statusCalls  int
+	statusFunc   func(context.Context) (control.StatusAnswer, error)
 	connect      control.ConnectAnswer
 	connectErr   error
 	connectCalls int
 	connectFunc  func(context.Context) (control.ConnectAnswer, error)
 }
 
-func (c *commandControl) Status(context.Context) (control.StatusAnswer, error) {
+func (c *commandControl) Status(ctx context.Context) (control.StatusAnswer, error) {
+	if c.statusFunc != nil {
+		c.statusCalls++
+		return c.statusFunc(ctx)
+	}
 	i := c.statusCalls
 	c.statusCalls++
 	if i < len(c.statuses) {
@@ -378,6 +383,7 @@ func TestStatusOutputs(t *testing.T) {
 		{name: "not connecting", paired: true, statuses: []statusResult{{answer: control.StatusAnswer{State: "not_connecting"}}}, want: "○ Not connecting.\n  Connect with: tervi connect\n", code: 1},
 		{name: "daemon says not paired", paired: true, statuses: []statusResult{{answer: control.StatusAnswer{State: "not_paired"}}}, want: "✗ This computer isn't paired.\n  Pair it with: tervi pair --server <url>\n", code: 1},
 		{name: "broken answer", paired: true, statuses: []statusResult{{err: errors.New("invalid daemon response")}}, want: "✗ Can't reach tervi in the background: invalid daemon response\n", code: 1},
+		{name: "unknown state", paired: true, statuses: []statusResult{{answer: control.StatusAnswer{State: "sleeping"}}}, want: "✗ Can't reach tervi in the background: unexpected daemon status\n", code: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -392,6 +398,37 @@ func TestStatusOutputs(t *testing.T) {
 			}
 		})
 	}
+	t.Run("cancelled while waiting", func(t *testing.T) {
+		runner := &commandRunner{}
+		started := make(chan struct{})
+		client := &commandControl{statusFunc: func(ctx context.Context) (control.StatusAnswer, error) {
+			close(started)
+			<-ctx.Done()
+			return control.StatusAnswer{}, ctx.Err()
+		}}
+		env, _, stdout, stderr := commandEnv(t, runner, client, true)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan int, 1)
+		go func() { done <- Run(ctx, []string{"status"}, env, nil) }()
+		select {
+		case <-started:
+			cancel()
+		case <-time.After(time.Second):
+			cancel()
+			t.Fatal("Status was not called")
+		}
+		select {
+		case code := <-done:
+			if code != 130 {
+				t.Errorf("Run(status) = %d, want 130", code)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("status did not return after cancellation")
+		}
+		if stdout.Len() != 0 || stderr.Len() != 0 {
+			t.Errorf("cancelled status output = (%q, %q), want empty", stdout.String(), stderr.String())
+		}
+	})
 	// Pairing state failures keep the original slice-1 wording.
 	t.Run("state unreadable", func(t *testing.T) {
 		runner := &commandRunner{}

@@ -33,7 +33,13 @@ func runStatus(ctx context.Context, args []string, env Env) int {
 		return 1
 	}
 	answer, err := env.ControlClient.Status(ctx)
+	if ctx.Err() != nil {
+		return 130
+	}
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return 130
+		}
 		if errors.Is(err, control.ErrNotRunning) {
 			fmt.Fprintln(env.Stdout, "✗ tervi isn't running in the background.")
 			fmt.Fprintln(env.Stdout, "  Start it with: tervi connect")
@@ -62,7 +68,7 @@ func runStatus(ctx context.Context, args []string, env Env) int {
 		printStatusNotPaired(env.Stdout)
 		return 1
 	default:
-		printControlFailure(env.Stdout, fmt.Errorf("unexpected daemon status"), entry)
+		printStatusControlFailure(env.Stdout, fmt.Errorf("unexpected daemon status"), entry)
 		return 1
 	}
 }

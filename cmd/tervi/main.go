@@ -27,10 +27,8 @@ func main() {
 		fmt.Fprintln(os.Stdout, "✗ Can't find tervi's program file.")
 		os.Exit(1)
 	}
-	runtimeDir, runtimeDirErr := control.RuntimeDir()
-	if runtimeDirErr != nil {
-		runtimeDir = ""
-	}
+	// connect and status check the runtime folder before using the control client.
+	runtimeDir, _ := control.RuntimeDir()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	env := cli.Env{
