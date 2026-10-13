@@ -2,10 +2,13 @@ package credential
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/bertpratya/tervi/internal/secret"
+	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
 const testCredential = "credential-must-never-be-printed"
@@ -38,6 +41,91 @@ func TestStoreCheck(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPaired(t *testing.T) {
+	t.Run("paired", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := state.WriteState(dir, state.State{MachineID: "m", CredentialSaved: true, Confirmed: true}); err != nil {
+			t.Fatal(err)
+		}
+		store := NewStore(NewMemoryBackend())
+		if err := store.Save(Entry{Server: "http://localhost", Credential: secret.FromString(testCredential)}); err != nil {
+			t.Fatal(err)
+		}
+		entry, record, paired, err := Paired(dir, store)
+		if err != nil || !paired || entry.Server != "http://localhost" || entry.Credential.Reveal() != testCredential || !record.Confirmed {
+			t.Fatalf("Paired() = (%+v, %+v, %v, %v), want paired", entry, record, paired, err)
+		}
+	})
+
+	t.Run("missing state", func(t *testing.T) {
+		_, _, paired, err := Paired(t.TempDir(), NewStore(NewMemoryBackend()))
+		if paired || err != nil {
+			t.Fatalf("Paired() = (%v, %v), want not paired without error", paired, err)
+		}
+	})
+
+	t.Run("not confirmed", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := state.WriteState(dir, state.State{CredentialSaved: true}); err != nil {
+			t.Fatal(err)
+		}
+		_, _, paired, err := Paired(dir, NewStore(NewMemoryBackend()))
+		if paired || err != nil {
+			t.Fatalf("Paired() = (%v, %v), want not paired without error", paired, err)
+		}
+	})
+
+	t.Run("missing entry", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := state.WriteState(dir, state.State{Confirmed: true}); err != nil {
+			t.Fatal(err)
+		}
+		_, _, paired, err := Paired(dir, NewStore(NewMemoryBackend()))
+		if paired || err != nil {
+			t.Fatalf("Paired() = (%v, %v), want not paired without error", paired, err)
+		}
+	})
+
+	t.Run("unreadable store", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := state.WriteState(dir, state.State{Confirmed: true}); err != nil {
+			t.Fatal(err)
+		}
+		backend := NewMemoryBackend()
+		backend.FailGet = true
+		_, _, paired, err := Paired(dir, NewStore(backend))
+		if paired || !errors.Is(err, ErrStoreUnreadable) {
+			t.Fatalf("Paired() = (%v, %v), want store error", paired, err)
+		}
+	})
+
+	t.Run("damaged entry", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := state.WriteState(dir, state.State{Confirmed: true}); err != nil {
+			t.Fatal(err)
+		}
+		backend := NewMemoryBackend()
+		if err := backend.Set("worker", "broken"); err != nil {
+			t.Fatal(err)
+		}
+		_, _, paired, err := Paired(dir, NewStore(backend))
+		if paired || !errors.Is(err, ErrDamaged) {
+			t.Fatalf("Paired() = (%v, %v), want damaged entry error", paired, err)
+		}
+	})
+
+	t.Run("unreadable state", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(dir, "state.json"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		_, _, paired, err := Paired(dir, NewStore(NewMemoryBackend()))
+		if paired || !errors.Is(err, ErrStateUnreadable) {
+			t.Fatalf("Paired() = (%v, %v), want state read error", paired, err)
+		}
+	})
 }
 
 func TestStoreSaveVerified(t *testing.T) {
