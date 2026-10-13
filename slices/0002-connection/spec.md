@@ -4,14 +4,21 @@ Status: draft
 
 ## What the user does
 
-1. On the paired computer, the user starts the daemon in a terminal and
-   leaves it open:
+1. The user installs tervi and pairs the computer. Pairing also sets tervi up
+   to run in the background, and it connects at once:
 
    ```text
-   $ tervi daemon
-   tervi daemon started for http://localhost:8080 (bert-desktop)
-   10:42:01 ✓ Connected
+   $ go install ./cmd/tervi
+   $ tervi pair --server http://localhost:8080
+   ...
+   ✓ Paired successfully.
+   ✓ tervi now runs in the background and starts when you log in.
+   ✓ Connected.
+   $
    ```
+
+   `tervi pair` ends and the prompt comes back. The user can keep using the
+   terminal or close it; tervi stays connected in the background.
 
 2. The user opens `http://localhost:8080/machines` in a browser:
 
@@ -29,10 +36,16 @@ Status: draft
      Since:   10:42 (12 minutes)
    ```
 
-4. The user stops the server. Within a few seconds the daemon shows that it is
-   reconnecting, and keeps trying:
+4. The user stops the server. Within a few seconds `tervi status` shows that
+   tervi is reconnecting, and the daemon's log shows each try:
 
    ```text
+   $ tervi status
+   ○ Reconnecting to http://localhost:8080
+     Try 3, next in 4 seconds
+     Last error: connection refused
+
+   $ tervi logs
    10:55:13 ✗ Connection lost: the server closed the connection
    10:55:14 … Reconnecting (try 1)
    10:55:14 ✗ Connection refused. Next try in 2 seconds
@@ -41,31 +54,29 @@ Status: draft
 5. The user starts the server again. The daemon reconnects by itself, and the
    Machines page shows **Online** again.
 
-6. The user stops the daemon with Ctrl+C. The Machines page shows
-   `Offline · last seen 1 minute ago`.
+6. The user restarts the computer and logs in. Without typing anything, the
+   Machines page shows **Online** again within a few seconds.
 
-7. Pairing a new computer while its daemon runs connects it at once:
-
-   ```text
-   $ tervi pair --server http://localhost:8080
-   ...
-   ✓ Paired successfully.
-   ✓ Connected.
-   ```
+7. The user stops the daemon with `systemctl --user stop tervi`. The Machines
+   page shows `Offline · last seen 1 minute ago`. `tervi connect` starts it
+   again.
 
 ## Whole design (all slices, short)
 
 The worker runs a **daemon**: a long-running background program that keeps
-one connection to the server open. Short commands (`tervi pair`,
-`tervi connect`, `tervi status`) talk to the daemon on the same computer; they
-never hold the connection themselves. The server can only be reached by the
+one connection to the server open. systemd starts it when the user logs in, as
+a user service named `tervi`. The user never needs to start it by hand, but
+can, with `tervi daemon`. Short commands
+(`tervi pair`, `tervi connect`, `tervi status`) talk to the daemon on the same
+computer; they never hold the connection themselves. The server can only be reached by the
 worker calling it, so the worker always opens the connection, never the
 server.
 
 ```text
 tervi pair ────┐
-tervi connect ─┼── same computer ──►  tervi daemon  ── connection ──►  server
+tervi connect ─┼── same computer ──►  daemon        ── connection ──►  server
 tervi status ──┘                      reads "connect"                 Online / Offline
+                                      started by systemd at login
 ```
 
 `state.json` holds `connect`: whether this computer wants to be connected.
@@ -73,9 +84,8 @@ The daemon obeys it at all times.
 
 | Slice | Adds |
 | --- | --- |
-| 0002 (this one) | The daemon, started by hand; the connection; Online/Offline; `tervi status` and `tervi connect` |
-| 0003 | The daemon starts by itself when the user logs in (a systemd user service) |
-| Later | `tervi disconnect`, unpairing, revoking a machine from the server, running agents over this connection |
+| 0002 (this one) | The daemon as a systemd user service that starts at login; the connection; Online/Offline; `tervi status`, `tervi connect`, and `tervi logs` |
+| Later | `tervi disconnect`, unpairing (which also removes the service), revoking a machine from the server, running agents over this connection |
 
 ## Must always be true (this slice)
 
@@ -86,37 +96,74 @@ The daemon obeys it at all times.
 - R2. While `connect` is true, the daemon shall stay connected to the server,
   and reconnect whenever the connection is lost, with no limit on the number
   of tries.
-- R3. While `connect` is false, the daemon shall not try to connect.
-- R4. When the user runs `tervi connect`, the worker shall set `connect` to
-  true and the daemon shall connect. If it is already connected, the worker
-  shall print `Already connected.` and change nothing. If no daemon runs, the
-  worker shall set `connect` to true and print
-  `The tervi daemon isn't running. Start it with: tervi daemon`.
+- R3. While `connect` is false, the daemon shall keep running but not try to
+  connect. It shall still answer `tervi status` and `tervi connect`.
+- R4. When the user runs `tervi connect` on a paired computer, the worker shall
+  set `connect` to true, set up and start the background service if it is
+  missing or stopped (as in R5), and print `✓ Connected.` once connected. If
+  it is already connected, the worker shall print `Already connected.` and
+  change nothing. On a computer that is not paired, it shall print
+  `This computer isn't paired. Pair it with: tervi pair --server <url>` and
+  change nothing. When it is not connected:
+  - If the daemon has not connected within 30 seconds, `tervi connect` shall
+    print `Not connected yet: <last error>. tervi keeps trying in the background.`
+    and `Check with: tervi status`. The daemon keeps trying (R2).
+  - If the server rejects the credential (R20), it shall print
+    `✗ The server doesn't accept this computer's credential.` and
+    `Pair again with: tervi pair --server <server>`.
+  - If the background service cannot be set up or started, it shall say so
+    with the reason and print `Try again with: tervi connect`.
+
+  `tervi connect` shall exit with `0` when connected or already connected,
+  and `1` otherwise.
 
 **The daemon**
 
-- R5. The user shall start the daemon with `tervi daemon`. It shall run until
-  the user presses Ctrl+C, then print `Stopped.` and leave `connect` as it is.
-- R6. If a daemon is already running on the computer, then `tervi daemon`
-  shall print `tervi daemon is already running.` and stop.
-- R7. If the computer is not paired when the daemon starts, then the daemon
-  shall print `This computer isn't paired yet.` and
-  `Waiting for pairing. Run: tervi pair --server <url>`, keep running, and
-  connect as soon as pairing succeeds.
-- R8. The daemon shall print one line, with the time, each time the connection
-  changes (connected, lost with the reason, each reconnect try with the reason
-  it failed and the wait before the next), and nothing for the regular checks.
+- R5. When pairing succeeds, the worker shall set up the daemon as a systemd
+  user service named `tervi`, start it, and enable it so that it starts every
+  time the user logs in. The service shall run the same `tervi` program file
+  that set it up.
+- R6. If the daemon stops unexpectedly, systemd shall start it again after a
+  few seconds.
+- R7. At most one daemon shall run per user account. A second one shall exit
+  at once and leave the first one running.
+- R8. The daemon shall write one log line, with the time, each time the
+  connection changes (connected, lost with the reason, each reconnect try with
+  the reason it failed and the wait before the next), and nothing for the
+  regular checks. The log is kept by systemd's journal.
+- R32. When the user runs `tervi logs`, the worker shall print the
+  background daemon's log so far and exit. With `-f`, it shall then keep
+  printing new lines as they are written, until the user presses Ctrl+C.
+  The log of a daemon run by hand with `tervi daemon` is printed in its own
+  terminal instead (R30).
+- R28. If `tervi pair` or `tervi connect` runs from a temporary program file
+  (as `go run` creates), then it shall print
+  `tervi must be installed to run in the background. Install it with: go install ./cmd/tervi`
+  and stop. `tervi pair` shall do this before contacting the server.
+- R29. If the background service cannot be set up or started (for example,
+  systemd is not available), then the worker shall say so with the reason,
+  keep the pairing, and print `Try again with: tervi connect`.
+- R30. When the user runs `tervi daemon`, the worker shall run the daemon in
+  that terminal and print its log lines there, until the user presses Ctrl+C.
+  If a daemon is already running for this user account, it shall print
+  `tervi is already running in the background.` and exit.
 - R9. Between reconnect tries, the daemon shall wait 1, 2, 4, 8 ... seconds,
   at most 30 seconds, then keep trying every 30 seconds.
 
 **Pairing connects**
 
-- R10. When pairing succeeds while the daemon runs, the worker shall tell the
-  daemon, and the terminal shall show `✓ Paired successfully.` then
-  `✓ Connected.` once connected.
-- R11. When pairing succeeds while no daemon runs, the terminal shall show
-  `✓ Paired successfully.` then
-  `The tervi daemon isn't running. Start it with: tervi daemon`.
+- R10. When pairing succeeds, the terminal shall show `✓ Paired successfully.`,
+  then `✓ tervi now runs in the background and starts when you log in.`, then
+  `✓ Connected.` once the daemon is connected.
+- R11. If the daemon has not connected within 30 seconds after pairing, then
+  the terminal shall say that pairing is done but the connection is still
+  being tried, show the last error, and print `Check with: tervi status`.
+- R31. When `tervi pair` or `tervi connect` has printed its last line, it
+  shall exit and give the prompt back, leaving the daemon running in the
+  background. Closing that terminal, or running other commands in it, shall
+  not stop the daemon or its connection. The user works with the running
+  daemon through `tervi` commands, such as `tervi status` and
+  `tervi connect`.
 
 **Noticing the other side is gone**
 
@@ -141,7 +188,7 @@ The daemon obeys it at all times.
   - `● Connected to <server>`, with the machine name and since when;
   - `○ Reconnecting to <server>`, with the try number, the wait before the
     next try, and the last error;
-  - `✗ The tervi daemon isn't running.` with `Start it with: tervi daemon`;
+  - `✗ tervi isn't running in the background.` with `Start it with: tervi connect`;
   - `✗ This computer isn't paired.` with `Pair it with: tervi pair --server <url>`;
   - `✗ Not connecting: the server doesn't accept this computer's credential.`
     with `Pair again with: tervi pair --server <server>`.
@@ -185,9 +232,12 @@ The daemon obeys it at all times.
 
 ## Not in this slice
 
-- Starting the daemon at login (slice 3).
-- `tervi disconnect`, unpairing, and revoking a machine. Nothing in this slice
-  sets `connect` to false except a rejected credential (R18).
+- `tervi disconnect`, unpairing, removing the background service, and revoking
+  a machine. Nothing in this slice sets `connect` to false except a rejected
+  credential (R18).
+- Running in the background without logging in (systemd "linger"). Starting
+  by itself on Linux systems without systemd; there, the user runs
+  `tervi daemon`.
 - Sending any work over the connection: agents, files, terminals.
 - Sign-in, HTTPS, Windows, macOS.
 - Renaming machines.
@@ -201,8 +251,19 @@ None.
 - A daemon holds the connection, and short commands talk to it — the same
   design as Tailscale (`tailscaled` and `tailscale`); a short command cannot
   keep a connection open after it exits.
-- The daemon is started by hand in this slice, and by systemd in slice 3 —
-  each slice stays small; only who starts the daemon changes.
+- The daemon always runs by default: pairing sets it up as a systemd user
+  service that starts at login — the user wants it always on, like
+  `tailscaled`; starting it on demand would leave the computer offline after
+  every reboot until a command ran. `tervi daemon` also runs it by hand, like
+  `tailscaled` can be — for watching the log, or on a computer without
+  systemd.
+- A user service, not a system service — the credential is in the user's
+  GNOME Keyring, which unlocks only when the user logs in.
+- tervi must be installed (`go install`) before pairing — the service needs a
+  program file that stays in place; `go run` deletes its file when it exits.
+- The daemon keeps running while `connect` is false — like `tailscaled` after
+  `tailscale down`; exiting would make systemd restart it, and it would start
+  and exit again at every login.
 - `connect` in `state.json` is the source of truth for whether to connect —
   it survives restarts, and a later `tervi disconnect` only has to set it.
 - Newest connection wins — after a network drop, the worker reconnects before
