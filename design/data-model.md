@@ -210,7 +210,7 @@ up. Written by `tervi pair` and `tervi connect` when it is missing or its
 Description=tervi worker
 
 [Service]
-ExecStart=<full path of the installed tervi> daemon
+ExecStart="<full path of the installed tervi>" daemon
 Restart=on-failure
 RestartSec=5
 
@@ -220,7 +220,7 @@ WantedBy=default.target
 
 | Line | Meaning |
 | --- | --- |
-| `ExecStart` | The full path of the `tervi` program that wrote the file, so systemd finds it without the user's `PATH` |
+| `ExecStart` | The full path of the `tervi` program that wrote the file, so systemd finds it without the user's `PATH`. The path is in double quotes, so a path with a space stays one word; inside the quotes, `\` and `"` are written `\\` and `\"`, and systemd's special characters `%` and `$` are written `%%` and `$$` |
 | `Restart=on-failure`, `RestartSec=5` | Started again 5 seconds after it stops unexpectedly; a clean stop stays stopped |
 | `WantedBy=default.target` | Started each time the user logs in, once enabled |
 

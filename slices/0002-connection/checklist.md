@@ -126,7 +126,7 @@ command prints its exit code on the next line.
 | R8 | The exact log lines, and none for the checks | `TestLogLines`, `TestErrorTexts`, `TestDaemonPrintsLogLines` | ⬜ |
 | R9 | Each wait is within 0.8–1.2 × 1, 2, 4, 8, 16, 30 s, and resets after connecting | `TestReconnectWaits` | ⬜ |
 | R11 | The still-trying lines after pairing | `TestPairStillTrying` | ⬜ |
-| R12 | A close by either side is noticed at once; the server closes everything when it stops | `TestClientCloseNoticedAtOnce`, `TestServerCloseNoticedAtOnce`, `TestCloseAllOnStop`, `TestServerRestartEndToEnd` | ⬜ |
+| R12 | A close by either side is noticed at once; the server closes everything when it stops | `TestClientCloseNoticedAtOnce`, `TestServerCloseNoticedAtOnce`, `TestStopsCleanlyOnContextEnd`, `TestCloseAllOnStop`, `TestServerRestartEndToEnd` | ⬜ |
 | R13 | The worker side of the timeout, and the server side at short timings | `TestServerSilenceTimesOut`, `TestServerTimeout` | ⬜ |
 | R14 | The server's settings reach the worker in `hello` | `TestHelloCarriesTiming`, `TestUsesServerTiming`, `TestConnectionTimingSettings` | ⬜ |
 | R15 | Newest wins, the warning, and the replaced connection never removes the new one | `TestNewestWins`, `TestReplacedCloseKeepsNewEntry`, `TestListSafeUnderLoad`, `TestNewestWinsEndToEnd` | ⬜ |

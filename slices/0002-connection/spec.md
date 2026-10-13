@@ -278,6 +278,9 @@ quote. `<…>` is filled in.
 `<how long>` is `less than a minute`, `1 minute`, `N minutes`, `1 hour`,
 `N hours`, `1 day`, or `N days`.
 
+`<s> seconds` is written `1 second` when `<s>` is 1, here and in the
+daemon's log.
+
 **The daemon's log** (R8). Each line starts with the time, `HH:MM:SS`.
 
 | When | Line |
@@ -371,3 +374,8 @@ None.
   connection is open; storing it would go stale whenever the server stops.
 - The Machines page is plain HTML and JavaScript, like the approval page — the
   Theia interface replaces it later.
+- When `tervi connect` runs from a different installed `tervi` while already
+  connected, it switches the background service to that program file,
+  reconnects, and prints `✓ Connected.` (R5 wins over R4's "change nothing")
+  — the service must run the program the user just used; the connection
+  drops only for a moment. Decided during the slice review.

@@ -1,6 +1,6 @@
 # 0002 Connection — plan
 
-Status: draft
+Status: approved
 Spec: [spec.md](spec.md)
 
 ## Overview
@@ -207,10 +207,13 @@ with `0`.
   path of the installed `tervi` with `daemon`, restarts only after a crash
   (5 seconds later), and starts at login — `~/.config` is the folder for
   services a user sets up; systemd does not use the user's `PATH`; R6 asks
-  for a restart only when it stops unexpectedly.
+  for a restart only when it stops unexpectedly. The path is written in
+  double quotes (added after the task reviews: an unquoted path with a space
+  would be split by systemd).
   Not chosen: `~/.local/share/systemd/user/` — meant for software installed
   by a package; `ExecStart=tervi daemon` — systemd might not find it;
-  `Restart=always` — it would also restart after a clean stop.
+  `Restart=always` — it would also restart after a clean stop; an unquoted
+  path — breaks on a path with a space.
 - The worker and the server talk over one WebSocket that the worker opens
   and keeps open — both sides can send at any time, a close is noticed at
   once (R12), and later slices run agents and terminals over it.
