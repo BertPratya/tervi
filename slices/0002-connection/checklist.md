@@ -32,10 +32,15 @@ docker compose up -d
 go run ./cmd/server migrate       # should say: Database is up to date (version 2).
 go install ./cmd/tervi
 which tervi                       # should print a path ending in /go/bin/tervi
+systemctl --user stop tervi       # stops a daemon still running the old program
 ls -la ~/.config/tervi/           # see "Earlier pairings" below
 ```
 
 If `which tervi` prints nothing, add `$(go env GOPATH)/bin` to your `PATH`.
+`systemctl --user stop tervi` may say `Unit tervi.service not loaded.` on a
+computer that never ran tervi in the background; that is fine. It is needed
+because installing a new `tervi` does not restart a daemon that is already
+running the old one.
 
 **Earlier pairings.** If `ls` shows a `state.json` but no `credential.json`,
 this computer was paired before fix 4, with the credential in GNOME Keyring.
@@ -68,7 +73,7 @@ slice 1's.
 | 7 | slice 1 R23 | `tervi pair --server http://localhost:8080`, then press **Ctrl+C** at once | `Pairing cancelled. Nothing was saved.`, and it stops at once | ⬜ |
 | 8 | slice 1 R7, R12, R8 | `tervi pair --server http://localhost:8080`. Open the link, click **Accept** | Browser: `Type this code into the terminal of <your computer>:`, an 8-digit code like `4827-1934`, and `Never give this code to anyone.` Terminal: `✓ Approved in the browser.`, then `Type the code shown in the browser (expires at HH:MM, 5 tries left):`. The code itself is **not** in the terminal | ⬜ |
 | 9 | slice 1 R13 | Type a wrong code, for example `0000-0000` | `✗ Wrong code. 4 tries left.` | ⬜ |
-| 10 | slice 1 R17, R19, R10, R31 | Type the code from the browser | `✓ Code accepted.`, `✓ Credential saved.`, `Confirming with the server...`, `✓ Paired successfully.`, `✓ tervi now runs in the background and starts when the computer starts.`, `✓ Connected.`, and the prompt comes back. Browser: `✓ <your computer> is paired.` | ⬜ |
+| 10 | slice 1 R17, R19; R10, R31 | Type the code from the browser | `✓ Code accepted.`, `✓ Credential saved.`, `Confirming with the server...`, `✓ Paired successfully.`, `✓ tervi now runs in the background and starts when the computer starts.`, `✓ Connected.`, and the prompt comes back. Browser: `✓ <your computer> is paired.` | ⬜ |
 | 11 | slice 1 R2 | `tervi pair --server http://localhost:8080` again | `This computer is already paired with http://localhost:8080. Nothing was changed.` | ⬜ |
 
 **The credential file**
@@ -149,7 +154,7 @@ slice 1's.
 | --- | --- | --- | --- | --- |
 | 54 | R5 | Restart the computer (`sudo reboot`). Do **not** log in on its desktop. Wait about a minute, then connect terminal 1 again with the port forward | You can log in by SSH as usual | ⬜ |
 | 55 | R5 | Terminal 1: `systemctl --user show tervi -p ActiveEnterTimestamp; who am i` | The first time (when tervi started) is **earlier** than the time `who am i` shows for your login: tervi started at boot, before anyone logged in | ⬜ |
-| 56 | R5 | Terminal 1: `docker compose up -d`, then `go run ./cmd/server` (no `tervi` command). Open the page | Within about 40 seconds, the page shows Online | ⬜ |
+| 56 | R5 | Terminal 1, from the project folder: `docker compose up -d`, then `go run ./cmd/server` (no `tervi` command). Open the page | Within about 40 seconds, the page shows Online | ⬜ |
 
 **A rejected credential, and pairing again**
 

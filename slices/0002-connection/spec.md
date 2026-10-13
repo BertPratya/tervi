@@ -57,7 +57,7 @@ Status: approved
 
 6. The user restarts the computer. Without logging in or typing anything,
    tervi starts and connects again; the Machines page shows **Online** within
-   a few seconds of the server being reachable.
+   about 40 seconds of the server being reachable.
 
 7. The user stops the daemon with `systemctl --user stop tervi`. The Machines
    page shows `Offline · last seen 1 minute ago`. `tervi connect` starts it
@@ -251,7 +251,7 @@ The daemon obeys it at all times.
   before anyone logs in. If `tervi pair` cannot write that file, it shall
   print `✗ Can't write <path>.` and stop, before contacting the server.
 - R36. If `credential.json` can be read or written by any other account
-  (any permission beyond `0600`), or belongs to another account, then the
+  (any permission for group or others), or belongs to another account, then the
   worker shall not use it and never change its permissions itself.
   `tervi pair`, `tervi status`, and `tervi connect` shall print
   `✗ Other users may be able to read <path>, so tervi won't use it.` then

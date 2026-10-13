@@ -354,15 +354,24 @@ built; their task files point here.
 
 ### Requirements (copied from the spec)
 
+- R2. While `connect` is true, the daemon shall stay connected to the server,
+  and reconnect whenever the connection is lost, with no limit on the number
+  of tries.
 - R5. When pairing succeeds, the worker shall set up the daemon as a systemd
   user service named `tervi`, start it, and enable it so that it starts every
   time the computer starts, also when the user is not logged in: the worker
   turns on systemd's "linger" for the user's account
   (`loginctl enable-linger`). The service shall run the same `tervi` program
   file that set it up.
+- R8. The daemon shall write one log line, with the time, each time the
+  connection changes (connected, lost with the reason, each reconnect try with
+  the reason it failed and the wait before the next), and nothing for the
+  regular checks. The log is kept by systemd's journal.
 - R10. When pairing succeeds, the terminal shall show `✓ Paired successfully.`,
   then `✓ tervi now runs in the background and starts when the computer starts.`,
   then `✓ Connected.` once the daemon is connected.
+- R25. The credential shall never appear in terminal output, logs, the
+  Machines page, or `state.json`.
 - R29. If the background service cannot be set up or started (for example,
   systemd is not available, or linger cannot be turned on), then the worker
   shall say so with the reason, keep the pairing, and print
@@ -382,7 +391,7 @@ built; their task files point here.
   before anyone logs in. If `tervi pair` cannot write that file, it shall
   print `✗ Can't write <path>.` and stop, before contacting the server.
 - R36. If `credential.json` can be read or written by any other account
-  (any permission beyond `0600`), or belongs to another account, then the
+  (any permission for group or others), or belongs to another account, then the
   worker shall not use it and never change its permissions itself.
   `tervi pair`, `tervi status`, and `tervi connect` shall print
   `✗ Other users may be able to read <path>, so tervi won't use it.` then
@@ -408,15 +417,17 @@ built; their task files point here.
   folder with mode `0600`, sync it, and rename it over the target, so a
   crash never leaves a half-written file.
 - `Get`: a missing file returns `ErrNotFound`. Otherwise open the file and
-  check the opened file (not the path a second time): it must be a regular
-  file; its permission bits must have nothing for group or others
-  (`mode & 0o077 == 0`); and its owner must be this process's user. A
-  failed permission or owner check returns the new exported error
-  `ErrUnprotected` ("credential file is not private"). Never change the
-  file's mode.
-- The owner check compares with `os.Getuid()`. Give the backend an
-  unexported way to use another user ID, so a test can pretend the file
-  belongs to someone else.
+  check the opened file (not the path a second time). Its permission bits
+  must have nothing for group or others (`mode & 0o077 == 0`), and its
+  owner must be this process's user; a failed permission or owner check
+  returns the new exported error `ErrUnprotected` ("credential file is not
+  private"). Something that is not a regular file (a folder, for example)
+  is a plain read error, not `ErrUnprotected`, so it shows
+  `✗ Can't read <path>.`. Never change the file's mode.
+- The owner check compares with `os.Getuid()`. `NewFileBackend(dir)` calls
+  an unexported `newFileBackend(dir string, uid int) Backend` with
+  `os.Getuid()`; tests in package `credential` call `newFileBackend` with
+  another user ID to pretend the file belongs to someone else.
 - `Delete`: remove the file; a missing file is success.
 - `Store`, `Backend`, `Entry`, `Paired`, `ErrNotFound`, `ErrDamaged`, and
   `ErrStoreUnreadable` keep their names, so callers change little. Their
@@ -472,9 +483,11 @@ reason (or the error, when there is no output), as `runSystemctl` does, and
 runs no `systemctl` call; the callers then print R29's lines as they do
 today. The service file does not change.
 
-**6. The end-to-end test.** The worker in `test/e2e` uses
-`credential.NewFileBackend` on the test's temporary state folder instead
-of the in-memory store, so the real file is created, read, and deleted.
+**6. The end-to-end test.** Both worker fixtures in `test/e2e` (the
+connection fixture in `connection_helpers_test.go` and the pairing fixture
+in `pairing_test.go`) use `credential.NewFileBackend` on the test's
+temporary state folder instead of the in-memory store, so the real file is
+created, read, and deleted.
 `TestNoSecretsEndToEnd` also checks that `credential.json` has mode `0600`,
 and that the credential appears in no other file in the state folder or
 the service folder.
@@ -483,7 +496,8 @@ the service folder.
 
 - May create or change: `internal/worker/credential/`,
   `internal/worker/cli/`, `internal/worker/pair/` (the messages above
-  only), `internal/worker/daemon/errors.go`, `internal/worker/service/`,
+  only), `internal/worker/daemon/errors.go`,
+  `internal/worker/daemon/daemon_test.go`, `internal/worker/service/`,
   `cmd/tervi/main.go`, `test/e2e/`, `go.mod`, `go.sum`, and their tests.
   Existing tests may change to expect the new messages, the extra
   `loginctl` call, and the file backend.
@@ -499,8 +513,8 @@ the service folder.
 | `TestFileBackendMissingIsNotFound` — `Get` of a missing file is `ErrNotFound`; `Delete` of a missing file succeeds | R35 |
 | `TestFileBackendRefusesOpenPermissions` — modes `0640`, `0604`, `0660`, and `0644` each give `ErrUnprotected`, and the mode is unchanged afterwards | R36 |
 | `TestFileBackendRefusesOtherOwner` — a backend using another user ID gives `ErrUnprotected` | R36 |
-| `TestPairUnwritableCredentialStopsBeforeServer` — with a regular file where the state folder should be, `tervi pair` prints `✗ Can't write <path>.`, exits `1`, and sends no request to the server | R35 |
-| `TestCredentialFileMessages` — each message in the table above, with the full path, and no keyring hint anywhere in the worker's output | R35 |
+| `TestPairUnwritableCredentialStopsBeforeServer` — with an existing state folder of mode `0500` holding no `state.json` and no `credential.json` (and the real file backend), `tervi pair` prints `✗ Can't write <path>.`, exits `1`, and sends no request to the server; skipped when the test runs as root, which ignores the mode | R35 |
+| `TestCredentialFileMessages` — in `internal/worker/cli`: each message in the table above that `cli` prints, with the full path; in `internal/worker/pair` (a test of the same name there): the two `confirm.go` messages. No keyring hint anywhere in the worker's output | R35 |
 | `TestUnprotectedCredentialMessages` — with a `0644` `credential.json`, `tervi pair`, `tervi status`, and `tervi connect` each print the two lines and exit `1`, with no server request and no `systemctl` call; the mode is still `0644` | R36 |
 | `TestUnprotectedCredentialIsFailedTry` — the daemon with a real file backend and a `0644` file: the try fails with the last error above and its log line, `connect` stays true, and after the test sets `0600` the next try connects | R36, R2 |
 | `TestErrorTexts` — extended with the four texts above | R8, R36 |

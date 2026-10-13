@@ -180,3 +180,16 @@ pass. This task's row in `plan.md` changes to `done`.
 ## If anything is unclear
 
 Stop and report the question. Do not guess.
+
+## Decision during building: the credential file and linger (fix 4)
+
+The credential moved from the OS secret store to the private file
+`~/.config/tervi/credential.json` (spec R35, R36), and pairing turns on
+linger (R5). R10's line is now
+`✓ tervi now runs in the background and starts when the computer starts.`,
+and R33 removes `credential.json` instead of the secret store entry. Both
+worker fixtures in this task's tests use the real file backend on the
+test's state folder instead of the in-memory store, and
+`TestNoSecretsEndToEnd` also checks the file's mode and that the credential
+is in no other file. Task 05's section "Decision during building: the
+credential file and linger (fix 4)" has the full instruction.

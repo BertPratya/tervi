@@ -448,8 +448,10 @@ This slice has 11 design decisions, one more than the 10 after which
 `AGENTS.md` says a slice is probably too big. The user accepted 11 for this
 slice: a split into a server half and a worker half would leave neither
 half demonstrable end to end, and every decision was already made one at a
-time. Two more were made while trying the slice (fix 4): the credential
-file and linger, so the slice has 13.
+time. Two more were made by the user while trying the slice (fix 4): the
+credential file and linger, so the slice has 13. Whether the user accepts
+13 for this slice is asked in fix 4's report; a split is no longer
+possible, since every task is built.
 
 Fix 4 (the credential file and linger) is described in task 05's section
 "Decision during building: the credential file and linger (fix 4)"; tasks

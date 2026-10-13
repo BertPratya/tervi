@@ -165,7 +165,11 @@ the user's own account can read or write it; the folder is `0700`. Written
 once, at pairing, to a temporary file in the same folder that is then
 renamed over the old one. The worker refuses a file with any group or other
 permission, or owned by another account, and never changes its permissions
-itself (slice 0002, R36). Its content is JSON:
+itself (slice 0002, R36). Before a new pairing, `tervi pair` checks that it
+can store a file there by writing, reading, and removing
+`credential-check.json` in the same folder; it holds a fixed test value,
+nothing secret, and a crash at that moment can leave it behind harmlessly.
+Its content is JSON:
 
 ```json
 { "server": "http://localhost:8080", "credential": "<credential>" }

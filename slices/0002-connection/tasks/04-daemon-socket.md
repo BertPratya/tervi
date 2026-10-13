@@ -173,3 +173,11 @@ to `done`.
 ## If anything is unclear
 
 Stop and report the question. Do not guess.
+
+## Decision during building: the credential file (fix 4)
+
+The credential moved from the OS secret store to the private file
+`~/.config/tervi/credential.json` (spec R35, R36). Where this file says
+"secret store", read `credential.json`. Nothing in this task's code changes;
+task 05's section "Decision during building: the credential file and
+linger (fix 4)" has the full instruction.
