@@ -48,18 +48,17 @@ type connectedFixture struct {
 	runner         *fakeBackgroundRunner
 	controlClient  control.Client
 	workerEnv      cli.Env
-	workerRuns     []*liveWorkerRun
+	workerRuns     []*workerRun
 	machineAnswers []string
 	pageAnswers    []string
 	statusAnswers  []string
 	stateSnapshots []string
 }
 
-type liveWorkerRun struct {
-	input  *io.PipeWriter
-	stdout *safeBuffer
-	stderr *safeBuffer
-	done   chan int
+type backgroundDaemon struct {
+	done     chan int
+	finished chan struct{}
+	exitCode int
 }
 
 type backgroundCall struct {
@@ -72,7 +71,7 @@ type fakeBackgroundRunner struct {
 	ctx     context.Context
 	env     cli.Env
 	calls   []backgroundCall
-	daemons []chan int
+	daemons []*backgroundDaemon
 }
 
 func (runner *fakeBackgroundRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
@@ -85,12 +84,14 @@ func (runner *fakeBackgroundRunner) Run(ctx context.Context, name string, args .
 		return "", ctx.Err()
 	}
 	if startDaemon {
-		done := make(chan int, 1)
+		daemon := &backgroundDaemon{done: make(chan int, 1), finished: make(chan struct{})}
 		runner.mu.Lock()
-		runner.daemons = append(runner.daemons, done)
+		runner.daemons = append(runner.daemons, daemon)
 		runner.mu.Unlock()
 		go func() {
-			done <- cli.Run(runner.ctx, []string{"daemon"}, runner.env, nil)
+			daemon.exitCode = cli.Run(runner.ctx, []string{"daemon"}, runner.env, nil)
+			daemon.done <- daemon.exitCode
+			close(daemon.finished)
 		}()
 	}
 	return "", nil
@@ -109,14 +110,48 @@ func (runner *fakeBackgroundRunner) callsSnapshot() []backgroundCall {
 func (runner *fakeBackgroundRunner) waitForDaemons(t *testing.T) {
 	t.Helper()
 	runner.mu.Lock()
-	daemons := append([]chan int(nil), runner.daemons...)
+	daemons := append([]*backgroundDaemon(nil), runner.daemons...)
 	runner.mu.Unlock()
 	for _, done := range daemons {
 		select {
-		case <-done:
+		case <-done.finished:
 		case <-time.After(connectionWait):
 			t.Error("fake service daemon did not exit after fixture cleanup")
 		}
+	}
+}
+
+func (runner *fakeBackgroundRunner) waitForDaemonExit(t *testing.T, index int, timeout time.Duration) int {
+	t.Helper()
+	runner.mu.Lock()
+	if index >= len(runner.daemons) {
+		runner.mu.Unlock()
+		t.Fatalf("fake service started %d daemons, want one at index %d", len(runner.daemons), index)
+	}
+	daemon := runner.daemons[index]
+	runner.mu.Unlock()
+	select {
+	case <-daemon.finished:
+		return daemon.exitCode
+	case <-time.After(timeout):
+		t.Fatalf("fake daemon %d did not exit before timeout", index+1)
+		return -1
+	}
+}
+
+func (runner *fakeBackgroundRunner) daemonDoneIsEmpty(index int) bool {
+	runner.mu.Lock()
+	if index >= len(runner.daemons) {
+		runner.mu.Unlock()
+		return false
+	}
+	daemon := runner.daemons[index]
+	runner.mu.Unlock()
+	select {
+	case <-daemon.finished:
+		return false
+	default:
+		return len(daemon.done) == 0
 	}
 }
 
@@ -200,11 +235,11 @@ func (f *connectedFixture) close() {
 	f.runner.waitForDaemons(f.t)
 }
 
-func (f *connectedFixture) startPair(parent context.Context) *liveWorkerRun {
+func (f *connectedFixture) startPair(parent context.Context) *workerRun {
 	f.t.Helper()
 	stdin, input := io.Pipe()
 	stdout, stderr := &safeBuffer{}, &safeBuffer{}
-	run := &liveWorkerRun{input: input, stdout: stdout, stderr: stderr, done: make(chan int, 1)}
+	run := &workerRun{input: input, stdout: stdout, stderr: stderr, done: make(chan int, 1)}
 	env := f.workerEnv
 	env.Stdin, env.Stdout, env.Stderr = stdin, stdout, stderr
 	f.workerRuns = append(f.workerRuns, run)
@@ -337,7 +372,7 @@ func pairLiveMachine(t *testing.T, f *connectedFixture) livePair {
 	return completeLivePair(t, f, f.startPair(context.Background()))
 }
 
-func completeLivePair(t *testing.T, f *connectedFixture, run *liveWorkerRun) livePair {
+func completeLivePair(t *testing.T, f *connectedFixture, run *workerRun) livePair {
 	t.Helper()
 	approvalKey := waitForApprovalKey(t, run.stdout)
 	pageResponse, err := http.Get(f.serverURL + "/pair/" + approvalKey)
@@ -357,9 +392,9 @@ func completeLivePair(t *testing.T, f *connectedFixture, run *liveWorkerRun) liv
 	if approval.PairingCode == "" {
 		t.Fatal("approval API omitted pairing code")
 	}
-	waitFor(t, run.stdout, "Code: ")
-	writeLiveCode(t, run, approval.PairingCode)
-	if code := awaitLiveRun(t, run); code != 0 {
+	waitFor(t, run.stdout, "Code: ", connectionWait)
+	writeCode(t, run, approval.PairingCode, connectionWait)
+	if code := awaitRun(t, run, connectionWait); code != 0 {
 		t.Fatalf("pair worker exit = %d", code)
 	}
 	wantOutput := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when you log in.\n✓ Connected.\n"
@@ -368,8 +403,8 @@ func completeLivePair(t *testing.T, f *connectedFixture, run *liveWorkerRun) liv
 	}
 	waitForLogCount(t, f.daemonLogs, "✓ Connected to "+f.serverURL, len(f.workerRuns), connectionWait)
 	state := f.stateSnapshot(t)
-	if !state.Connect || state.StopReason != nil {
-		t.Errorf("state after connect = %+v, want connect true and no stop reason", state)
+	if !state.CredentialSaved || !state.Confirmed || state.MachineID == "" || !state.Connect || state.StopReason != nil {
+		t.Errorf("state after connect = %+v, want saved confirmed pairing, non-empty machine ID, connect true, and no stop reason", state)
 	}
 	entry, exists, err := f.store.Get()
 	if err != nil || !exists || entry.Credential.Reveal() == "" {
@@ -390,19 +425,7 @@ type livePair struct {
 	pairingCode string
 	credential  string
 	machineID   string
-	run         *liveWorkerRun
-}
-
-func waitForLog(t *testing.T, output *safeBuffer, wanted string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if strings.Contains(output.String(), wanted) {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("log did not contain %q before timeout", wanted)
+	run         *workerRun
 }
 
 func waitForLogCount(t *testing.T, output *safeBuffer, wanted string, count int, timeout time.Duration) {
@@ -477,37 +500,6 @@ func assertNoConnectionSecret(t *testing.T, audit connectionAudit) {
 		if strings.Contains(audit.contents, value) {
 			t.Error("credential appeared in captured terminal output, logs, Machines responses, or state.json")
 		}
-	}
-}
-
-func writeLiveCode(t *testing.T, run *liveWorkerRun, code string) {
-	t.Helper()
-	written := make(chan error, 1)
-	go func() {
-		_, err := io.WriteString(run.input, code+"\n")
-		written <- err
-	}()
-	select {
-	case err := <-written:
-		if err != nil {
-			t.Fatalf("write code to live worker: %v", err)
-		}
-	case <-time.After(connectionWait):
-		_ = run.input.Close()
-		t.Fatal("live worker did not read pairing code before timeout")
-	}
-}
-
-func awaitLiveRun(t *testing.T, run *liveWorkerRun) int {
-	t.Helper()
-	select {
-	case code := <-run.done:
-		_ = run.input.Close()
-		return code
-	case <-time.After(connectionWait):
-		_ = run.input.Close()
-		t.Fatal("live worker did not exit before timeout")
-		return -1
 	}
 }
 

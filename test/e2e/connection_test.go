@@ -34,7 +34,7 @@ func TestServerRestartEndToEnd(t *testing.T) {
 	f := newConnectedFixture(t)
 	paired := pairLiveMachine(t, f)
 	f.stopServer()
-	waitForLog(t, f.daemonLogs, "✗ Connection lost: the server is stopping", time.Second)
+	waitFor(t, f.daemonLogs, "✗ Connection lost: the server is stopping", time.Second)
 	waitForControlState(t, f.controlClient, "reconnecting", connectionWait)
 	if code, output := f.status(t); code != 1 || !strings.Contains(output, "○ Reconnecting to "+f.serverURL) {
 		t.Errorf("tervi status while stopped exit = %d, contains reconnecting status = %t", code, strings.Contains(output, "○ Reconnecting to "+f.serverURL))
@@ -64,7 +64,7 @@ func TestNewestWinsEndToEnd(t *testing.T) {
 	testConnection := dialMachineConnection(t, f.serverURL, paired.credential)
 	defer testConnection.CloseNow()
 
-	waitForLog(t, f.daemonLogs, "✗ Connection lost: replaced by a newer connection", connectionWait)
+	waitFor(t, f.daemonLogs, "✗ Connection lost: replaced by a newer connection", connectionWait)
 	if machine := f.machine(t, paired.machineID); !machine.Online {
 		t.Fatal("machine went Offline when its first connection was replaced")
 	}
@@ -124,7 +124,7 @@ func rejectAndPairAgain(t *testing.T, f *connectedFixture) (livePair, livePair) 
 		t.Fatalf("rejected %d machine rows, want 1", tag.RowsAffected())
 	}
 	f.stopServer()
-	waitForLog(t, f.daemonLogs, "✗ Connection lost: the server is stopping", connectionWait)
+	waitFor(t, f.daemonLogs, "✗ Connection lost: the server is stopping", connectionWait)
 	f.startServer(nil)
 	waitForCredentialRejected(t, f.controlClient, connectionWait)
 	state := f.stateSnapshot(t)
@@ -143,7 +143,7 @@ func rejectAndPairAgain(t *testing.T, f *connectedFixture) (livePair, livePair) 
 	}
 
 	run := f.startPair(context.Background())
-	waitFor(t, run.stdout, "The server no longer accepts this computer's credential. Starting a new pairing.")
+	waitFor(t, run.stdout, "The server no longer accepts this computer's credential. Starting a new pairing.", connectionWait)
 	newPair := completeLivePair(t, f, run)
 	if !strings.HasPrefix(run.stdout.String(), "The server no longer accepts this computer's credential. Starting a new pairing.\n") {
 		t.Error("re-pair output omitted the R33 message")
@@ -151,8 +151,48 @@ func rejectAndPairAgain(t *testing.T, f *connectedFixture) (livePair, livePair) 
 	if oldPair.credential == newPair.credential {
 		t.Error("re-pair reused the rejected credential")
 	}
+	assertRePairCalls(t, f.runner.callsSnapshot())
+	if code := f.runner.waitForDaemonExit(t, 1, connectionWait); code != 0 {
+		t.Errorf("second fake daemon exit = %d, want 0", code)
+	}
+	waitFor(t, f.daemonLogs, "tervi is already running in the background.", connectionWait)
+	if !f.runner.daemonDoneIsEmpty(0) {
+		t.Error("first fake daemon done channel was not empty after re-pair")
+	}
+	assertReconnectedAfterRejection(t, f.daemonLogs, f.serverURL)
 	f.machinesPage(t)
 	return oldPair, newPair
+}
+
+func assertRePairCalls(t *testing.T, calls []backgroundCall) {
+	t.Helper()
+	var starts []string
+	for _, call := range calls {
+		if call.name != "systemctl" {
+			continue
+		}
+		command := strings.Join(call.args, " ")
+		if command == "--user restart tervi" || command == "--user enable --now tervi" {
+			starts = append(starts, command)
+		}
+	}
+	if len(starts) != 2 || starts[0] != "--user restart tervi" || starts[1] != "--user enable --now tervi" {
+		t.Errorf("fake systemd start calls = %s, want initial restart followed by re-pair enable --now", formatBackgroundCalls(calls))
+	}
+}
+
+func assertReconnectedAfterRejection(t *testing.T, logs *safeBuffer, serverURL string) {
+	t.Helper()
+	contents := logs.String()
+	rejected := "✗ The server doesn't accept this computer's credential. Pair again with: tervi pair --server " + serverURL
+	connected := "✓ Connected to " + serverURL
+	rejectedAt := strings.Index(contents, rejected)
+	if rejectedAt < 0 {
+		t.Fatalf("daemon log omitted rejection line %q", rejected)
+	}
+	if connectedAt := strings.Index(contents[rejectedAt+len(rejected):], connected); connectedAt < 0 {
+		t.Errorf("daemon log had no later %q line after rejection", connected)
+	}
 }
 
 func waitForCredentialRejected(t *testing.T, client control.Client, timeout time.Duration) {
