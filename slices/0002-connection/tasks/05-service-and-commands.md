@@ -264,7 +264,9 @@ time `15:04`, then the time since, rounded down:
 | otherwise | `1 day`, `N days` |
 
 Exit `0` only when connected. For the rejected lines, `<server>` comes from
-the secret store entry.
+the secret store entry. For `○ Reconnecting to <server>` too, when the
+daemon's answer has an empty `server`, `<server>` comes from the secret store
+entry that step 1 read, so it is never blank (added during fix 1).
 
 While a try is under way (`next_try_in_seconds` is `0`), the second line is
 `  Try <n>, trying now` instead of `  Try <n>, next in <s> seconds`
