@@ -85,15 +85,15 @@ func RuntimeDir() (string, error) {
 func statusAnswer(status daemon.Status) StatusAnswer {
 	answer := StatusAnswer{State: status.State}
 	switch status.State {
-	case "connected":
+	case daemon.StateConnected:
 		answer.Server = status.Server
 		answer.Since = status.ConnectedSince.Format(time.RFC3339)
-	case "reconnecting":
+	case daemon.StateReconnecting:
 		answer.Server = status.Server
 		answer.Try = status.Try
 		answer.NextTryInSeconds = status.NextTryInSeconds
 		answer.LastError = optionalText(status.LastError)
-	case "not_connecting":
+	case daemon.StateNotConnecting:
 		answer.StopReason = status.StopReason
 	}
 	return answer
@@ -102,15 +102,15 @@ func statusAnswer(status daemon.Status) StatusAnswer {
 func (answer StatusAnswer) MarshalJSON() ([]byte, error) {
 	wire := statusAnswerJSON{State: answer.State}
 	switch answer.State {
-	case "connected":
+	case daemon.StateConnected:
 		wire.Server = &answer.Server
 		wire.Since = &answer.Since
-	case "reconnecting":
+	case daemon.StateReconnecting:
 		wire.Server = &answer.Server
 		wire.Try = &answer.Try
 		wire.NextTryInSeconds = &answer.NextTryInSeconds
 		wire.LastError = nullableString(answer.LastError)
-	case "not_connecting":
+	case daemon.StateNotConnecting:
 		wire.StopReason = nullableString(answer.StopReason)
 	}
 	return json.Marshal(wire)
@@ -146,9 +146,9 @@ func (answer *StatusAnswer) UnmarshalJSON(data []byte) error {
 func connectAnswer(result daemon.ConnectResult) ConnectAnswer {
 	answer := ConnectAnswer{Result: result.Result}
 	switch result.Result {
-	case "still_trying":
+	case daemon.ResultStillTrying:
 		answer.LastError = optionalText(result.LastError)
-	case "failed":
+	case daemon.ResultFailed:
 		answer.Path = result.Path
 	}
 	return answer
@@ -157,9 +157,9 @@ func connectAnswer(result daemon.ConnectResult) ConnectAnswer {
 func (answer ConnectAnswer) MarshalJSON() ([]byte, error) {
 	wire := connectAnswerJSON{Result: answer.Result}
 	switch answer.Result {
-	case "still_trying":
+	case daemon.ResultStillTrying:
 		wire.LastError = nullableString(answer.LastError)
-	case "failed":
+	case daemon.ResultFailed:
 		wire.Path = &answer.Path
 	}
 	return json.Marshal(wire)

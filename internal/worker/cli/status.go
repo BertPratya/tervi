@@ -10,6 +10,8 @@ import (
 
 	"github.com/bertpratya/tervi/internal/worker/control"
 	"github.com/bertpratya/tervi/internal/worker/credential"
+	"github.com/bertpratya/tervi/internal/worker/daemon"
+	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
 func runStatus(ctx context.Context, args []string, env Env) int {
@@ -50,21 +52,21 @@ func runStatus(ctx context.Context, args []string, env Env) int {
 	}
 
 	switch answer.State {
-	case "connected":
+	case daemon.StateConnected:
 		printConnectedStatus(env.Stdout, answer, entry)
 		return 0
-	case "reconnecting":
+	case daemon.StateReconnecting:
 		printReconnectingStatus(env.Stdout, answer, entry)
 		return 1
-	case "not_connecting":
-		if answer.StopReason != nil && *answer.StopReason == "credential_rejected" {
+	case daemon.StateNotConnecting:
+		if answer.StopReason != nil && *answer.StopReason == state.StopReasonCredentialRejected {
 			printRejectedStatus(env.Stdout, entry.Server)
 		} else {
 			fmt.Fprintln(env.Stdout, "○ Not connecting.")
 			fmt.Fprintln(env.Stdout, "  Connect with: tervi connect")
 		}
 		return 1
-	case "not_paired":
+	case daemon.StateNotPaired:
 		printStatusNotPaired(env.Stdout)
 		return 1
 	default:
@@ -109,7 +111,7 @@ func printReconnectingStatus(output io.Writer, answer control.StatusAnswer, entr
 	if answer.NextTryInSeconds == 0 {
 		fmt.Fprintf(output, "  Try %d, trying now\n", answer.Try)
 	} else {
-		fmt.Fprintf(output, "  Try %d, next in %d seconds\n", answer.Try, answer.NextTryInSeconds)
+		fmt.Fprintf(output, "  Try %d, next in %s\n", answer.Try, daemon.SecondsText(answer.NextTryInSeconds))
 	}
 	if answer.LastError != nil && *answer.LastError != "" {
 		fmt.Fprintf(output, "  Last error: %s\n", redactText(*answer.LastError, entry))

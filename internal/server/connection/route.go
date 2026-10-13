@@ -23,7 +23,7 @@ type connectionHandler struct {
 }
 
 func (handler connectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	finishHandler := handler.deps.List.trackHandler()
+	setHandlerConnection, finishHandler := handler.deps.List.trackHandler()
 	defer finishHandler()
 
 	if _, hasOrigin := r.Header["Origin"]; hasOrigin {
@@ -55,6 +55,7 @@ func (handler connectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		return
 	}
+	setHandlerConnection(conn)
 	conn.SetReadLimit(protocol.MaxMessageSize)
 	openedAt := time.Now()
 	lastMessageReceived := openedAt
@@ -199,7 +200,7 @@ func (handler connectionHandler) readMessages(conn *websocket.Conn, machineID st
 				}
 			}
 			if messageType == protocol.TypePing {
-				if err := writeMessage(conn, []byte(`{"type":"pong"}`)); err != nil {
+				if err := writeMessage(conn, protocol.PongMessage()); err != nil {
 					_ = conn.CloseNow()
 					return
 				}

@@ -60,3 +60,17 @@ func ReadType(data []byte) (string, bool) {
 	}
 	return messageType, true
 }
+
+// PingMessage returns the encoded application keepalive sent by the worker.
+func PingMessage() []byte { return marshalMessage(Ping{Type: TypePing}) }
+
+// PongMessage returns the encoded answer sent by the server to a ping.
+func PongMessage() []byte { return marshalMessage(Pong{Type: TypePong}) }
+
+func marshalMessage(message any) []byte {
+	data, err := json.Marshal(message)
+	if err != nil {
+		panic(err)
+	}
+	return data
+}

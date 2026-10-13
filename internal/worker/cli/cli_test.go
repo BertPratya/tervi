@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bertpratya/tervi/internal/secret"
 	"github.com/bertpratya/tervi/internal/worker/control"
 	"github.com/bertpratya/tervi/internal/worker/credential"
 	"github.com/bertpratya/tervi/internal/worker/state"
@@ -245,6 +246,11 @@ func TestDaemonCommandStops(t *testing.T) {
 func TestDaemonPrintsLogLines(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	env, _, _, stdout, stderr := usageEnv(t)
+	store := credential.NewStore(credential.NewMemoryBackend())
+	if err := store.Save(credential.Entry{Server: "http://127.0.0.1:1", Credential: secret.FromString("daemon-log-test-credential")}); err != nil {
+		t.Fatal(err)
+	}
+	env.Store = store
 	if err := state.WriteState(env.StateDir, state.State{MachineID: "machine", CredentialSaved: true, Confirmed: true, Connect: true}); err != nil {
 		t.Fatal(err)
 	}

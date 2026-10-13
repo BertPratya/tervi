@@ -128,6 +128,7 @@ func (tracker *handlerTracker) ServeHTTP(w http.ResponseWriter, request *http.Re
 	tracker.mu.Lock()
 	if tracker.stopping {
 		tracker.mu.Unlock()
+		http.Error(w, "daemon is stopping", http.StatusServiceUnavailable)
 		return
 	}
 	tracker.active.Add(1)

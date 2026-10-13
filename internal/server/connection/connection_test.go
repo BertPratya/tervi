@@ -216,14 +216,20 @@ func TestLastSeenWriteFailureKeepsConnectionOpen(t *testing.T) {
 	if message := readJSON(t, conn); message["type"] != protocol.TypePong {
 		t.Fatalf("response after last_seen_at failure = %#v, want pong", message)
 	}
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"ping"}`)); err != nil {
+		t.Fatalf("send second ping after last_seen_at failure: %v", err)
+	}
+	if message := readJSON(t, conn); message["type"] != protocol.TypePong {
+		t.Fatalf("response after second last_seen_at failure = %#v, want pong", message)
+	}
 	if !f.list.Online(testMachineID) {
 		t.Fatal("connection is not Online after last_seen_at write failure")
 	}
 	if got := f.logs.String(); !strings.Contains(got, `kind="write last seen"`) {
 		t.Fatalf("log = %q, want write last seen kind", got)
 	}
-	if got := strings.Count(f.logs.String(), `kind="write last seen"`); got < 2 {
-		t.Fatalf("last_seen_at write failure log count = %d, want connect failure and retry on message", got)
+	if got := strings.Count(f.logs.String(), `kind="write last seen"`); got < 3 {
+		t.Fatalf("last_seen_at write failure log count = %d, want connect failure and retries on both messages", got)
 	}
 }
 
@@ -536,6 +542,8 @@ func (c *testSocket) Close(code websocket.StatusCode, _ string) error {
 	return nil
 }
 
+func (c *testSocket) CloseNow() error { return nil }
+
 func TestOnlineListStartsEmpty(t *testing.T) {
 	list := NewList()
 	if list.Online("machine") || len(list.OnlineIDs()) != 0 {
@@ -619,6 +627,53 @@ func TestLastSeen(t *testing.T) {
 	if age := time.Since(final); age < time.Second || age > 2*time.Second {
 		t.Fatalf("final last_seen_at age = %s, want about one second since the last message", age)
 	}
+}
+
+func TestLastSeenThresholdUsesTenSecondInterval(t *testing.T) {
+	f := newRouteFixture(t, 10*time.Second, 90*time.Second)
+	conn, _, err := f.dial(t, testCredential, nil)
+	if err != nil {
+		t.Fatalf("open WebSocket: %v", err)
+	}
+	_ = readJSON(t, conn)
+	var first time.Time
+	if err := f.pool.QueryRow(context.Background(), `SELECT last_seen_at FROM machines WHERE machine_id = $1`, testMachineID).Scan(&first); err != nil {
+		t.Fatalf("read connect last_seen_at: %v", err)
+	}
+	threshold := 50 * time.Second
+	f.clock.Advance(threshold - time.Millisecond)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"ping"}`)); err != nil {
+		t.Fatalf("send just-before-threshold ping: %v", err)
+	}
+	if message := readJSON(t, conn); message["type"] != protocol.TypePong {
+		t.Fatalf("just-before-threshold response = %#v, want pong", message)
+	}
+	var before time.Time
+	if err := f.pool.QueryRow(context.Background(), `SELECT last_seen_at FROM machines WHERE machine_id = $1`, testMachineID).Scan(&before); err != nil {
+		t.Fatalf("read last_seen_at before threshold: %v", err)
+	}
+	if !before.Equal(first) {
+		t.Fatalf("last_seen_at changed before 50 second threshold: %s to %s", first, before)
+	}
+	f.clock.Advance(time.Millisecond)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"ping"}`)); err != nil {
+		t.Fatalf("send at-threshold ping: %v", err)
+	}
+	if message := readJSON(t, conn); message["type"] != protocol.TypePong {
+		t.Fatalf("at-threshold response = %#v, want pong", message)
+	}
+	deadline := time.Now().Add(time.Second)
+	var after time.Time
+	for time.Now().Before(deadline) {
+		if err := f.pool.QueryRow(context.Background(), `SELECT last_seen_at FROM machines WHERE machine_id = $1`, testMachineID).Scan(&after); err != nil {
+			t.Fatalf("read last_seen_at after threshold: %v", err)
+		}
+		if after.After(before) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("last_seen_at did not update at the 50 second threshold: %s", after)
 }
 
 func TestOversizedMessageCloses(t *testing.T) {

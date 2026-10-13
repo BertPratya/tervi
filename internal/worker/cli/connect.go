@@ -10,6 +10,7 @@ import (
 
 	"github.com/bertpratya/tervi/internal/worker/control"
 	"github.com/bertpratya/tervi/internal/worker/credential"
+	"github.com/bertpratya/tervi/internal/worker/daemon"
 	"github.com/bertpratya/tervi/internal/worker/service"
 )
 
@@ -118,7 +119,7 @@ func printServiceStartFailure(output io.Writer, err error, entry credential.Entr
 }
 
 func printControlFailure(output io.Writer, err error, entry credential.Entry) {
-	fmt.Fprintf(output, "✗ Can't reach tervi in the background: %s\n", redactText(err.Error(), entry))
+	printStatusControlFailure(output, err, entry)
 	fmt.Fprintln(output, "Check with: tervi status")
 }
 
@@ -151,26 +152,26 @@ func handleConnectResult(ctx context.Context, output io.Writer, answer control.C
 		return 1
 	}
 	switch answer.Result {
-	case "connected":
+	case daemon.ResultConnected:
 		fmt.Fprintln(output, "✓ Connected.")
 		return 0
-	case "already_connected":
+	case daemon.ResultAlreadyConnected:
 		message := behavior.alreadyConnectedMessage
 		if message == "" {
 			message = "✓ Connected."
 		}
 		fmt.Fprintln(output, message)
 		return 0
-	case "still_trying":
+	case daemon.ResultStillTrying:
 		printStillTrying(output, answer.LastError, entry, behavior.stillTryingPrefix)
 		return behavior.stillTryingExitCode
-	case "failed":
+	case daemon.ResultFailed:
 		printConnectWriteFailure(output, answer.Path, entry)
 		return 1
-	case "rejected":
+	case daemon.ResultRejected:
 		printConnectRejected(output, entry.Server)
 		return 1
-	case "not_paired":
+	case daemon.ResultNotPaired:
 		printConnectNotPaired(output)
 		return 1
 	default:

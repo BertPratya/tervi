@@ -188,7 +188,7 @@ func TestPairHandsOver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve /usr/bin/true: %v", err)
 	}
-	if !strings.Contains(string(contents), "ExecStart="+programPath+" daemon\n") {
+	if !strings.Contains(string(contents), "ExecStart=\""+programPath+"\" daemon\n") {
 		t.Errorf("service file uses wrong program: %q", contents)
 	}
 	otherServiceFile := filepath.Join(os.Getenv("HOME"), ".config", "systemd", "user", "tervi.service")

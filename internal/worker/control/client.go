@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"time"
+
+	"github.com/bertpratya/tervi/internal/worker/daemon"
 )
 
 // Client sends requests to the daemon in a user's runtime directory.
@@ -39,7 +41,7 @@ func (client Client) Connect(ctx context.Context) (ConnectAnswer, error) {
 	outcome := request(ctx, client.RuntimeDir, http.MethodPost, "/connect", connectTimeout, &answer)
 	if outcome.err != nil {
 		if outcome.socketReached && outcome.deadlineExceeded {
-			return ConnectAnswer{Result: "still_trying"}, nil
+			return ConnectAnswer{Result: daemon.ResultStillTrying}, nil
 		}
 		return ConnectAnswer{}, outcome.err
 	}
@@ -72,6 +74,12 @@ func request(ctx context.Context, runtimeDir, method, path string, timeout time.
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		if response.StatusCode == http.StatusServiceUnavailable {
+			return requestOutcome{
+				socketReached: reachedSocket.Load(),
+				err:           fmt.Errorf("%w: daemon is stopping", ErrNotRunning),
+			}
+		}
 		return requestOutcome{
 			socketReached: reachedSocket.Load(),
 			err:           fmt.Errorf("daemon answered HTTP %d", response.StatusCode),

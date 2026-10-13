@@ -15,26 +15,33 @@ func (d *Daemon) Connect(ctx context.Context) ConnectResult {
 	}
 	d.connectMu.Lock()
 	defer d.connectMu.Unlock()
+	if ctx.Err() != nil {
+		return ConnectResult{Result: ResultStillTrying}
+	}
 
 	entry, record, paired, err := credential.Paired(d.opts.StateDir, d.opts.Store)
 	if err != nil && isStateReadError(err) {
 		lastError, _ := errorText(err, nil, "")
-		return ConnectResult{Result: "still_trying", LastError: lastError}
+		return ConnectResult{Result: ResultStillTrying, LastError: lastError}
 	}
 	if !record.Confirmed || !paired && err == nil {
-		return ConnectResult{Result: "not_paired"}
+		return ConnectResult{Result: ResultNotPaired}
 	}
-	if d.Status().State == "connected" {
-		return ConnectResult{Result: "already_connected"}
+	if d.Status().State == StateConnected {
+		return ConnectResult{Result: ResultAlreadyConnected}
 	}
 	record.Connect = true
 	record.StopReason = nil
 	if writeErr := state.WriteState(d.opts.StateDir, record); writeErr != nil {
-		return ConnectResult{Result: "failed", Path: state.StatePath(d.opts.StateDir)}
+		return ConnectResult{Result: ResultFailed, Path: state.StatePath(d.opts.StateDir)}
 	}
 	d.mu.Lock()
 	d.enabled = true
-	d.setStatusLocked(Status{State: "reconnecting", Server: entry.Server, Try: 1, NextTry: d.opts.Now(), LastError: d.status.LastError})
+	if entry.Server == "" {
+		d.setStatusLocked(Status{State: StateNotConnecting, LastError: d.status.LastError})
+	} else {
+		d.setStatusLocked(Status{State: StateReconnecting, Server: entry.Server, Try: 1, NextTry: d.opts.Now(), LastError: d.status.LastError})
+	}
 	d.mu.Unlock()
 	d.signal()
 	return d.waitForConnect(ctx)
@@ -52,17 +59,17 @@ func (d *Daemon) waitForConnect(ctx context.Context) ConnectResult {
 			status.StopReason = &reason
 		}
 		d.mu.Unlock()
-		if status.State == "connected" {
-			return ConnectResult{Result: "connected"}
+		if status.State == StateConnected {
+			return ConnectResult{Result: ResultConnected}
 		}
-		if status.State == "not_connecting" && status.StopReason != nil && *status.StopReason == "credential_rejected" {
-			return ConnectResult{Result: "rejected", LastError: status.LastError}
+		if status.State == StateNotConnecting && status.StopReason != nil && *status.StopReason == state.StopReasonCredentialRejected {
+			return ConnectResult{Result: ResultRejected, LastError: status.LastError}
 		}
 		select {
 		case <-ctx.Done():
-			return ConnectResult{Result: "still_trying", LastError: d.Status().LastError}
+			return ConnectResult{Result: ResultStillTrying, LastError: d.Status().LastError}
 		case <-timer.C:
-			return ConnectResult{Result: "still_trying", LastError: d.Status().LastError}
+			return ConnectResult{Result: ResultStillTrying, LastError: d.Status().LastError}
 		case <-changed:
 		}
 	}
@@ -72,7 +79,7 @@ func (d *Daemon) reject(server string) {
 	record, exists, err := state.ReadState(d.opts.StateDir)
 	if err == nil && exists {
 		record.Connect = false
-		reason := "credential_rejected"
+		reason := state.StopReasonCredentialRejected
 		record.StopReason = &reason
 		_ = state.WriteState(d.opts.StateDir, record)
 	}

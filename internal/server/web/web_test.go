@@ -93,6 +93,30 @@ func TestMachinesPageServed(t *testing.T) {
 	assertPageHeaders(t, testFile)
 }
 
+func TestMachinesPageAnnouncesOnlyFailureLineAndPreservesRowSpacing(t *testing.T) {
+	page, err := staticFiles.ReadFile("static/machines.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(page), `<main id="app" aria-live=`) {
+		t.Fatal("Machines page main element must not be a live region")
+	}
+	script, err := staticFiles.ReadFile("static/machines.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(script), `warning.setAttribute('aria-live', 'polite')`) {
+		t.Fatal("server failure line is not announced as a polite live region")
+	}
+	styles, err := staticFiles.ReadFile("static/machines.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(styles), `li { border-bottom: 1px solid #8886; padding: 0.8rem 0; white-space: pre-wrap; }`) {
+		t.Fatal("machine rows do not preserve their spacing")
+	}
+}
+
 func TestPageLoadsNothingExternal(t *testing.T) {
 	checkEmbeddedFiles(t, func(path string, contents []byte) {
 		if strings.Contains(string(contents), "http://") || strings.Contains(string(contents), "https://") {

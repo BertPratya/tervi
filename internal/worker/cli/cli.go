@@ -171,7 +171,7 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		printStoreReadFailure(env.Stdout)
 		return 1
 	}
-	if stateExists && record.Confirmed && entryExists && record.StopReason != nil && *record.StopReason == "credential_rejected" {
+	if stateExists && record.Confirmed && entryExists && record.StopReason != nil && *record.StopReason == state.StopReasonCredentialRejected {
 		return runRejectedRePair(ctx, env, flow, cmd.server)
 	}
 
