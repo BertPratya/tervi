@@ -1,8 +1,6 @@
-export const REFRESH_MS = 5000;
+import { shown } from './view.js';
 
-function shown(value) {
-  return typeof value === 'string' && value.length > 0 ? value : 'unknown';
-}
+export const REFRESH_MS = 5000;
 
 function timeAgo(seconds) {
   const value = Math.max(0, Math.floor(seconds));
@@ -34,8 +32,8 @@ export function view(state = {}) {
   return {
     heading: 'Machines',
     rows,
-    emptyMessage: rows.length === 0
-      ? "No machines yet. Pair one with: tervi pair --server <this page's address>"
+    emptyMessage: state.loaded === true && rows.length === 0
+      ? `No machines yet. Pair one with: tervi pair --server ${state.address}`
       : '',
     failureMessage: state.failed === true ? "Can't reach the server. Trying again…" : '',
   };

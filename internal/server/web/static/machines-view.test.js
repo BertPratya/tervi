@@ -55,10 +55,17 @@ test('view formats every last-seen time boundary', () => {
 });
 
 test('view describes an empty list', () => {
-  const result = view({ machines: [] });
+  const result = view({ machines: [], loaded: true, address: 'http://localhost:8080' });
 
-  assert.equal(result.emptyMessage, 'No machines yet. Pair one with: tervi pair --server <this page\'s address>');
+  assert.equal(result.emptyMessage, 'No machines yet. Pair one with: tervi pair --server http://localhost:8080');
   assert.deepEqual(result.rows, []);
+});
+
+test('view does not describe an unloaded list as empty', () => {
+  for (const failed of [false, true]) {
+    const result = view({ machines: [], failed, loaded: false, address: 'http://localhost:8080' });
+    assert.equal(result.emptyMessage, '');
+  }
 });
 
 test('view shows a request failure while keeping the last list', () => {

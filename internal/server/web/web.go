@@ -12,27 +12,14 @@ var staticFiles embed.FS
 
 // Register registers web page routes.
 func Register(mux *http.ServeMux) {
-	page := staticPageHandler()
-	mux.Handle("GET /pair/{approval_key}", page)
-	mux.Handle("GET /machines", machinesPageHandler())
+	mux.Handle("GET /pair/{approval_key}", pageHandler("static/index.html"))
+	mux.Handle("GET /machines", pageHandler("static/machines.html"))
 	mux.Handle("GET /static/", withPageHeaders(staticFileHandler()))
 }
 
-func staticPageHandler() http.Handler {
+func pageHandler(name string) http.Handler {
 	return withPageHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		page, err := staticFiles.ReadFile("static/index.html")
-		if err != nil {
-			http.Error(w, "page unavailable", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(page)
-	}))
-}
-
-func machinesPageHandler() http.Handler {
-	return withPageHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		page, err := staticFiles.ReadFile("static/machines.html")
+		page, err := staticFiles.ReadFile(name)
 		if err != nil {
 			http.Error(w, "page unavailable", http.StatusInternalServerError)
 			return

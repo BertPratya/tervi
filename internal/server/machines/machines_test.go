@@ -155,6 +155,9 @@ func TestListOnlineFromMemory(t *testing.T) {
 		t.Fatalf("open machine WebSocket: %v", err)
 	}
 	defer conn.CloseNow()
+	if _, _, err := conn.Read(context.Background()); err != nil {
+		t.Fatalf("read machine hello: %v", err)
+	}
 
 	status, body := f.listMachines(t)
 	if status != http.StatusOK {

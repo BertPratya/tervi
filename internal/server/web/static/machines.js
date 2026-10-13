@@ -3,6 +3,7 @@ import { REFRESH_MS, view } from '/static/machines-view.js';
 const app = document.querySelector('#app');
 let machines = [];
 let failed = false;
+let loaded = false;
 
 function textElement(tag, className, text) {
   const element = document.createElement(tag);
@@ -12,13 +13,13 @@ function textElement(tag, className, text) {
 }
 
 function render() {
-  const page = view({ machines, failed });
+  const page = view({ machines, failed, loaded, address: location.origin });
   app.replaceChildren();
   app.append(textElement('h1', '', page.heading));
   if (page.failureMessage) app.append(textElement('p', 'warning', page.failureMessage));
 
   if (page.rows.length === 0) {
-    app.append(textElement('p', '', page.emptyMessage));
+    if (page.emptyMessage) app.append(textElement('p', '', page.emptyMessage));
     return;
   }
 
@@ -35,6 +36,7 @@ async function refresh() {
     if (!Array.isArray(answer.machines)) throw new Error('invalid response');
     machines = answer.machines;
     failed = false;
+    loaded = true;
   } catch {
     failed = true;
   }
