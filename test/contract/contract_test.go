@@ -454,7 +454,10 @@ func (c *contractClient) openConnection(t *testing.T, credential string) {
 		t.Fatalf("openConnection WebSocket handshake: %v", err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "contract test done")
-	c.seen[route.Operation.OperationID] = map[int]bool{http.StatusSwitchingProtocols: true}
+	if c.seen[route.Operation.OperationID] == nil {
+		c.seen[route.Operation.OperationID] = make(map[int]bool)
+	}
+	c.seen[route.Operation.OperationID][http.StatusSwitchingProtocols] = true
 	if err := validateContractResponse(requestInput, http.StatusSwitchingProtocols, response.Header, nil); err != nil {
 		t.Fatalf("openConnection response violates contract: %v", err)
 	}

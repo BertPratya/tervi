@@ -114,6 +114,7 @@ func TestCloseAllOnStop(t *testing.T) {
 		t.Fatalf("migrate test database: %v", err)
 	}
 	credentials := []string{"server-stop-credential-one", "server-stop-credential-two"}
+	machineIDs := make([]string, 0, len(credentials))
 	for i, credential := range credentials {
 		var pairingID string
 		if err := pool.QueryRow(context.Background(), `INSERT INTO pairing_requests
@@ -122,11 +123,13 @@ func TestCloseAllOnStop(t *testing.T) {
 			[]byte(strings.Repeat("p", i+1)), []byte(strings.Repeat("a", i+1))).Scan(&pairingID); err != nil {
 			t.Fatalf("insert pairing request: %v", err)
 		}
-		if _, err := pool.Exec(context.Background(), `INSERT INTO machines
+		var machineID string
+		if err := pool.QueryRow(context.Background(), `INSERT INTO machines
 			(pairing_request_id, display_name, credential_hash, status, expires_at)
-			VALUES ($1, $2, $3, 'active', now() + interval '10 minutes')`, pairingID, "server-stop-machine", secret.Hash(secret.FromString(credential))); err != nil {
+			VALUES ($1, $2, $3, 'active', now() + interval '10 minutes') RETURNING machine_id::text`, pairingID, "server-stop-machine", secret.Hash(secret.FromString(credential))).Scan(&machineID); err != nil {
 			t.Fatalf("insert machine: %v", err)
 		}
+		machineIDs = append(machineIDs, machineID)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -147,6 +150,7 @@ func TestCloseAllOnStop(t *testing.T) {
 	t.Cleanup(cancel)
 
 	connections := make([]*websocket.Conn, 0, len(credentials))
+	helloTimes := make([]time.Time, 0, len(credentials))
 	for index, credential := range credentials {
 		var conn *websocket.Conn
 		deadline := time.Now().Add(5 * time.Second)
@@ -170,6 +174,17 @@ func TestCloseAllOnStop(t *testing.T) {
 		if readErr != nil || !strings.Contains(string(message), `"type":"hello"`) {
 			t.Fatalf("read hello for WebSocket %d: message=%q error=%v", index+1, message, readErr)
 		}
+		helloTimes = append(helloTimes, time.Now())
+		if _, err := pool.Exec(context.Background(), `UPDATE machines SET last_seen_at = NULL WHERE machine_id = $1`, machineIDs[index]); err != nil {
+			t.Fatalf("clear connect-time last_seen_at for WebSocket %d: %v", index+1, err)
+		}
+	}
+	closeErrors := make(chan error, len(connections))
+	for _, conn := range connections {
+		go func(conn *websocket.Conn) {
+			_, _, readErr := conn.Read(context.Background())
+			closeErrors <- readErr
+		}(conn)
 	}
 	cancel()
 	select {
@@ -181,19 +196,23 @@ func TestCloseAllOnStop(t *testing.T) {
 		t.Fatal("Run() did not finish after cancellation")
 	}
 	for index, conn := range connections {
-		readCtx, readCancel := context.WithTimeout(context.Background(), time.Second)
-		_, _, readErr := conn.Read(readCtx)
-		readCancel()
+		readErr := <-closeErrors
 		_ = conn.Close(websocket.StatusNormalClosure, "test cleanup")
 		if websocket.CloseStatus(readErr) != protocol.CloseServerStopping {
 			t.Errorf("WebSocket %d close status = %d (%v), want %d", index+1, websocket.CloseStatus(readErr), readErr, protocol.CloseServerStopping)
 		}
 	}
-	var machines, seen int
-	if err := pool.QueryRow(context.Background(), `SELECT count(*), count(last_seen_at) FROM machines`).Scan(&machines, &seen); err != nil {
-		t.Fatalf("count final last_seen_at writes: %v", err)
-	}
-	if machines != len(credentials) || seen != len(credentials) {
-		t.Fatalf("machines with final last_seen_at = %d/%d, want %d/%d", seen, machines, len(credentials), len(credentials))
+	for index, machineID := range machineIDs {
+		var lastSeen *time.Time
+		if err := pool.QueryRow(context.Background(), `SELECT last_seen_at FROM machines WHERE machine_id = $1`, machineID).Scan(&lastSeen); err != nil {
+			t.Fatalf("read final last_seen_at for WebSocket %d: %v", index+1, err)
+		}
+		if lastSeen == nil {
+			t.Errorf("WebSocket %d final last_seen_at is null", index+1)
+			continue
+		}
+		if difference := lastSeen.Sub(helloTimes[index]); difference < -time.Second || difference > time.Second {
+			t.Errorf("WebSocket %d final last_seen_at differs from hello time by %s, want within 1s", index+1, difference)
+		}
 	}
 }

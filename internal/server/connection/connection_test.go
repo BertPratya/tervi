@@ -189,6 +189,44 @@ func TestDatabaseFailureIsNotRejection(t *testing.T) {
 	}
 }
 
+func TestLastSeenWriteFailureKeepsConnectionOpen(t *testing.T) {
+	f := newRouteFixture(t, time.Second, 3*time.Second)
+	if _, err := f.pool.Exec(context.Background(), `CREATE FUNCTION reject_connection_last_seen() RETURNS trigger
+		LANGUAGE plpgsql AS $$ BEGIN
+		RAISE EXCEPTION 'test database marker' USING ERRCODE = '40001';
+		END $$`); err != nil {
+		t.Fatalf("create last_seen_at trigger function: %v", err)
+	}
+	if _, err := f.pool.Exec(context.Background(), `CREATE TRIGGER reject_connection_last_seen
+		BEFORE UPDATE OF last_seen_at ON machines FOR EACH ROW
+		EXECUTE FUNCTION reject_connection_last_seen()`); err != nil {
+		t.Fatalf("create last_seen_at trigger: %v", err)
+	}
+	conn, _, err := f.dial(t, testCredential, nil)
+	if err != nil {
+		t.Fatalf("open WebSocket despite last_seen_at failure: %v", err)
+	}
+	defer conn.CloseNow()
+	if message := readJSON(t, conn); message["type"] != protocol.TypeHello {
+		t.Fatalf("first response = %#v, want hello", message)
+	}
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"ping"}`)); err != nil {
+		t.Fatalf("send ping after last_seen_at failure: %v", err)
+	}
+	if message := readJSON(t, conn); message["type"] != protocol.TypePong {
+		t.Fatalf("response after last_seen_at failure = %#v, want pong", message)
+	}
+	if !f.list.Online(testMachineID) {
+		t.Fatal("connection is not Online after last_seen_at write failure")
+	}
+	if got := f.logs.String(); !strings.Contains(got, `kind="write last seen"`) {
+		t.Fatalf("log = %q, want write last seen kind", got)
+	}
+	if got := strings.Count(f.logs.String(), `kind="write last seen"`); got < 2 {
+		t.Fatalf("last_seen_at write failure log count = %d, want connect failure and retry on message", got)
+	}
+}
+
 func TestOriginRefused(t *testing.T) {
 	f := newRouteFixture(t, 10*time.Second, 30*time.Second)
 	headers := make(http.Header)
@@ -199,9 +237,7 @@ func TestOriginRefused(t *testing.T) {
 		t.Fatal("request with Origin opened a WebSocket")
 	}
 	assertJSONError(t, response, http.StatusForbidden, "forbidden_origin")
-	if strings.Contains(f.logs.String(), "kind=look up machine") {
-		t.Fatalf("Origin was checked after credential lookup: %q", f.logs.String())
-	}
+	// Closing the pool proves the Origin check happened before credential lookup.
 }
 
 func TestHelloCarriesTiming(t *testing.T) {
@@ -261,7 +297,7 @@ func TestServerTimeout(t *testing.T) {
 	}
 	defer active.Close(websocket.StatusNormalClosure, "test done")
 	_ = readJSON(t, active)
-	for range 4 {
+	for range 8 {
 		if err := active.Write(context.Background(), websocket.MessageText, []byte(`{"type":"ping"}`)); err != nil {
 			t.Fatalf("send keepalive ping: %v", err)
 		}
@@ -269,7 +305,7 @@ func TestServerTimeout(t *testing.T) {
 		if message["type"] != protocol.TypePong {
 			t.Fatalf("keepalive response = %#v, want pong", message)
 		}
-		time.Sleep(600 * time.Millisecond)
+		time.Sleep(750 * time.Millisecond)
 	}
 	if !f.list.Online(testMachineID) {
 		t.Fatal("machine sending pings is not Online")
@@ -300,6 +336,14 @@ func TestClientCloseNoticedAtOnce(t *testing.T) {
 
 func TestAddAfterCloseAll(t *testing.T) {
 	f := newRouteFixture(t, 10*time.Second, 30*time.Second)
+	tx, err := f.pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin row-lock transaction: %v", err)
+	}
+	defer tx.Rollback(context.Background())
+	if _, err := tx.Exec(context.Background(), `SELECT machine_id FROM machines WHERE machine_id = $1 FOR UPDATE`, testMachineID); err != nil {
+		t.Fatalf("lock machine row: %v", err)
+	}
 	f.list.CloseAll()
 	conn, _, err := f.dial(t, testCredential, nil)
 	if err != nil {
@@ -314,7 +358,24 @@ func TestAddAfterCloseAll(t *testing.T) {
 	if f.list.Online(testMachineID) {
 		t.Fatal("post-stop connection was stored as Online")
 	}
-	f.list.CloseAll()
+	closeAllDone := make(chan struct{})
+	go func() {
+		f.list.CloseAll()
+		close(closeAllDone)
+	}()
+	select {
+	case <-closeAllDone:
+		t.Fatal("CloseAll returned while the post-stop handler was blocked on its machine update")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := tx.Rollback(context.Background()); err != nil {
+		t.Fatalf("release machine row lock: %v", err)
+	}
+	select {
+	case <-closeAllDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("CloseAll did not return after the post-stop handler finished")
+	}
 	var lastSeen *time.Time
 	if err := f.pool.QueryRow(context.Background(), `SELECT last_seen_at FROM machines WHERE machine_id = $1`, testMachineID).Scan(&lastSeen); err != nil {
 		t.Fatalf("read last_seen_at after second CloseAll: %v", err)
@@ -415,9 +476,28 @@ func TestReplacedCloseKeepsNewEntry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	_, _, _ = first.Read(ctx)
+	waitForHandlerCount(t, f.list, 1)
 	if !f.list.Online(testMachineID) {
 		t.Fatal("old connection removal removed the replacement")
 	}
+}
+
+func waitForHandlerCount(t *testing.T, list *List, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		list.mu.Lock()
+		got := len(list.handlers)
+		list.mu.Unlock()
+		if got == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	list.mu.Lock()
+	got := len(list.handlers)
+	list.mu.Unlock()
+	t.Fatalf("tracked handler count = %d, want %d", got, want)
 }
 
 func TestListSafeUnderLoad(t *testing.T) {
@@ -463,6 +543,23 @@ func TestOnlineListStartsEmpty(t *testing.T) {
 	}
 }
 
+func TestRemoveOnlyRemovesCurrentConnection(t *testing.T) {
+	list := NewList()
+	a := &testSocket{}
+	b := &testSocket{}
+	list.add("machine", a)
+	list.add("machine", b)
+	list.remove("machine", a)
+	if !list.Online("machine") {
+		t.Fatal("removing a replaced connection removed the current entry")
+	}
+	list.remove("machine", b)
+	if list.Online("machine") {
+		t.Fatal("removing the current connection left the machine Online")
+	}
+	list.CloseAll()
+}
+
 func TestLastSeen(t *testing.T) {
 	f := newRouteFixture(t, time.Second, 5*time.Second)
 	conn, _, err := f.dial(t, testCredential, nil)
@@ -474,27 +571,33 @@ func TestLastSeen(t *testing.T) {
 	if err := f.pool.QueryRow(context.Background(), `SELECT last_seen_at FROM machines WHERE machine_id = $1`, testMachineID).Scan(&first); err != nil {
 		t.Fatalf("read connect last_seen_at: %v", err)
 	}
-	f.clock.Advance(59 * time.Second)
-	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"other"}`)); err != nil {
-		t.Fatalf("send first message: %v", err)
+	threshold := time.Minute - time.Second
+	f.clock.Advance(threshold - time.Millisecond)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"ping"}`)); err != nil {
+		t.Fatalf("send just-before-threshold ping: %v", err)
 	}
-	time.Sleep(30 * time.Millisecond)
+	if message := readJSON(t, conn); message["type"] != protocol.TypePong {
+		t.Fatalf("just-before-threshold response = %#v, want pong", message["type"])
+	}
 	var beforeMinute time.Time
 	if err := f.pool.QueryRow(context.Background(), `SELECT last_seen_at FROM machines WHERE machine_id = $1`, testMachineID).Scan(&beforeMinute); err != nil {
 		t.Fatalf("read last_seen_at before minute: %v", err)
 	}
 	if !beforeMinute.Equal(first) {
-		t.Fatalf("last_seen_at changed before one minute: %s to %s", first, beforeMinute)
+		t.Fatalf("last_seen_at changed before threshold: %s to %s", first, beforeMinute)
 	}
-	f.clock.Advance(time.Second)
-	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"other"}`)); err != nil {
-		t.Fatalf("send minute message: %v", err)
+	f.clock.Advance(time.Millisecond)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"ping"}`)); err != nil {
+		t.Fatalf("send at-threshold ping: %v", err)
+	}
+	if message := readJSON(t, conn); message["type"] != protocol.TypePong {
+		t.Fatalf("at-threshold response = %#v, want pong", message["type"])
 	}
 	deadline := time.Now().Add(time.Second)
 	var afterMinute time.Time
 	for time.Now().Before(deadline) {
 		if err := f.pool.QueryRow(context.Background(), `SELECT last_seen_at FROM machines WHERE machine_id = $1`, testMachineID).Scan(&afterMinute); err != nil {
-			t.Fatalf("read last_seen_at after minute: %v", err)
+			t.Fatalf("read last_seen_at after threshold: %v", err)
 		}
 		if afterMinute.After(beforeMinute) {
 			break
@@ -502,7 +605,7 @@ func TestLastSeen(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if !afterMinute.After(beforeMinute) {
-		t.Fatalf("last_seen_at did not update after one minute: %s", afterMinute)
+		t.Fatalf("last_seen_at did not update at threshold: %s", afterMinute)
 	}
 	time.Sleep(1200 * time.Millisecond)
 	if err := conn.Close(websocket.StatusNormalClosure, "test done"); err != nil {

@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -16,6 +15,8 @@ import (
 	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5"
 )
+
+const updateLastSeenQuery = `UPDATE machines SET last_seen_at = now() WHERE machine_id = $1`
 
 type connectionHandler struct {
 	deps Deps
@@ -57,7 +58,7 @@ func (handler connectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	conn.SetReadLimit(protocol.MaxMessageSize)
 	openedAt := time.Now()
 	lastMessageReceived := openedAt
-	lastSeenWrittenAt := handler.deps.Now()
+	lastSeenWrittenAt := time.Time{}
 	defer func() {
 		elapsed := time.Since(lastMessageReceived).Seconds()
 		if elapsed < 0 {
@@ -67,19 +68,19 @@ func (handler connectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		defer cancel()
 		if _, err := handler.deps.Pool.Exec(ctx, `UPDATE machines SET last_seen_at = now() - make_interval(secs => $2)
 			WHERE machine_id = $1`, machineID, elapsed); err != nil {
-			logInternalError(handler.deps.Logger, "write last seen", err)
+			httpapi.LogInternalError(handler.deps.Logger, "write last seen", err)
 		}
 	}()
 	defer handler.deps.List.remove(machineID, conn)
 
 	stored := handler.deps.List.add(machineID, conn)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	_, err = handler.deps.Pool.Exec(ctx, `UPDATE machines SET last_seen_at = now() WHERE machine_id = $1`, machineID)
+	_, err = handler.deps.Pool.Exec(ctx, updateLastSeenQuery, machineID)
 	cancel()
 	if err != nil {
-		logInternalError(handler.deps.Logger, "write last seen", err)
-		_ = conn.Close(websocket.StatusInternalError, "internal server error")
-		return
+		httpapi.LogInternalError(handler.deps.Logger, "write last seen", err)
+	} else {
+		lastSeenWrittenAt = handler.deps.Now()
 	}
 	if !stored {
 		return
@@ -91,10 +92,12 @@ func (handler connectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		TimeoutSeconds:       int(handler.deps.ConnectionTimeout / time.Second),
 	})
 	if err != nil {
-		_ = conn.Close(websocket.StatusInternalError, "internal server error")
+		httpapi.LogInternalError(handler.deps.Logger, "send hello", err)
+		_ = conn.CloseNow()
 		return
 	}
 	if err := writeMessage(conn, hello); err != nil {
+		_ = conn.CloseNow()
 		return
 	}
 	handler.readMessages(conn, machineID, openedAt, &lastMessageReceived, &lastSeenWrittenAt)
@@ -155,7 +158,7 @@ func (handler connectionHandler) readMessages(conn *websocket.Conn, machineID st
 	}()
 	defer func() {
 		close(stopReader)
-		_ = conn.Close(websocket.StatusNormalClosure, "connection ended")
+		_ = conn.CloseNow()
 		<-readerDone
 	}()
 
@@ -172,9 +175,6 @@ func (handler connectionHandler) readMessages(conn *websocket.Conn, machineID st
 			return
 		case result := <-results:
 			if result.err != nil {
-				if websocket.CloseStatus(result.err) == websocket.StatusCode(protocol.CloseTooLarge) {
-					return
-				}
 				return
 			}
 			*lastMessageReceived = result.readAt
@@ -188,19 +188,19 @@ func (handler connectionHandler) readMessages(conn *websocket.Conn, machineID st
 				_ = conn.Close(websocket.StatusCode(protocol.CloseInvalidMessage), "message must have a string type")
 				return
 			}
-			if handler.deps.Now().Sub(*lastSeenWrittenAt) >= time.Minute {
+			if handler.deps.Now().Sub(*lastSeenWrittenAt) >= time.Minute-handler.deps.CheckInterval {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				_, err := handler.deps.Pool.Exec(ctx, `UPDATE machines SET last_seen_at = now() WHERE machine_id = $1`, machineID)
+				_, err := handler.deps.Pool.Exec(ctx, updateLastSeenQuery, machineID)
 				cancel()
 				if err != nil {
-					logInternalError(handler.deps.Logger, "write last seen", err)
-					_ = conn.Close(websocket.StatusInternalError, "internal server error")
-					return
+					httpapi.LogInternalError(handler.deps.Logger, "write last seen", err)
+				} else {
+					*lastSeenWrittenAt = handler.deps.Now()
 				}
-				*lastSeenWrittenAt = handler.deps.Now()
 			}
 			if messageType == protocol.TypePing {
 				if err := writeMessage(conn, []byte(`{"type":"pong"}`)); err != nil {
+					_ = conn.CloseNow()
 					return
 				}
 			}
@@ -213,17 +213,3 @@ func writeMessage(conn *websocket.Conn, data []byte) error {
 	defer cancel()
 	return conn.Write(ctx, websocket.MessageText, data)
 }
-
-func logInternalError(logger *slog.Logger, kind string, err error) {
-	httpapi.WriteInternalError(discardResponseWriter{header: make(http.Header)}, logger, kind, err)
-}
-
-type discardResponseWriter struct {
-	header http.Header
-}
-
-func (writer discardResponseWriter) Header() http.Header { return writer.header }
-
-func (discardResponseWriter) WriteHeader(int) {}
-
-func (discardResponseWriter) Write(data []byte) (int, error) { return len(data), nil }

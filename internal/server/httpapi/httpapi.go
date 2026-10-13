@@ -20,9 +20,9 @@ func BearerProof(r *http.Request) (string, bool) {
 	return parts[1], true
 }
 
-// WriteInternalError sends the standard internal error response and logs only
-// the fixed operation kind and, for PostgreSQL errors, its SQLSTATE.
-func WriteInternalError(w http.ResponseWriter, logger *slog.Logger, kind string, err error) {
+// LogInternalError logs only the fixed operation kind and, for PostgreSQL
+// errors, its SQLSTATE.
+func LogInternalError(logger *slog.Logger, kind string, err error) {
 	if logger != nil {
 		attrs := []any{"kind", kind}
 		var pgErr *pgconn.PgError
@@ -31,6 +31,12 @@ func WriteInternalError(w http.ResponseWriter, logger *slog.Logger, kind string,
 		}
 		logger.Error("internal error", attrs...)
 	}
+}
+
+// WriteInternalError sends the standard internal error response and logs only
+// the fixed operation kind and, for PostgreSQL errors, its SQLSTATE.
+func WriteInternalError(w http.ResponseWriter, logger *slog.Logger, kind string, err error) {
+	LogInternalError(logger, kind, err)
 	WriteError(w, http.StatusInternalServerError, "internal_error")
 }
 
