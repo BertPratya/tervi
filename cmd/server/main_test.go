@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/bertpratya/tervi/internal/server"
+	"github.com/bertpratya/tervi/internal/server/connection"
 	"github.com/bertpratya/tervi/internal/server/db/dbtest"
 )
 
@@ -17,7 +18,7 @@ func TestHealth(t *testing.T) {
 	req.Host = "localhost"
 	rec := httptest.NewRecorder()
 
-	server.New(server.Config{}, nil, nil).ServeHTTP(rec, req)
+	server.New(server.Config{}, nil, nil, connection.NewList()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
@@ -35,7 +36,7 @@ func TestMigrateCommand(t *testing.T) {
 	if code := run(context.Background(), []string{"migrate"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("run() = %d; stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
-	const want = "Database is up to date (version 1).\n"
+	const want = "Database is up to date (version 2).\n"
 	if stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}
@@ -82,7 +83,7 @@ func TestMigrateNeedsOnlyDatabaseURL(t *testing.T) {
 	if code := run(context.Background(), []string{"migrate"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("run() = %d; stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
-	if got, want := stdout.String(), "Database is up to date (version 1).\n"; got != want {
+	if got, want := stdout.String(), "Database is up to date (version 2).\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }

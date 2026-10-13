@@ -97,6 +97,14 @@ func TestInternalErrorLogsKindOnly(t *testing.T) {
 	}
 
 	log.Reset()
+	LogInternalError(logger, "write last seen", &pgconn.PgError{
+		Code: "55P03", Message: marker, Detail: "row contained " + marker,
+	})
+	if got := log.String(); !strings.Contains(got, `kind="write last seen"`) || !strings.Contains(got, `sqlstate=55P03`) || strings.Contains(got, marker) {
+		t.Errorf("LogInternalError PostgreSQL log = %q, want kind and sqlstate only", got)
+	}
+
+	log.Reset()
 	wrapped := fmt.Errorf("operation failed: %w", &pgconn.PgError{Code: "40001", Message: marker})
 	WriteInternalError(httptest.NewRecorder(), logger, "submit code", wrapped)
 	if got := log.String(); !strings.Contains(got, `kind="submit code"`) || !strings.Contains(got, `sqlstate=40001`) || strings.Contains(got, marker) {
@@ -118,6 +126,7 @@ func TestInternalErrorLogsKindOnly(t *testing.T) {
 	var nilLogger *slog.Logger
 	if err := recoveredPanic(func() {
 		WriteInternalError(httptest.NewRecorder(), nilLogger, "read pairing", errors.New(marker))
+		LogInternalError(nilLogger, "write last seen", errors.New(marker))
 	}); err != nil {
 		t.Fatalf("nil logger panicked: %v", err)
 	}

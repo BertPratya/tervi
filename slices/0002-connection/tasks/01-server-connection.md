@@ -154,6 +154,17 @@ runs behind the existing Host check like every route.
      so the next message tries again. (Decided by the user during task 01:
      the first rule, "a minute or more ago", could leave a gap of nearly 70
      seconds.)
+
+   **When something fails after the WebSocket opens** (added during task 01
+   review): the server never sends a close code that `api/asyncapi.yaml`
+   does not list.
+   - A `last_seen_at` write that fails (in step 5, step 6, or step 8) is
+     logged with `httpapi.LogInternalError` and kind `"write last seen"`;
+     the connection stays open.
+   - A failed socket write (`hello` or `pong`) means the connection is
+     already broken: end it with `CloseNow()`, which sends no close code.
+   - A `hello` that cannot be encoded is logged with kind `"send hello"`,
+     and the connection ends with `CloseNow()`.
 7. Timeout: when nothing has been received for the timeout (counted from the
    last message received, or from when the connection opened), close with
    `4001`.
@@ -233,8 +244,10 @@ Never log the credential, the `Authorization` header, or the hash.
   `test/contract/contract_test.go`, `test/e2e/pairing_test.go` (only the
   `server.New` call), `.env.example` (the two settings),
   `api/openapi.yaml` (only the `x-planned` line of `openConnection`),
-  `go.mod`, `go.sum`.
-- Must not change: anything under `internal/worker/`,
+  `go.mod`, `go.sum`, `internal/server/httpapi/` (only to add
+  `LogInternalError(logger, kind, err)`, which `WriteInternalError` calls,
+  and its test; added during task 01 review).
+- Must not change: anything under `internal/worker/`, anything else in
   `internal/server/httpapi/` (report a missing piece instead),
   `internal/server/pairing/`, `internal/server/web/`, `design/`, `slices/`
   except this task's row in `plan.md`.

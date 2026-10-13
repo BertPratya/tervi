@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/bertpratya/tervi/internal/server"
+	"github.com/bertpratya/tervi/internal/server/connection"
 	"github.com/bertpratya/tervi/internal/server/db/dbtest"
 	"github.com/bertpratya/tervi/internal/worker/cli"
 	"github.com/bertpratya/tervi/internal/worker/credential"
@@ -214,7 +215,7 @@ func newFixture(t *testing.T) *fixture {
 	logger := slog.New(slog.NewTextHandler(logs, nil))
 	proxy, proxyServer := newTestProxy(t)
 	t.Cleanup(proxyServer.Close)
-	origin := httptest.NewServer(server.New(server.Config{PublicURL: proxyServer.URL}, pool, logger))
+	origin := httptest.NewServer(server.New(server.Config{PublicURL: proxyServer.URL}, pool, logger, connection.NewList()))
 	t.Cleanup(origin.Close)
 	proxy.setTarget(origin.URL)
 	return &fixture{

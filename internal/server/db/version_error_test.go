@@ -16,7 +16,7 @@ func TestVersionError(t *testing.T) {
 		{
 			name:      "not migrated",
 			dbVersion: 0,
-			newest:    1,
+			newest:    2,
 			want:      ErrNotMigrated.Error(),
 			wantIs:    ErrNotMigrated,
 		},
@@ -29,14 +29,14 @@ func TestVersionError(t *testing.T) {
 		},
 		{
 			name:      "same",
-			dbVersion: 1,
-			newest:    1,
+			dbVersion: 2,
+			newest:    2,
 		},
 		{
 			name:      "newer",
 			dbVersion: 3,
-			newest:    1,
-			want:      `database is at version 3, newer than this program (version 1): use a newer program`,
+			newest:    2,
+			want:      `database is at version 3, newer than this program (version 2): use a newer program`,
 			wantIs:    ErrVersionMismatch,
 		},
 	}

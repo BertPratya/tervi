@@ -233,7 +233,6 @@ paths:
       tags: [worker]
       summary: Open the machine's connection (WebSocket)
       operationId: openConnection
-      x-planned: true
       description: |
         A WebSocket opening request. The credential is checked first; an
         unknown credential, or one whose machine is not `active`, gets `401`
