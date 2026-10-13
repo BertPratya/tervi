@@ -236,6 +236,100 @@ func TestContractCatchesExtraField(t *testing.T) {
 	}
 }
 
+func TestCoverageSkipsPlannedOperation(t *testing.T) {
+	doc := loadCoverageContract(t)
+
+	problems := coverageProblems(doc, map[string]map[int]bool{})
+	assertCoverageProblemPresent(t, problems, "operation unmarkedOperation (GET /unmarked) was never called")
+	assertCoverageProblemPresent(t, problems, "operation falsePlannedOperation (GET /false) was never called")
+	for _, problem := range problems {
+		if strings.Contains(problem, "plannedOperation") {
+			t.Errorf("coverage problems = %q, unexpectedly names plannedOperation", problems)
+		}
+	}
+}
+
+func TestCoverageReportsBuiltPlannedOperation(t *testing.T) {
+	doc := loadCoverageContract(t)
+	seen := map[string]map[int]bool{
+		"plannedOperation": {http.StatusOK: true},
+	}
+
+	problems := coverageProblems(doc, seen)
+	assertCoverageProblemPresent(t, problems, "operation plannedOperation is built but still marked x-planned; remove the mark")
+	assertCoverageProblemAbsent(t, problems, "operation plannedOperation (GET /planned) was never called")
+	assertCoverageProblemAbsent(t, problems, "operation plannedOperation never returned documented status 200")
+}
+
+func TestCoverageUnchangedForUnmarked(t *testing.T) {
+	doc := loadCoverageContract(t)
+	seen := map[string]map[int]bool{
+		"unmarkedOperation": {http.StatusOK: true},
+	}
+
+	problems := coverageProblems(doc, seen)
+	assertCoverageProblemPresent(t, problems, "operation unmarkedOperation never returned documented status 201")
+	assertCoverageProblemPresent(t, problems, "operation unmarkedOperation never returned documented status 400")
+	assertCoverageProblemAbsent(t, problems, "operation unmarkedOperation never returned documented status 200")
+	assertCoverageProblemAbsent(t, problems, "operation unmarkedOperation (GET /unmarked) was never called")
+}
+
+func loadCoverageContract(t *testing.T) *openapi3.T {
+	t.Helper()
+	doc, err := openapi3.NewLoader().LoadFromData([]byte(`
+openapi: 3.0.3
+info:
+  title: Coverage test contract
+  version: 1.0.0
+paths:
+  /unmarked:
+    get:
+      operationId: unmarkedOperation
+      responses:
+        "200": {description: OK}
+        "201": {description: Created}
+        "400": {description: Bad request}
+  /planned:
+    get:
+      operationId: plannedOperation
+      x-planned: true
+      responses:
+        "200": {description: OK}
+  /false:
+    get:
+      operationId: falsePlannedOperation
+      x-planned: false
+      responses:
+        "200": {description: OK}
+`))
+	if err != nil {
+		t.Fatalf("load inline coverage contract: %v", err)
+	}
+	if err := doc.Validate(context.Background()); err != nil {
+		t.Fatalf("validate inline coverage contract: %v", err)
+	}
+	return doc
+}
+
+func assertCoverageProblemPresent(t *testing.T, problems []string, want string) {
+	t.Helper()
+	for _, problem := range problems {
+		if problem == want {
+			return
+		}
+	}
+	t.Errorf("coverage problems = %q, missing %q", problems, want)
+}
+
+func assertCoverageProblemAbsent(t *testing.T, problems []string, unwanted string) {
+	t.Helper()
+	for _, problem := range problems {
+		if problem == unwanted {
+			t.Errorf("coverage problems = %q, unexpectedly contains %q", problems, unwanted)
+		}
+	}
+}
+
 type contractClient struct {
 	server *httptest.Server
 	router routers.Router
@@ -454,12 +548,25 @@ func wrongCode(code string) string {
 
 func assertCoverage(t *testing.T, doc *openapi3.T, seen map[string]map[int]bool) {
 	t.Helper()
+	for _, problem := range coverageProblems(doc, seen) {
+		t.Errorf("%s", problem)
+	}
+}
+
+func coverageProblems(doc *openapi3.T, seen map[string]map[int]bool) []string {
+	var problems []string
 	for path, item := range doc.Paths.Map() {
 		for method, operation := range item.Operations() {
 			operationID := operation.OperationID
 			statuses := seen[operationID]
+			if planned, ok := operation.Extensions["x-planned"].(bool); ok && planned {
+				if len(statuses) > 0 {
+					problems = append(problems, "operation "+operationID+" is built but still marked x-planned; remove the mark")
+				}
+				continue
+			}
 			if len(statuses) == 0 {
-				t.Errorf("operation %s (%s %s) was never called", operationID, method, path)
+				problems = append(problems, "operation "+operationID+" ("+method+" "+path+") was never called")
 			}
 			for statusCode := range operation.Responses.Map() {
 				status, err := strconv.Atoi(statusCode)
@@ -467,9 +574,10 @@ func assertCoverage(t *testing.T, doc *openapi3.T, seen map[string]map[int]bool)
 					continue
 				}
 				if !statuses[status] {
-					t.Errorf("operation %s never returned documented status %d", operationID, status)
+					problems = append(problems, "operation "+operationID+" never returned documented status "+strconv.Itoa(status))
 				}
 			}
 		}
 	}
+	return problems
 }
