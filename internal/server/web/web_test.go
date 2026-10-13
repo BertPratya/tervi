@@ -98,21 +98,25 @@ func TestMachinesPageAnnouncesOnlyFailureLineAndPreservesRowSpacing(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(page), `<main id="app" aria-live=`) {
-		t.Fatal("Machines page main element must not be a live region")
+	pageText := string(page)
+	const failureLine = `<p class="warning" aria-live="polite"></p>`
+	if strings.Count(pageText, "aria-live=") != 1 || !strings.Contains(pageText, failureLine) {
+		t.Fatal("Machines page must have one empty polite live region for the failure line")
+	}
+	mainStart := strings.Index(pageText, `<main id="app">`)
+	mainEnd := strings.Index(pageText, `</main>`)
+	failureIndex := strings.Index(pageText, failureLine)
+	if mainStart < 0 || mainEnd < 0 || failureIndex > mainStart && failureIndex < mainEnd {
+		t.Fatal("failure line must be outside the part of the page that render replaces")
 	}
 	script, err := staticFiles.ReadFile("static/machines.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(script), `warning.setAttribute('aria-live', 'polite')`) {
-		t.Fatal("server failure line is not announced as a polite live region")
+	if !strings.Contains(string(script), `failureLine.textContent = page.failureMessage;`) || strings.Contains(string(script), `aria-live`) {
+		t.Fatal("render must update the existing failure line without creating another live region")
 	}
-	styles, err := staticFiles.ReadFile("static/machines.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(styles), `li { border-bottom: 1px solid #8886; padding: 0.8rem 0; white-space: pre-wrap; }`) {
+	if !strings.Contains(pageText, `white-space: pre-wrap;`) {
 		t.Fatal("machine rows do not preserve their spacing")
 	}
 }

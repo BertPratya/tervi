@@ -1,6 +1,7 @@
 import { REFRESH_MS, view } from '/static/machines-view.js';
 
 const app = document.querySelector('#app');
+const failureLine = document.querySelector('.warning');
 let machines = [];
 let failed = false;
 let loaded = false;
@@ -14,13 +15,9 @@ function textElement(tag, className, text) {
 
 function render() {
   const page = view({ machines, failed, loaded, address: location.origin });
+  failureLine.textContent = page.failureMessage;
   app.replaceChildren();
   app.append(textElement('h1', '', page.heading));
-  if (page.failureMessage) {
-    const warning = textElement('p', 'warning', page.failureMessage);
-    warning.setAttribute('aria-live', 'polite');
-    app.append(warning);
-  }
 
   if (page.rows.length === 0) {
     if (page.emptyMessage) app.append(textElement('p', '', page.emptyMessage));

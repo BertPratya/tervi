@@ -55,23 +55,24 @@ type Service struct{ options Options }
 func New(options Options) *Service { return &Service{options: options} }
 
 // EnsureRunning writes or refreshes the systemd user service, enables and
-// starts it, and waits for the daemon control socket to answer.
-func (service *Service) EnsureRunning(ctx context.Context) error {
+// starts it, and waits for the daemon control socket to answer. It reports
+// whether the service file was rewritten and the daemon restarted.
+func (service *Service) EnsureRunning(ctx context.Context) (bool, error) {
 	if service == nil {
-		return errors.New("service options are missing")
+		return false, errors.New("service options are missing")
 	}
 	options := service.options
 	if options.Runner == nil {
-		return errors.New("Runner is missing")
+		return false, errors.New("Runner is missing")
 	}
 	if options.ProgramPath == "" {
-		return errors.New("ProgramPath is missing")
+		return false, errors.New("ProgramPath is missing")
 	}
 	if options.ServiceDir == "" {
-		return errors.New("ServiceDir is missing")
+		return false, errors.New("ServiceDir is missing")
 	}
 	if options.Client == nil {
-		return errors.New("ControlClient is missing")
+		return false, errors.New("ControlClient is missing")
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -79,30 +80,33 @@ func (service *Service) EnsureRunning(ctx context.Context) error {
 
 	programPath, err := resolvedAbsolutePath(options.ProgramPath)
 	if err != nil {
-		return fmt.Errorf("resolve program path: %w", err)
+		return false, fmt.Errorf("resolve program path: %w", err)
 	}
 	path := filepath.Join(options.ServiceDir, serviceFile)
 	contents, err := os.ReadFile(path)
 	rewrite := errors.Is(err, os.ErrNotExist)
 	if err != nil && !rewrite {
-		return fmt.Errorf("read %s: %w", path, err)
+		return false, fmt.Errorf("read %s: %w", path, err)
 	}
 	if !rewrite && serviceExecStart(contents) != programPath+" daemon" {
 		rewrite = true
 	}
 	if rewrite {
 		if err := writeServiceFile(options.ServiceDir, path, serviceContents(programPath)); err != nil {
-			return err
+			return false, err
 		}
 		for _, args := range [][]string{{"daemon-reload"}, {"enable", serviceName}, {"restart", serviceName}} {
 			if err := runSystemctl(ctx, options.Runner, args...); err != nil {
-				return err
+				return false, err
 			}
 		}
 	} else if err := runSystemctl(ctx, options.Runner, "enable", "--now", serviceName); err != nil {
-		return err
+		return false, err
 	}
-	return service.waitForDaemon(ctx, options)
+	if err := service.waitForDaemon(ctx, options); err != nil {
+		return false, err
+	}
+	return rewrite, nil
 }
 
 func (service *Service) waitForDaemon(ctx context.Context, options Options) error {

@@ -42,13 +42,18 @@ func runConnect(ctx context.Context, args []string, env Env) int {
 		return printConnectCancelled(env.Stdout)
 	}
 
-	if err := ensureRunning(ctx, env); err != nil {
+	restarted, err := ensureRunning(ctx, env)
+	if err != nil {
 		return handleEnsureRunningFailure(ctx, env.Stdout, err, entry, printConnectCancelled)
 	}
 
 	answer, err := env.ControlClient.Connect(ctx)
+	alreadyConnectedMessage := "Already connected."
+	if restarted {
+		alreadyConnectedMessage = "✓ Connected."
+	}
 	return handleConnectResult(ctx, env.Stdout, answer, err, entry, connectResultBehavior{
-		alreadyConnectedMessage: "Already connected.",
+		alreadyConnectedMessage: alreadyConnectedMessage,
 		stillTryingPrefix:       "Not connected yet",
 		stillTryingExitCode:     1,
 		printCancelled:          printConnectCancelled,
@@ -59,7 +64,7 @@ type missingServiceSettingError struct{ field string }
 
 func (err *missingServiceSettingError) Error() string { return err.field + " is missing" }
 
-func ensureRunning(ctx context.Context, env Env) error {
+func ensureRunning(ctx context.Context, env Env) (bool, error) {
 	for _, setting := range []struct {
 		field string
 		valid bool
@@ -70,7 +75,7 @@ func ensureRunning(ctx context.Context, env Env) error {
 		{field: "ControlClient", valid: env.ControlClient != nil},
 	} {
 		if !setting.valid {
-			return &missingServiceSettingError{field: setting.field}
+			return false, &missingServiceSettingError{field: setting.field}
 		}
 	}
 	manager := service.New(service.Options{
