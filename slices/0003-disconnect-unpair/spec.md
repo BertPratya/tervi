@@ -228,6 +228,8 @@ page). It also lets the server recognize a computer that pairs again.
 ## Not in this slice
 
 - Uninstalling the `tervi` program.
+- Disconnecting a computer from the Machines page. Only the computer can
+  disconnect itself (`tervi disconnect`); the page can only revoke.
 - Showing unpaired or revoked machines anywhere, or deleting their records.
 - Bringing back a revoked or unpaired machine without pairing again.
 - Renaming machines, and sign-in (the Revoke button has no sign-in behind it:
@@ -243,6 +245,11 @@ None.
 
 - `tervi disconnect` pauses; it does not remove anything — like
   `tailscale down`; `tervi unpair` is the way to remove.
+- Only the computer can disconnect itself; the Machines page has Revoke but
+  no Disconnect — like Tailscale, whose admin page can remove a device but
+  not pause it. A pause from the page would need the server to refuse the
+  computer until someone resumes it, a Resume button, and a message on the
+  computer explaining why it can't connect.
 - The Machines page shows only `Offline · last seen …`, never why a
   computer is offline — the server cannot always learn why: the daemon's
   "disconnecting on purpose" message can be lost, and after a disconnect the
