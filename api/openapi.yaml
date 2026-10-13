@@ -27,17 +27,22 @@ info:
     - Answers contain only the fields listed here (`additionalProperties:
       false`), so a field added by mistake fails the contract test.
       Request objects may carry unknown fields; the server ignores them.
+    - `x-planned: true` marks an operation a plan added but no task has
+      built yet. The contract test does not require it to be called. The
+      task that builds it removes the mark; a finished slice has none.
 
-    Added by slice 0001 (pairing).
+    Added by slice 0001 (pairing). Slice 0002 (connection) adds the
+    connection route, the machines list, and the Machines page. The messages
+    sent over the connection are in `asyncapi.yaml`.
 servers:
   - url: http://localhost:8080
     description: Local server (slice 0001 listens on loopback only)
 
 tags:
   - name: worker
-    description: Called by the worker during `tervi pair`
+    description: Called by the worker, during `tervi pair` or by the daemon
   - name: browser
-    description: Called by the approval page
+    description: Called by the approval page or the Machines page
   - name: other
     description: Not part of a feature
 
@@ -223,6 +228,98 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/machines/current/connection:
+    get:
+      tags: [worker]
+      summary: Open the machine's connection (WebSocket)
+      operationId: openConnection
+      x-planned: true
+      description: |
+        A WebSocket opening request. The credential is checked first; an
+        unknown credential, or one whose machine is not `active`, gets `401`
+        and no WebSocket opens. That `401` is the only answer that means the
+        worker must stop trying (spec R18, R19). After `101`, the messages
+        are described in `asyncapi.yaml`. A new connection for a machine
+        that already has one replaces it (spec R15). A request with a known
+        credential that is not a WebSocket opening request (no
+        `Upgrade: websocket`, the wrong WebSocket version, or a missing or
+        malformed `Sec-WebSocket-Key`) gets `400`.
+
+        A request that carries an `Origin` header gets
+        `403 forbidden_origin` before anything else is checked. Only browsers
+        send `Origin`; the worker never does, so no web page can open a
+        machine's connection.
+      security:
+        - credential: []
+      responses:
+        "101":
+          description: The WebSocket is open
+        "400":
+          description: "`invalid_input`: not a WebSocket opening request"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: invalid_input }
+        "401":
+          $ref: "#/components/responses/UnknownCredential"
+        "403":
+          description: |
+            `unknown_host`: the `Host` header names a host that is not
+            allowed. `forbidden_origin`: the request carries an `Origin`
+            header.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                unknown_host:
+                  value: { error: unknown_host }
+                forbidden_origin:
+                  value: { error: forbidden_origin }
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/machines:
+    get:
+      tags: [browser]
+      summary: Every paired machine, for the Machines page
+      operationId: listMachines
+      x-planned: true
+      description: |
+        Only `active` machines, sorted by `display_name`. No proof yet: the
+        server has no sign-in (spec R27).
+      security: []
+      responses:
+        "200":
+          description: The machines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MachineList"
+        "403":
+          $ref: "#/components/responses/UnknownHost"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /machines:
+    get:
+      tags: [browser]
+      summary: The Machines page (HTML)
+      operationId: machinesPage
+      x-planned: true
+      description: Reads `/api/v1/machines` when it opens and every 5 seconds after.
+      security: []
+      responses:
+        "200":
+          description: The page
+          content:
+            text/html:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/UnknownHost"
+
   /pair/{approval_key}:
     get:
       tags: [browser]
@@ -341,7 +438,7 @@ components:
         error:
           type: string
           enum:
-            [invalid_input, unknown_key, unknown_credential, invalid_link, unknown_host, internal_error]
+            [invalid_input, unknown_key, unknown_credential, invalid_link, unknown_host, forbidden_origin, internal_error]
 
     PairingStatus:
       type: string
@@ -485,6 +582,49 @@ components:
         display_name:
           type: string
           description: Only when `paired`.
+
+    MachineList:
+      type: object
+      additionalProperties: false
+      required: [machines]
+      properties:
+        machines:
+          type: array
+          items:
+            $ref: "#/components/schemas/Machine"
+
+    Machine:
+      type: object
+      additionalProperties: false
+      required: [machine_id, display_name, os_name, os_version, online, last_seen_seconds_ago]
+      properties:
+        machine_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        os_name:
+          type: string
+        os_version:
+          type: string
+        online:
+          type: boolean
+          description: True exactly while the server holds the machine's connection.
+        last_seen_seconds_ago:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: |
+            Seconds since the server last heard from the machine; `null` if it
+            never connected. Seconds, not a time of day, because clocks on
+            different computers can disagree.
+      example:
+        machine_id: 0b6f1c9e-4c1f-4c7e-9b8a-2f7d3c1e5a90
+        display_name: bert-desktop
+        os_name: Ubuntu
+        os_version: "26.04"
+        online: false
+        last_seen_seconds_ago: 75
 
   responses:
     UnknownHost:

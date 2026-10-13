@@ -38,6 +38,7 @@ erDiagram
         text status
         timestamptz created_at
         timestamptz expires_at
+        timestamptz last_seen_at
     }
 ```
 
@@ -109,6 +110,13 @@ pairing request never does.
 | `status` | `text` | not null, one of the lifecycle states below | Where the machine is |
 | `created_at` | `timestamptz` | not null, default `now()` | When the correct code arrived |
 | `expires_at` | `timestamptz` | not null | 5 minutes after creation; matters only while `pending` |
+| `last_seen_at` | `timestamptz` | null until the first connection | When the server last heard from the machine over its connection. Added by slice 0002 (migration `0002`). |
+
+**`last_seen_at`** is set when the machine connects, at least once a minute
+while it stays connected, and when the connection ends (the time of the last
+message received). If the server stops suddenly, it may be up to one minute
+early. Whether a machine is Online is not stored: it is true exactly while
+the server holds the machine's connection in memory.
 
 #### Lifecycle
 
@@ -135,9 +143,11 @@ accepted for nothing except acknowledging or reporting a failure while
 
 ## Worker local data
 
-The worker keeps two things on the paired computer. Later worker versions
-must still read both, so changing their format needs a migration plan of its
-own.
+The worker keeps four things on the paired computer: the secret store
+entry, `state.json`, the systemd service file, and the runtime folder.
+Later worker versions
+must still read the first two, so changing their format needs a migration
+plan of its own.
 
 ### Secret store entry
 
@@ -159,7 +169,13 @@ user `worker`. Its value is JSON:
 secret and no server address, so editing it cannot redirect the credential.
 
 ```json
-{ "machine_id": "…", "credential_saved": true, "confirmed": true }
+{
+  "machine_id": "…",
+  "credential_saved": true,
+  "confirmed": true,
+  "connect": true,
+  "stop_reason": null
+}
 ```
 
 | Field | Meaning |
@@ -167,12 +183,57 @@ secret and no server address, so editing it cannot redirect the credential.
 | `machine_id` | The machine this computer became |
 | `credential_saved` | `false` from just before the secret store entry is saved; `true` once it was saved and read back |
 | `confirmed` | `true` once the server answered OK to the acknowledgment |
+| `connect` | Whether this computer wants to be connected. A missing field (a computer paired in slice 0001) means `false`. Added by slice 0002. |
+| `stop_reason` | Why the daemon stopped trying to connect: `null`, or `"credential_rejected"`. Later slices may add values. Added by slice 0002. |
+
+**Who writes which fields.** `tervi pair` writes `machine_id`,
+`credential_saved`, and `confirmed`, and carries `connect` and
+`stop_reason` over unchanged from the record it read (`false` and `null` for
+a new pairing, which starts with no `state.json`). Only the daemon changes
+`connect` and `stop_reason`; `tervi pair` and `tervi connect` ask the
+running daemon to change them, starting it first if it is not running.
 
 The first write, `credential_saved: false`, comes **before** the secret
 store entry is saved, so a stop at any moment leaves a note saying what was
 about to happen. The later writes record what finished: `credential_saved:
 true` after the entry was saved and read back, `confirmed: true` after the
 server's OK.
+
+### systemd service file
+
+`~/.config/systemd/user/tervi.service`, the folder for services a user sets
+up. Written by `tervi pair` and `tervi connect` when it is missing or its
+`ExecStart` names another program path (slice 0002). Holds nothing secret.
+
+```ini
+[Unit]
+Description=tervi worker
+
+[Service]
+ExecStart=<full path of the installed tervi> daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+| Line | Meaning |
+| --- | --- |
+| `ExecStart` | The full path of the `tervi` program that wrote the file, so systemd finds it without the user's `PATH` |
+| `Restart=on-failure`, `RestartSec=5` | Started again 5 seconds after it stops unexpectedly; a clean stop stays stopped |
+| `WantedBy=default.target` | Started each time the user logs in, once enabled |
+
+### Runtime folder
+
+`$XDG_RUNTIME_DIR/tervi/` (usually `/run/user/<user id>/tervi/`), mode
+`0700`, created by the daemon (slice 0002). Linux keeps it in memory and
+removes it when the user's last session ends. Holds nothing secret.
+
+| File | Mode | Meaning |
+| --- | --- | --- |
+| `daemon.lock` | `0600` | Held with an exclusive `flock` by the one running daemon; Linux releases it when the daemon ends |
+| `daemon.sock` | `0600` | The Unix socket the `tervi` commands use to reach the daemon. Removed by the daemon when it stops; a new daemon replaces one left by a crash |
 
 ## Names
 

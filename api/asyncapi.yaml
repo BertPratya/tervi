@@ -1,0 +1,127 @@
+asyncapi: 3.0.0
+info:
+  title: tervi connection
+  version: 0.1.0
+  description: |
+    The messages sent over a machine's connection: the WebSocket the daemon
+    opens at `GET /api/v1/machines/current/connection` (see `openapi.yaml`
+    for opening it and for the `401` rejection). This file is the single
+    place where these messages are described; plans change it, both sides'
+    tests use the messages and close codes exactly as written here, and
+    the reviewer checks the code against it.
+
+    Rules for every message:
+
+    - Each message is one WebSocket text message holding one JSON object
+      with a `type` field. Fields not listed here may be added later; the
+      receiver ignores them. A message with an unknown `type` is ignored,
+      so later slices can add messages.
+    - A message is at most 4 KB. The connection closes on a larger one.
+    - **Checks.** The server sends `hello` first. The worker then sends
+      `ping` every `check_interval_seconds`, counted from its previous
+      `ping` (the first one counted from `hello`), without waiting for the
+      `pong`. The server answers each `ping` with `pong`.
+    - **Timeout.** Each side closes the connection when it has received no
+      message of any kind from the other side for `timeout_seconds`, counted
+      from the last message received, or from the moment the connection
+      opened before the first one. Until `hello` arrives, the worker uses 30
+      seconds.
+
+    Close codes the server sends:
+
+    | Code | Meaning |
+    | --- | --- |
+    | `1001` | The server is stopping |
+    | `1008` | A message that is not a JSON object with a string `type` |
+    | `1009` | A message larger than 4 KB (sent by the WebSocket library) |
+    | `4000` | Replaced by a newer connection for the same machine |
+    | `4001` | Timeout: nothing received from the worker |
+
+    The worker closes with `1000` when it stops on purpose, or `4001` on a
+    timeout.
+
+    Added by slice 0002 (connection).
+
+channels:
+  connection:
+    address: /api/v1/machines/current/connection
+    description: One machine's connection. Opened by the worker only.
+    messages:
+      hello:
+        $ref: "#/components/messages/hello"
+      ping:
+        $ref: "#/components/messages/ping"
+      pong:
+        $ref: "#/components/messages/pong"
+
+operations:
+  sendHello:
+    action: send
+    channel:
+      $ref: "#/channels/connection"
+    summary: The server's first message
+    messages:
+      - $ref: "#/channels/connection/messages/hello"
+  sendPing:
+    action: receive
+    channel:
+      $ref: "#/channels/connection"
+    summary: The worker says it is still there
+    messages:
+      - $ref: "#/channels/connection/messages/ping"
+  sendPong:
+    action: send
+    channel:
+      $ref: "#/channels/connection"
+    summary: The server answers a ping
+    messages:
+      - $ref: "#/channels/connection/messages/pong"
+
+components:
+  messages:
+    hello:
+      summary: Server to worker, first message. The check timing (spec R14).
+      payload:
+        type: object
+        required: [type, check_interval_seconds, timeout_seconds]
+        properties:
+          type:
+            type: string
+            const: hello
+          check_interval_seconds:
+            type: integer
+            minimum: 1
+            description: How often the worker sends `ping`. Default 10.
+          timeout_seconds:
+            type: integer
+            minimum: 1
+            description: Silence after which each side closes. Default 30.
+      examples:
+        - payload:
+            type: hello
+            check_interval_seconds: 10
+            timeout_seconds: 30
+    ping:
+      summary: Worker to server, every check interval.
+      payload:
+        type: object
+        required: [type]
+        properties:
+          type:
+            type: string
+            const: ping
+      examples:
+        - payload:
+            type: ping
+    pong:
+      summary: Server to worker, the answer to each `ping`.
+      payload:
+        type: object
+        required: [type]
+        properties:
+          type:
+            type: string
+            const: pong
+      examples:
+        - payload:
+            type: pong
