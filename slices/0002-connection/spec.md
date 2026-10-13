@@ -242,6 +242,55 @@ The daemon obeys it at all times.
   reach the server can see the Machines page. The server still listens on
   `localhost` only.
 
+## Messages
+
+The exact wording of messages the requirements above describe but do not
+quote. `<…>` is filled in.
+
+**`tervi pair` and `tervi connect`**
+
+| When | Message |
+| --- | --- |
+| Paired, but not connected within 30 seconds (R11) | `Paired, but not connected yet: <last error>. tervi keeps trying in the background.` then `Check with: tervi status` |
+| The background service cannot start (R29) | `✗ Can't start tervi in the background: <reason>` then `Try again with: tervi connect` |
+| Ctrl+C while connecting after pairing | `Pairing finished. Connecting was cancelled; tervi keeps trying in the background.` |
+
+**`tervi status`** (R16)
+
+| When | Message |
+| --- | --- |
+| Connected | `● Connected to <server>`, `  Machine: <hostname>`, `  Since:   <HH:MM> (<how long>)` |
+| Reconnecting | `○ Reconnecting to <server>`, `  Try <n>, next in <s> seconds`, `  Last error: <error>` |
+| Running, not connecting, no rejection (a slice-1 pairing) | `○ Not connecting.` then `  Connect with: tervi connect` |
+
+`<how long>` is `less than a minute`, `1 minute`, `N minutes`, `1 hour`,
+`N hours`, `1 day`, or `N days`.
+
+**The daemon's log** (R8). Each line starts with the time, `HH:MM:SS`.
+
+| When | Line |
+| --- | --- |
+| Connected | `✓ Connected to <server>` |
+| Lost | `✗ Connection lost: <reason>`, where `<reason>` is `the server is stopping`, `replaced by a newer connection`, `no answer from the server for <timeout> seconds`, `the server closed the connection`, or the network error |
+| A try starts | `… Reconnecting (try <n>)` |
+| A try failed | `✗ <error>. Next try in <s> seconds` |
+| Rejected (R18) | `✗ The server doesn't accept this computer's credential. Pair again with: tervi pair --server <server>` |
+
+**The Machines page** (R21)
+
+| When | Text |
+| --- | --- |
+| No machines | `No machines yet. Pair one with: tervi pair --server <this page's address>` |
+| The server cannot be reached | `Can't reach the server. Trying again…` above the last list shown |
+| `<time ago>` | `less than a minute ago`, `1 minute ago`, `N minutes ago`, `1 hour ago`, `N hours ago`, `1 day ago`, `N days ago` |
+
+**Rare errors**
+
+| When | Message |
+| --- | --- |
+| `tervi daemon` without a desktop session's runtime folder | `✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).` |
+| `tervi logs` cannot read the log | `✗ Can't read the log: <reason>` |
+
 ## Not in this slice
 
 - `tervi disconnect`, unpairing, removing the background service, and revoking

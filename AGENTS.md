@@ -62,8 +62,9 @@ people and by agents:
   the contract test passes before the code exists; the task that builds the
   operation removes the mark.
 - **The code must match them.** A test checks the server against
-  `api/openapi.yaml`, and tests check both sides against
-  `api/asyncapi.yaml`. For the database, the migration files are the truth and
+  `api/openapi.yaml`. For the connection, both sides' tests use the messages
+  and close codes exactly as `api/asyncapi.yaml` describes them, and the
+  reviewer checks the code against it. For the database, the migration files are the truth and
   `design/data-model.md` must agree with them.
 - A task that finds the contract wrong stops and reports it; it does not
   change the code to disagree with the contract.

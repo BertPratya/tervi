@@ -273,3 +273,59 @@ with `0`.
   Not chosen: `github.com/coreos/go-systemd` over D-Bus — a new library and
   more code, and reading the journal with it needs C code (cgo), which
   complicates building.
+
+## Requirement coverage
+
+| Requirement | Tasks |
+| --- | --- |
+| R1 | 03, 06 |
+| R2 | 03, 07 |
+| R3 | 03, 04 |
+| R4 | 05 |
+| R5 | 05, 06 |
+| R6 | 05 |
+| R7 | 04 |
+| R8 | 03, 04 |
+| R9 | 03 |
+| R10 | 06, 07 |
+| R11 | 06 |
+| R12 | 01, 03, 07 |
+| R13 | 01, 03 |
+| R14 | 01, 03 |
+| R15 | 01, 07 |
+| R16 | 05, 07 |
+| R17 | 05 |
+| R18 | 01, 03, 07 |
+| R19 | 01, 03 |
+| R20 | 03 |
+| R21 | 02, 07 |
+| R22 | 02 |
+| R23 | 01, 02, 07 |
+| R24 | 01, 02, 07 |
+| R25 | 01, 02, 03, 05, 06, 07 |
+| R26 | 04 |
+| R27 | 02 |
+| R28 | 05, 06 |
+| R29 | 05, 06 |
+| R30 | 04 |
+| R31 | 05, 06 |
+| R32 | 05 |
+| R33 | 06, 07 |
+
+R1 is met through the daemon: pairing asks it to connect, and it writes
+`connect: true` (decision 1). If the background service cannot start, the
+user finishes with `tervi connect` (R29).
+
+## Tasks
+
+| # | Task | Depends on | Risk | Status |
+| --- | --- | --- | --- | --- |
+| 01 | [Server: the machine connection](tasks/01-server-connection.md) | — | core | todo |
+| 02 | [Server: the machines list and the Machines page](tasks/02-machines-page.md) | 01 | normal | todo |
+| 03 | [Worker: the daemon's connection](tasks/03-daemon-connection.md) | 01 | core | todo |
+| 04 | [Worker: the daemon's socket, its lock, and `tervi daemon`](tasks/04-daemon-socket.md) | 03 | core | todo |
+| 05 | [Worker: the background service, `tervi connect`, `tervi status`, `tervi logs`](tasks/05-service-and-commands.md) | 04 | core | todo |
+| 06 | [Worker: pairing hands over to the daemon](tasks/06-pairing-hands-over.md) | 05 | core | todo |
+| 07 | [End-to-end test of the connection](tasks/07-end-to-end.md) | 01–06 | normal | todo |
+
+Tasks 02 and 03 can be built at the same time.
