@@ -1,0 +1,31 @@
+package credential
+
+import (
+	"errors"
+	"fmt"
+
+	"github.com/bertpratya/tervi/internal/worker/state"
+)
+
+// Paired reports whether state.json is confirmed and the secret store holds a
+// usable entry. Missing state or an entry means the computer is not paired.
+func Paired(stateDir string, store *Store) (entry Entry, record state.State, paired bool, err error) {
+	record, exists, err := state.ReadState(stateDir)
+	if err != nil {
+		return Entry{}, record, false, fmt.Errorf("read state.json: %w", err)
+	}
+	if !exists || !record.Confirmed {
+		return Entry{}, record, false, nil
+	}
+	entry, exists, err = store.Get()
+	if errors.Is(err, ErrDamaged) {
+		return Entry{}, record, false, ErrDamaged
+	}
+	if err != nil {
+		return Entry{}, record, false, fmt.Errorf("read secret store: %w", err)
+	}
+	if !exists {
+		return Entry{}, record, false, nil
+	}
+	return entry, record, true, nil
+}

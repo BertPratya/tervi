@@ -37,7 +37,7 @@ func TestAddressStandardForm(t *testing.T) {
 
 func TestStateFileWrite(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "private")
-	want := State{MachineID: "machine-123", CredentialSaved: true, Confirmed: false}
+	want := State{MachineID: "machine-123", CredentialSaved: true, Confirmed: false, Connect: true}
 	if err := WriteState(dir, want); err != nil {
 		t.Fatalf("WriteState() error = %v", err)
 	}
@@ -71,8 +71,32 @@ func TestStateFileWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	var decoded map[string]any
-	if err := json.Unmarshal(data, &decoded); err != nil || len(decoded) != 3 {
-		t.Errorf("state JSON = %q, decode err %v; want all three fields only", data, err)
+	if err := json.Unmarshal(data, &decoded); err != nil || len(decoded) != 5 {
+		t.Errorf("state JSON = %q, decode err %v; want all five fields only", data, err)
+	}
+}
+
+func TestStateKeepsPairingFields(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(StatePath(dir), []byte(`{"machine_id":"m","credential_saved":true,"confirmed":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	record, exists, err := ReadState(dir)
+	if err != nil || !exists || record.Connect {
+		t.Fatalf("ReadState() = (%+v, %v, %v), want connect false", record, exists, err)
+	}
+	if record.StopReason != nil {
+		t.Fatalf("StopReason = %v, want nil", record.StopReason)
+	}
+	reason := "credential_rejected"
+	record.Connect = false
+	record.StopReason = &reason
+	if err := WriteState(dir, record); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := ReadState(dir)
+	if err != nil || got.MachineID != "m" || !got.CredentialSaved || !got.Confirmed || got.Connect || got.StopReason == nil || *got.StopReason != reason {
+		t.Fatalf("ReadState() after daemon fields update = (%+v, %v), want pairing fields retained", got, err)
 	}
 }
 

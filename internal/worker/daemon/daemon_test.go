@@ -1,0 +1,897 @@
+package daemon
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/bertpratya/tervi/internal/protocol"
+	"github.com/bertpratya/tervi/internal/secret"
+	"github.com/bertpratya/tervi/internal/worker/credential"
+	"github.com/bertpratya/tervi/internal/worker/state"
+	"github.com/coder/websocket"
+)
+
+const daemonCredential = "worker-secret-that-must-never-appear"
+
+type safeBuffer struct {
+	sync.Mutex
+	bytes.Buffer
+}
+
+func (b *safeBuffer) Write(p []byte) (int, error) {
+	b.Lock()
+	defer b.Unlock()
+	return b.Buffer.Write(p)
+}
+
+func (b *safeBuffer) String() string {
+	b.Lock()
+	defer b.Unlock()
+	return b.Buffer.String()
+}
+
+type daemonFixture struct {
+	dir     string
+	store   *credential.Store
+	backend *credential.MemoryBackend
+	logs    *safeBuffer
+	server  *httptest.Server
+	checks  chan *websocket.Conn
+}
+
+func newDaemonFixture(t *testing.T, connect bool, interval, timeout int, onConnect func(*websocket.Conn)) *daemonFixture {
+	t.Helper()
+	f := &daemonFixture{dir: t.TempDir(), backend: credential.NewMemoryBackend(), logs: &safeBuffer{}, checks: make(chan *websocket.Conn, 20)}
+	f.store = credential.NewStore(f.backend)
+	if err := f.store.Save(credential.Entry{Server: "http://placeholder", Credential: secret.FromString(daemonCredential)}); err != nil {
+		t.Fatal(err)
+	}
+	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/machines/current/connection" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+daemonCredential {
+			http.Error(w, "missing proof", http.StatusUnauthorized)
+			return
+		}
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		if err := conn.Write(r.Context(), websocket.MessageText, mustJSON(protocol.Hello{Type: protocol.TypeHello, CheckIntervalSeconds: interval, TimeoutSeconds: timeout})); err != nil {
+			_ = conn.CloseNow()
+			return
+		}
+		select {
+		case f.checks <- conn:
+		default:
+		}
+		if onConnect != nil {
+			onConnect(conn)
+			return
+		}
+		for {
+			_, message, err := conn.Read(context.Background())
+			if err != nil {
+				return
+			}
+			if messageType, ok := protocol.ReadType(message); ok && messageType == protocol.TypePing {
+				if err := conn.Write(context.Background(), websocket.MessageText, mustJSON(protocol.Pong{Type: protocol.TypePong})); err != nil {
+					return
+				}
+			}
+		}
+	}))
+	// Update the store after its listener is available so every test can dial it.
+	serverEntry := credential.Entry{Server: f.server.URL, Credential: secret.FromString(daemonCredential)}
+	if err := f.store.Save(serverEntry); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.WriteState(f.dir, state.State{MachineID: "machine-id", CredentialSaved: true, Confirmed: true, Connect: connect}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(f.server.Close)
+	return f
+}
+
+func (f *daemonFixture) newDaemon(t *testing.T, opts Options) *Daemon {
+	t.Helper()
+	opts.StateDir, opts.Store, opts.Log = f.dir, f.store, f.logs
+	return New(opts)
+}
+
+func mustJSON(value any) []byte {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
+
+func waitFor(t *testing.T, timeout time.Duration, predicate func() bool, what string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if predicate() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+func TestConnectsAndPings(t *testing.T) {
+	type receivedPing struct {
+		message []byte
+		at      time.Time
+	}
+	pings := make(chan receivedPing, 4)
+	f := newDaemonFixture(t, true, 1, 4, func(conn *websocket.Conn) {
+		for {
+			_, message, err := conn.Read(context.Background())
+			if err != nil {
+				return
+			}
+			pings <- receivedPing{message: message, at: time.Now()}
+			if messageType, ok := protocol.ReadType(message); ok && messageType == protocol.TypePing {
+				if err := conn.Write(context.Background(), websocket.MessageText, mustJSON(protocol.Pong{Type: protocol.TypePong})); err != nil {
+					return
+				}
+			}
+		}
+	})
+	d := f.newDaemon(t, Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	<-f.checks
+	ctxRead, cancelRead := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+	defer cancelRead()
+	var first receivedPing
+	select {
+	case first = <-pings:
+	case <-ctxRead.Done():
+		t.Fatal("timed out waiting for first ping")
+	}
+	if got, ok := protocol.ReadType(first.message); !ok || got != protocol.TypePing {
+		t.Fatalf("first worker message = %s, want ping", first.message)
+	}
+	var second receivedPing
+	select {
+	case second = <-pings:
+	case <-ctxRead.Done():
+		t.Fatal("timed out waiting for second ping")
+	}
+	if got, ok := protocol.ReadType(second.message); !ok || got != protocol.TypePing {
+		t.Fatalf("second worker message = %s, want ping", second.message)
+	}
+	if got := d.Status(); got.State != "connected" || got.Server != f.server.URL || got.ConnectedSince.IsZero() {
+		t.Fatalf("Status() = %+v, want connected with server and time", got)
+	} else if first.at.Sub(got.ConnectedSince) < 800*time.Millisecond || first.at.Sub(got.ConnectedSince) > 1500*time.Millisecond || second.at.Sub(first.at) < 800*time.Millisecond || second.at.Sub(first.at) > 1500*time.Millisecond {
+		t.Fatalf("ping times = hello+%s and gap %s, want about 1 second each", first.at.Sub(got.ConnectedSince), second.at.Sub(first.at))
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+}
+
+func TestUsesServerTiming(t *testing.T) {
+	f := newDaemonFixture(t, true, 10, 1, nil)
+	d := f.newDaemon(t, Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	select {
+	case <-f.checks:
+	case <-time.After(time.Second):
+		t.Fatal("daemon did not connect")
+	}
+	waitFor(t, 2500*time.Millisecond, func() bool { return strings.Contains(f.logs.String(), "no answer from the server for 1 seconds") }, "timeout based on hello; logs: "+f.logs.String())
+	cancel()
+	<-done
+}
+
+func TestServerCloseNoticedAtOnce(t *testing.T) {
+	fixed := time.Date(2025, 1, 2, 3, 4, 5, 0, time.FixedZone("local", 7*60*60))
+	for _, test := range []struct {
+		name   string
+		code   int
+		reason string
+	}{
+		{name: "server stopping", code: protocol.CloseServerStopping, reason: "the server is stopping"},
+		{name: "replaced", code: protocol.CloseReplaced, reason: "replaced by a newer connection"},
+		{name: "other close", code: 4002, reason: "the server closed the connection"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newDaemonFixture(t, true, 10, 30, func(conn *websocket.Conn) {
+				_ = conn.Close(websocket.StatusCode(test.code), "server close")
+			})
+			d := f.newDaemon(t, Options{Now: func() time.Time { return fixed }})
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() { done <- d.Run(ctx) }()
+			waitFor(t, 750*time.Millisecond, func() bool { return strings.Contains(f.logs.String(), "Connection lost: "+test.reason) }, "server close log")
+			cancel()
+			if err := <-done; err != nil {
+				t.Fatalf("Run() = %v", err)
+			}
+			want := "03:04:05 ✓ Connected to " + f.server.URL + "\n03:04:05 ✗ Connection lost: " + test.reason + "\n"
+			if got := f.logs.String(); got != want {
+				t.Fatalf("log lines = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestServerSilenceTimesOut(t *testing.T) {
+	closeSeen := make(chan websocket.StatusCode, 1)
+	f := newDaemonFixture(t, true, 10, 1, func(conn *websocket.Conn) {
+		_, _, err := conn.Read(context.Background())
+		closeSeen <- websocket.CloseStatus(err)
+	})
+	d := f.newDaemon(t, Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	select {
+	case code := <-closeSeen:
+		if code != websocket.StatusCode(protocol.CloseTimeout) {
+			t.Fatalf("close code = %d, want %d", code, protocol.CloseTimeout)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not observe timeout close")
+	}
+	waitFor(t, time.Second, func() bool {
+		return strings.Contains(f.logs.String(), "Connection lost: no answer from the server for 1 seconds")
+	}, "timeout loss log")
+	cancel()
+	<-done
+}
+
+func TestReconnectWaits(t *testing.T) {
+	bases := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 30 * time.Second, 30 * time.Second}
+	for i, base := range bases {
+		for _, random := range []float64{0, 0.999999} {
+			got := reconnectWait(i+1, random)
+			factor := got.Seconds() / base.Seconds()
+			if factor < 0.8 || factor > 1.2 {
+				t.Errorf("reconnectWait(%d, %v) = %s, outside 0.8–1.2 × %s", i+1, random, got, base)
+			}
+		}
+	}
+	if got := reconnectWait(1, 0); got != 800*time.Millisecond {
+		t.Errorf("first wait with Rand=0 = %s, want 800ms", got)
+	}
+	if got := reconnectWait(2, 0); got != 1600*time.Millisecond {
+		t.Errorf("wait before try 2 = %s, want 1.6s", got)
+	}
+	if got := reconnectWait(7, 0.5); got != 30*time.Second {
+		t.Errorf("wait after cap = %s, want 30s", got)
+	}
+
+	t.Run("loop retries after loss and resets after hello", func(t *testing.T) {
+		var serverConnections int
+		f := newDaemonFixture(t, true, 10, 30, func(conn *websocket.Conn) {
+			serverConnections++
+			_ = conn.Close(websocket.StatusCode(protocol.CloseServerStopping), "stopping")
+		})
+		var dialCalls int
+		dial := func(ctx context.Context, address string, options *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+			dialCalls++
+			if dialCalls == 1 || dialCalls == 9 {
+				return websocket.Dial(ctx, address, options)
+			}
+			return nil, nil, errors.New("temporary network failure")
+		}
+		randomValues := []float64{0, 0.999999, 0, 0.999999, 0, 0.999999, 0, 0.999999, 0}
+		randomCalls := 0
+		fixed := time.Date(2025, 1, 2, 3, 4, 5, 0, time.FixedZone("local", 7*60*60))
+		d := f.newDaemon(t, Options{Now: func() time.Time { return fixed }, Dial: dial, Rand: func() float64 {
+			value := randomValues[randomCalls]
+			randomCalls++
+			return value
+		}})
+		waits := make(chan time.Duration, 9)
+		waitNumber := 0
+		d.waitOverride = func(duration time.Duration, ctx context.Context) bool {
+			waits <- duration
+			waitNumber++
+			if waitNumber == 9 {
+				<-ctx.Done()
+				return false
+			}
+			return true
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- d.Run(ctx) }()
+		gotWaits := make([]time.Duration, 0, 9)
+		for len(gotWaits) < 9 {
+			select {
+			case wait := <-waits:
+				gotWaits = append(gotWaits, wait)
+			case <-time.After(3 * time.Second):
+				cancel()
+				t.Fatalf("wait sequence stopped at %v; logs: %q", gotWaits, f.logs.String())
+			}
+		}
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
+		bases := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 30 * time.Second, 30 * time.Second, 30 * time.Second, time.Second}
+		for index, wait := range gotWaits {
+			factor := float64(wait) / float64(bases[index])
+			if factor < 0.8 || factor > 1.2 {
+				t.Errorf("wait %d = %s, outside 0.8–1.2 × %s", index+1, wait, bases[index])
+			}
+		}
+		lines := strings.Split(strings.TrimSpace(f.logs.String()), "\n")
+		if len(lines) == 0 || !strings.Contains(lines[0], "✓ Connected to ") {
+			t.Errorf("first try after start was announced as a reconnect: %q", f.logs.String())
+		}
+		for _, line := range []string{
+			"✗ Connection lost: the server is stopping",
+			"… Reconnecting (try 1)",
+			"… Reconnecting (try 2)",
+			"… Reconnecting (try 8)",
+			"✗ Temporary network failure. Next try in 2 seconds",
+			"Next try in 36 seconds",
+		} {
+			if !strings.Contains(f.logs.String(), line) {
+				t.Errorf("logs do not contain %q: %q", line, f.logs.String())
+			}
+		}
+		if serverConnections != 2 {
+			t.Errorf("server accepted %d connections, want two successful hello cycles", serverConnections)
+		}
+	})
+}
+
+func TestStoreUnreadableIsFailedTry(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		failed  string
+		prepare func(*daemonFixture)
+		repair  func(*daemonFixture) error
+	}{
+		{
+			name:    "unreadable",
+			failed:  "Can't read the secret store",
+			prepare: func(f *daemonFixture) { f.backend.FailGet = true },
+			repair:  func(f *daemonFixture) error { f.backend.FailGet = false; return nil },
+		},
+		{
+			name:   "damaged",
+			failed: "The secret store entry is damaged",
+			prepare: func(f *daemonFixture) {
+				if err := f.backend.Set("worker", "broken"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			repair: func(f *daemonFixture) error {
+				return f.store.Save(credential.Entry{Server: f.server.URL, Credential: secret.FromString(daemonCredential)})
+			},
+		},
+		{
+			name:   "missing",
+			failed: "The secret store entry is missing",
+			prepare: func(f *daemonFixture) {
+				if err := f.backend.Delete("worker"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			repair: func(f *daemonFixture) error {
+				return f.store.Save(credential.Entry{Server: f.server.URL, Credential: secret.FromString(daemonCredential)})
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newDaemonFixture(t, true, 10, 30, nil)
+			test.prepare(f)
+			d := f.newDaemon(t, Options{Rand: func() float64 { return 0 }})
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() { done <- d.Run(ctx) }()
+			waitFor(t, time.Second, func() bool { return strings.Contains(f.logs.String(), test.failed+". Next try in") }, "failed store try")
+			if got, _, err := state.ReadState(f.dir); err != nil || !got.Connect {
+				t.Fatalf("state after store failure = (%+v, %v), want connect true", got, err)
+			}
+			if err := test.repair(f); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, 4*time.Second, func() bool { return d.Status().State == "connected" }, "retry using the recovered store entry")
+			cancel()
+			if err := <-done; err != nil {
+				t.Fatalf("Run() = %v", err)
+			}
+		})
+	}
+}
+
+func TestStatusWhileTrying(t *testing.T) {
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	called := make(chan struct{}, 1)
+	d := f.newDaemon(t, Options{Dial: func(ctx context.Context, _ string, _ *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+		called <- struct{}{}
+		<-ctx.Done()
+		return nil, nil, ctx.Err()
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	<-called
+	status := d.Status()
+	if status.State != "reconnecting" || status.Try != 1 || status.NextTryInSeconds != 0 || status.LastError != "" {
+		t.Fatalf("Status() during initial try = %+v", status)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	t.Run("after earlier failure", func(t *testing.T) {
+		f := newDaemonFixture(t, true, 10, 30, nil)
+		var calls int
+		secondCall := make(chan struct{}, 1)
+		d := f.newDaemon(t, Options{Dial: func(ctx context.Context, address string, options *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+			calls++
+			if calls == 1 {
+				return nil, nil, errors.New("temporary network failure")
+			}
+			secondCall <- struct{}{}
+			<-ctx.Done()
+			return nil, nil, ctx.Err()
+		}})
+		d.waitOverride = func(_ time.Duration, ctx context.Context) bool { return ctx.Err() == nil }
+		runCtx, stop := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- d.Run(runCtx) }()
+		select {
+		case <-secondCall:
+		case <-time.After(time.Second):
+			stop()
+			t.Fatal("daemon did not make its second try")
+		}
+		status := d.Status()
+		if status.State != "reconnecting" || status.Try != 2 || status.NextTryInSeconds != 0 || status.LastError != "temporary network failure" {
+			t.Fatalf("Status() during second try = %+v, want last error from first try", status)
+		}
+		stop()
+		if err := <-done; err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
+	})
+}
+
+func TestErrorTexts(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		err      error
+		response *http.Response
+		last     string
+		log      string
+	}{
+		{name: "refused", err: &net.OpError{Err: syscall.ECONNREFUSED}, last: "connection refused", log: "Connection refused"},
+		{name: "timeout", err: context.DeadlineExceeded, last: "no answer from the server", log: "No answer from the server"},
+		{name: "http", response: &http.Response{StatusCode: 503}, last: "the server answered 503", log: "The server answered 503"},
+		{name: "secret store unreadable", err: errors.New("read secret store: keyring locked"), last: "can't read the secret store", log: "Can't read the secret store"},
+		{name: "secret store damaged", err: credential.ErrDamaged, last: "the secret store entry is damaged", log: "The secret store entry is damaged"},
+		{name: "missing secret store entry", err: credential.ErrNotFound, last: "the secret store entry is missing", log: "The secret store entry is missing"},
+		{name: "state unreadable", err: errors.New("read state.json: malformed json"), last: "can't read state.json", log: ""},
+		{name: "network", err: errors.New("Network is down"), last: "network is down", log: "Network is down"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			last, logged := errorText(test.err, test.response, daemonCredential)
+			if last != test.last || logged != test.log {
+				t.Fatalf("errorText() = (%q, %q), want (%q, %q)", last, logged, test.last, test.log)
+			}
+		})
+	}
+}
+
+func TestKeepsTryingForever(t *testing.T) {
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	calls := 0
+	var mu sync.Mutex
+	d := f.newDaemon(t, Options{Dial: func(context.Context, string, *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		return nil, nil, errors.New("temporary network failure")
+	}})
+	d.waitOverride = func(_ time.Duration, ctx context.Context) bool {
+		timer := time.NewTimer(time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-timer.C:
+			return true
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = d.Run(ctx); close(done) }()
+	waitFor(t, time.Second, func() bool { mu.Lock(); defer mu.Unlock(); return calls >= 20 }, "many failed connection tries")
+	if got, _, err := state.ReadState(f.dir); err != nil || !got.Connect {
+		t.Fatalf("state after repeated errors = (%+v, %v), want connect true", got, err)
+	}
+	cancel()
+	<-done
+}
+
+func TestOnlyUnknownCredentialStops(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusNotFound, http.StatusUnauthorized} {
+		response := &http.Response{StatusCode: status, Body: http.NoBody}
+		if unknownCredential(response) {
+			t.Errorf("unknownCredential(%d) = true, want false without exact body", status)
+		}
+	}
+	response := &http.Response{StatusCode: http.StatusUnauthorized, Body: http.NoBody}
+	if unknownCredential(response) {
+		t.Fatal("401 without unknown_credential body was treated as rejection")
+	}
+	if !isUnknownCredentialBody([]byte(`{"error":"unknown_credential"}`)) {
+		t.Fatal("exact rejection body was not recognized")
+	}
+	if !isUnknownCredentialBody([]byte("{ \"error\": \"unknown_credential\" }\n")) {
+		t.Fatal("JSON whitespace around the rejection was not recognized")
+	}
+	for _, body := range [][]byte{[]byte(`{"error":"other"}`), []byte(`not json`), []byte(`{"error":"unknown_credential","extra":true}`), []byte(`{"error":"other","error":"unknown_credential"}`)} {
+		if isUnknownCredentialBody(body) {
+			t.Errorf("body %q was treated as exact rejection", body)
+		}
+	}
+
+	for _, test := range []struct {
+		name     string
+		response *http.Response
+		err      error
+	}{
+		{name: "500", response: &http.Response{StatusCode: http.StatusInternalServerError, Body: ioNopCloser("server error")}, err: errors.New("HTTP 500")},
+		{name: "404", response: &http.Response{StatusCode: http.StatusNotFound, Body: ioNopCloser("not found")}, err: errors.New("HTTP 404")},
+		{name: "other 401", response: &http.Response{StatusCode: http.StatusUnauthorized, Body: ioNopCloser(`{"error":"other"}`)}, err: errors.New("HTTP 401")},
+		{name: "refused", err: &net.OpError{Err: syscall.ECONNREFUSED}},
+		{name: "timeout", err: context.DeadlineExceeded},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newDaemonFixture(t, true, 10, 30, nil)
+			calls := 0
+			d := f.newDaemon(t, Options{
+				Rand: func() float64 { return 0 },
+				Dial: func(ctx context.Context, address string, options *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+					calls++
+					if calls == 1 {
+						return nil, test.response, test.err
+					}
+					return websocket.Dial(ctx, address, options)
+				},
+			})
+			d.waitOverride = func(_ time.Duration, ctx context.Context) bool { return ctx.Err() == nil }
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() { done <- d.Run(ctx) }()
+			waitFor(t, time.Second, func() bool { return d.Status().State == "connected" }, "retry after non-rejection failure")
+			if calls < 2 {
+				t.Fatalf("Dial called %d times, want retry", calls)
+			}
+			if got, _, err := state.ReadState(f.dir); err != nil || !got.Connect {
+				t.Fatalf("state after %s = (%+v, %v), want connect true", test.name, got, err)
+			}
+			cancel()
+			if err := <-done; err != nil {
+				t.Fatalf("Run() = %v", err)
+			}
+		})
+	}
+}
+
+func TestRejectionStops(t *testing.T) {
+	fixed := time.Date(2025, 1, 2, 3, 4, 5, 0, time.FixedZone("local", 7*60*60))
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	// httptest.Server's handler is fixed when it starts; use an injected dial
+	// response to exercise the exact rejection parser without leaking secrets.
+	d := f.newDaemon(t, Options{Now: func() time.Time { return fixed }, Dial: func(context.Context, string, *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+		return nil, &http.Response{StatusCode: http.StatusUnauthorized, Body: ioNopCloser("{\"error\":\"unknown_credential\"}\n")}, errors.New("unauthorized")
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	waitFor(t, time.Second, func() bool { s := d.Status(); return s.State == "not_connecting" && s.StopReason != nil }, "credential rejection")
+	if got, _, err := state.ReadState(f.dir); err != nil || got.Connect || got.StopReason == nil || *got.StopReason != "credential_rejected" {
+		t.Fatalf("state after rejection = (%+v, %v)", got, err)
+	}
+	wantLog := "03:04:05 ✗ The server doesn't accept this computer's credential. Pair again with: tervi pair --server " + f.server.URL + "\n"
+	if got := f.logs.String(); got != wantLog {
+		t.Fatalf("rejection log = %q, want %q", got, wantLog)
+	}
+	cancel()
+	<-done
+}
+
+func TestConnectAfterRejection(t *testing.T) {
+	f := newDaemonFixture(t, false, 10, 30, nil)
+	d := f.newDaemon(t, Options{Dial: func(context.Context, string, *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+		return nil, &http.Response{StatusCode: http.StatusUnauthorized, Body: ioNopCloser("{\"error\":\"unknown_credential\"}\n")}, errors.New("unauthorized")
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	result := d.Connect(ctx)
+	if result.Result != "rejected" {
+		t.Fatalf("Connect() = %+v, want rejected", result)
+	}
+	if got, _, err := state.ReadState(f.dir); err != nil || got.Connect || got.StopReason == nil {
+		t.Fatalf("state after second rejection = (%+v, %v)", got, err)
+	}
+	cancel()
+	<-done
+}
+
+func TestIdleWhileConnectFalse(t *testing.T) {
+	f := newDaemonFixture(t, false, 10, 30, nil)
+	d := f.newDaemon(t, Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-f.checks:
+		t.Fatal("daemon connected while connect was false")
+	default:
+	}
+	if got := d.Status(); got.State != "not_connecting" {
+		t.Fatalf("Status() = %+v, want not_connecting", got)
+	}
+	cancel()
+	<-done
+}
+
+func TestDaemonConnectResults(t *testing.T) {
+	t.Run("not paired", func(t *testing.T) {
+		f := newDaemonFixture(t, false, 10, 30, nil)
+		if err := state.WriteState(f.dir, state.State{}); err != nil {
+			t.Fatal(err)
+		}
+		d := f.newDaemon(t, Options{})
+		if got := d.Connect(context.Background()); got.Result != "not_paired" {
+			t.Fatalf("Connect() = %+v", got)
+		}
+	})
+	t.Run("already connected", func(t *testing.T) {
+		f := newDaemonFixture(t, true, 10, 30, nil)
+		d := f.newDaemon(t, Options{})
+		ctx, cancel := context.WithCancel(context.Background())
+		go d.Run(ctx)
+		waitFor(t, time.Second, func() bool { return d.Status().State == "connected" }, "connected status")
+		if got := d.Connect(ctx); got.Result != "already_connected" {
+			t.Fatalf("Connect() = %+v", got)
+		}
+		cancel()
+	})
+	t.Run("connected", func(t *testing.T) {
+		f := newDaemonFixture(t, false, 10, 30, nil)
+		d := f.newDaemon(t, Options{})
+		ctx, cancel := context.WithCancel(context.Background())
+		go d.Run(ctx)
+		if got := d.Connect(ctx); got.Result != "connected" {
+			t.Fatalf("Connect() = %+v", got)
+		}
+		cancel()
+	})
+	t.Run("still trying on cancellation", func(t *testing.T) {
+		f := newDaemonFixture(t, false, 10, 30, nil)
+		d := f.newDaemon(t, Options{Dial: func(ctx context.Context, _ string, _ *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+			<-ctx.Done()
+			return nil, nil, ctx.Err()
+		}})
+		runCtx, stop := context.WithCancel(context.Background())
+		go d.Run(runCtx)
+		connectCtx, cancel := context.WithCancel(context.Background())
+		go func() { time.Sleep(30 * time.Millisecond); cancel() }()
+		if got := d.Connect(connectCtx); got.Result != "still_trying" {
+			t.Fatalf("Connect() = %+v", got)
+		}
+		stop()
+	})
+	t.Run("still trying after deadline", func(t *testing.T) {
+		f := newDaemonFixture(t, false, 10, 30, nil)
+		d := f.newDaemon(t, Options{Dial: func(context.Context, string, *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+			return nil, nil, errors.New("temporary network failure")
+		}})
+		d.connectTimeout = 40 * time.Millisecond
+		runCtx, stop := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- d.Run(runCtx) }()
+		got := d.Connect(context.Background())
+		if got.Result != "still_trying" || got.LastError != "temporary network failure" {
+			t.Fatalf("Connect() = %+v, want still_trying with last error", got)
+		}
+		if record, _, err := state.ReadState(f.dir); err != nil || !record.Connect {
+			t.Fatalf("state after connect deadline = (%+v, %v), want connect true", record, err)
+		}
+		stop()
+		if err := <-done; err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
+	})
+	t.Run("unreadable state preserved", func(t *testing.T) {
+		f := newDaemonFixture(t, false, 10, 30, nil)
+		before := []byte("{ malformed state that must stay byte-for-byte unchanged\n")
+		if err := os.WriteFile(state.StatePath(f.dir), before, 0600); err != nil {
+			t.Fatal(err)
+		}
+		d := f.newDaemon(t, Options{})
+		if got := d.Connect(context.Background()); got.Result != "still_trying" || got.LastError != "can't read state.json" {
+			t.Fatalf("Connect() = %+v", got)
+		}
+		after, err := os.ReadFile(state.StatePath(f.dir))
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatalf("unreadable state changed from %q to %q: %v", before, after, err)
+		}
+	})
+}
+
+func TestUnreadableStateStaysIdle(t *testing.T) {
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	if err := os.WriteFile(state.StatePath(f.dir), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	d := f.newDaemon(t, Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+	if got := d.Status(); got.State != "not_connecting" || got.StopReason != nil {
+		t.Fatalf("Status() = %+v", got)
+	}
+	select {
+	case <-f.checks:
+		t.Fatal("daemon dialed with malformed state")
+	default:
+	}
+	if strings.Contains(f.logs.String(), "✗") {
+		t.Fatalf("unexpected log: %q", f.logs.String())
+	}
+	cancel()
+	<-done
+}
+
+func TestConnectReadsNewPairing(t *testing.T) {
+	f := newDaemonFixture(t, false, 10, 30, nil)
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer new-credential" {
+			http.Error(w, "bad proof", 401)
+			return
+		}
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		_ = conn.Write(r.Context(), websocket.MessageText, mustJSON(protocol.Hello{Type: protocol.TypeHello, CheckIntervalSeconds: 10, TimeoutSeconds: 30}))
+		_, _, _ = conn.Read(context.Background())
+	}))
+	defer other.Close()
+	if err := f.store.Save(credential.Entry{Server: other.URL, Credential: secret.FromString("new-credential")}); err != nil {
+		t.Fatal(err)
+	}
+	d := f.newDaemon(t, Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	go d.Run(ctx)
+	if got := d.Connect(ctx); got.Result != "connected" {
+		t.Fatalf("Connect() = %+v", got)
+	}
+	if got := d.Status(); got.Server != other.URL {
+		t.Fatalf("server = %q, want new pairing %q", got.Server, other.URL)
+	}
+	cancel()
+}
+
+func TestLogLines(t *testing.T) {
+	fixed := time.Date(2025, 1, 2, 3, 4, 5, 0, time.FixedZone("local", 7*60*60))
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	d := f.newDaemon(t, Options{Now: func() time.Time { return fixed }})
+	ctx, cancel := context.WithCancel(context.Background())
+	go d.Run(ctx)
+	waitFor(t, time.Second, func() bool { return strings.Contains(f.logs.String(), "✓ Connected to ") }, "connected log")
+	cancel()
+	text := f.logs.String()
+	want := "03:04:05 ✓ Connected to " + f.server.URL + "\n"
+	if text != want {
+		t.Fatalf("log = %q, want %q", text, want)
+	}
+	if strings.Contains(text, "ping") || strings.Contains(text, "pong") || strings.Contains(text, "hello") {
+		t.Fatalf("regular checks were logged: %q", text)
+	}
+	t.Run("failed try", func(t *testing.T) {
+		f := newDaemonFixture(t, true, 10, 30, nil)
+		d := f.newDaemon(t, Options{
+			Now:  func() time.Time { return fixed },
+			Rand: func() float64 { return 0 },
+			Dial: func(context.Context, string, *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+				return nil, nil, &net.OpError{Err: syscall.ECONNREFUSED}
+			},
+		})
+		d.waitOverride = func(_ time.Duration, ctx context.Context) bool { <-ctx.Done(); return false }
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- d.Run(ctx) }()
+		waitFor(t, time.Second, func() bool { return strings.Contains(f.logs.String(), "Next try in 2 seconds") }, "failed try log")
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("Run() = %v", err)
+		}
+		want := "03:04:05 ✗ Connection refused. Next try in 2 seconds\n"
+		if got := f.logs.String(); got != want {
+			t.Fatalf("failed try log = %q, want %q", got, want)
+		}
+	})
+}
+
+func TestCredentialNeverInLogOrState(t *testing.T) {
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	d := f.newDaemon(t, Options{Dial: func(context.Context, string, *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+		return nil, nil, fmt.Errorf("server failed while using %s", daemonCredential)
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	go d.Run(ctx)
+	waitFor(t, 3*time.Second, func() bool { return strings.Contains(f.logs.String(), "Next try in") }, "failed try log")
+	cancel()
+	if strings.Contains(f.logs.String(), daemonCredential) {
+		t.Fatalf("log contains credential: %q", f.logs.String())
+	}
+	if strings.Contains(d.Status().LastError, daemonCredential) {
+		t.Fatalf("Status() contains credential: %+v", d.Status())
+	}
+	data, err := os.ReadFile(state.StatePath(f.dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), daemonCredential) {
+		t.Fatalf("state contains credential: %q", data)
+	}
+}
+
+func TestStopsCleanlyOnContextEnd(t *testing.T) {
+	closeSeen := make(chan error, 1)
+	f := newDaemonFixture(t, true, 10, 30, func(conn *websocket.Conn) {
+		_, _, err := conn.Read(context.Background())
+		closeSeen <- err
+	})
+	d := f.newDaemon(t, Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	<-f.checks
+	waitFor(t, time.Second, func() bool { return d.Status().State == "connected" }, "connected status before shutdown")
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() = %v, want nil", err)
+	}
+	select {
+	case err := <-closeSeen:
+		code := websocket.CloseStatus(err)
+		if code != websocket.StatusCode(protocol.CloseNormal) {
+			t.Fatalf("close = %d (error %v), want 1000", code, err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not observe clean close")
+	}
+}
+
+func ioNopCloser(value string) io.ReadCloser { return io.NopCloser(strings.NewReader(value)) }
