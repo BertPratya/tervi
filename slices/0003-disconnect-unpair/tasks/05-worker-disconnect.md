@@ -18,7 +18,7 @@ until `tervi connect`.
   trying to connect, keep the pairing, and print
   `✓ Disconnected. tervi stays in the background but won't connect.` then
   `Connect again with: tervi connect`, and exit with `0`. The daemon shall
-  keep running.
+  keep running, and write the log line `○ Disconnected.`
 - R2. While the user has disconnected, the daemon shall not connect, also
   after the computer restarts, until the user runs `tervi connect`.
 - R3. When `tervi disconnect` runs and tervi is not running in the
@@ -101,8 +101,12 @@ func (d *Daemon) Disconnect(ctx context.Context) DisconnectResult
 | writing `state.json` fails | nothing else changes | `failed`, with the path |
 
 `Disconnect` and `Connect` never run at the same time (they share
-`connectMu`). The close and the state change happen before the answer is
-sent, so the machine is Offline on the server within the 5 seconds R1's
+`connectMu`). A `Connect` can hold it for up to 30 seconds while it waits
+for a connection, so `Disconnect` waits for it, and `Client.Disconnect`'s
+timeout (40 seconds) is longer than `Client.Connect`'s (35 seconds): a
+`tervi disconnect` run during a waiting `tervi connect` finishes after it,
+and disconnects. The close and the state change happen before the answer
+is sent, so the machine is Offline on the server within the 5 seconds R1's
 example allows.
 
 ### The socket: `internal/worker/control`
@@ -110,7 +114,7 @@ example allows.
 `POST /disconnect` calls the engine's `Disconnect` and answers
 `{"result": "<result>"}`, plus `"path"` for `failed`, with the same
 encoding pattern as `ConnectAnswer`. `Client.Disconnect(ctx)` calls it with
-a 5-second timeout.
+a 40-second timeout (above).
 
 ### The command: `internal/worker/cli/disconnect.go` (new)
 
@@ -136,6 +140,7 @@ exits with `2`). Steps:
 | Rejected (either way) | `Not connecting: the server doesn't accept this computer's credential.` / `  Pair again with: tervi pair --server <server>` | `0` |
 | Revoked (either way) | `✗ This computer was unpaired on the server.` / `  Pair it again with: tervi pair --server <server>` | `0` |
 | `failed` or a write failure | `✗ Can't write <path>.`, as `tervi connect` prints it in slice 2 | `1` |
+| The daemon answered `not_paired` | `This computer isn't paired. Pair it with: tervi pair --server <url>` (R6) | `1` |
 | The socket failed after the lock was busy | as `tervi status` reports a socket failure | `1` |
 
 The hint lines are indented two spaces, as in slice 2 (fix 6).
@@ -168,6 +173,8 @@ usage line.
 | `TestConnectAfterDisconnect` — `tervi connect` connects again | R9 |
 | `TestWithLockBusy` — while a daemon holds the lock, `WithLock` returns `ErrAlreadyRunning` and does not run the change; a daemon cannot start while `WithLock` runs | R1, R3 |
 | `TestDisconnectWriteFailure` — a `state.json` that cannot be written prints the path and exits `1`, both ways | R1, R3 |
+| `TestDisconnectDuringConnect` — a `tervi disconnect` sent while a `POST /connect` waits for an unreachable server answers `disconnected` once the connect ends, and no try follows | R1 |
+| `TestDisconnectLogLine` — the daemon writes `○ Disconnected.` once | R1 |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md`
 changes to `done`.

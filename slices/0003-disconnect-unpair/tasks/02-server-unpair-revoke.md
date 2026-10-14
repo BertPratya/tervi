@@ -114,14 +114,30 @@ Revoke bert-desktop? It stops working at once and must be paired again to come b
   `404`, the row is removed from the page at once, without waiting for the
   next refresh (R18); a `404` means it is already gone.
 - On any other answer, or no answer, the row stays and the failure line
-  shows `Couldn't revoke <name>. Try again.` (R18) until the next
-  successful refresh.
+  (the existing `aria-live` line) shows `Couldn't revoke <name>. Try again.`
+  (R18) until the next refresh finishes; after that the line follows the
+  refresh as today (empty, or `Can't reach the server. Trying again…`).
 - A refresh that arrives while the dialog is open does not close it. If the
   machine has disappeared from the list meanwhile, Revoke still sends the
   request, and the answer is handled as above.
 
-The question text and the failure text come from `machines-view.js` as
-pure functions, tested with `node --test` like the rest of the view.
+`machines-view.js` gets the logic as pure functions, tested with
+`node --test` like the rest of the view, so `machines.js` only wires them to
+the page:
+
+```js
+// The dialog's question for a machine.
+export function revokeQuestion(machine) { … }
+// The page state after a revoke answer: status is the HTTP status, or
+// null when no answer came. 204 and 404 drop the machine from
+// state.machines; anything else keeps it and sets state.revokeFailure to
+// the machine's name, which view() shows as the failure line.
+export function afterRevoke(state, machineId, status) { … }
+```
+
+`view()` shows `Couldn't revoke <name>. Try again.` while
+`state.revokeFailure` is set; `machines.js` clears it when the next refresh
+finishes.
 
 ### Contract
 
@@ -131,9 +147,9 @@ Remove `x-planned: true` from `unpairMachine` and `revokeMachine` in
 
 ## Boundaries
 
-- May create or change: `internal/server/machines/`, `internal/server/web/`
-  (Go and `static/`), `internal/server/server.go` if the registration needs
-  the connection list, their tests, `test/contract/contract_test.go`,
+- May create or change: `internal/server/machines/` (its `Deps` already
+  holds the connection list), `internal/server/web/` (Go and `static/`),
+  their tests, `test/contract/contract_test.go`,
   `api/openapi.yaml` (only the two `x-planned` lines).
 - Must not change: `internal/server/credential/`,
   `internal/server/connection/`, `internal/server/pairing/`,
@@ -154,6 +170,7 @@ Remove `x-planned: true` from `unpairMachine` and `revokeMachine` in
 | `TestRevokeNeedsNoProof` — the route works without any `Authorization` or `Origin` header | R30 |
 | `TestRevokeDatabaseFailure` and `TestUnpairDatabaseFailure` — `500 internal_error`, with the kinds `revoke machine` and `unpair machine` in the log | R18, R11 |
 | `machines-view.test.js` — the question text with a name, a name with `<b>` shown as text, the failure text | R17 |
+| `machines-view.test.js` — `afterRevoke`: `204` and `404` drop the machine and set no failure; `500` and `null` keep it and set the failure line; the next refresh's state clears it | R18 |
 | `TestMachinesPageHasRevokeDialog` — the page has the dialog outside the part that refreshes, with **Revoke** and **Cancel** | R17 |
 | Contract test — `unpairMachine` and `revokeMachine` as above; no `x-planned` left on them | contract |
 

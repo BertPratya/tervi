@@ -150,6 +150,17 @@ already refused.
   connection's own handler then finishes as for any close by the server and
   writes `last_seen_at`.
 
+- **A connection being opened while its credential is revoked.** The
+  connection route checks the credential, then accepts the WebSocket, then
+  adds it to the list. A revoke that commits between the check and the add
+  calls `CloseRevoked` while there is nothing to close, and the connection
+  would stay open with a revoked credential. So, right after `add`
+  succeeds, the route reads that credential's status again (by
+  `credential_id`, from the row `credential.Find` returned); if it is no
+  longer `active`, it closes the connection with `4002` and removes it, as
+  `CloseRevoked` does. Tests reach the moment between the check and the add
+  through a hook in `connection.Deps` that is nil in production.
+
 ### Queries that change
 
 Every query that reads or writes `machines.credential_hash`, `status`,
@@ -190,7 +201,11 @@ test calls `openConnection` with a revoked credential (set its row to
   `internal/server/machines/machines.go`, `internal/server/pairing/`,
   `internal/protocol/`, every `_test.go` file and test helper that uses the
   moved columns (including `internal/server/db/`, `test/contract/`,
-  `test/e2e/`).
+  `test/e2e/`), and every test that expects the newest migration to be
+  version 2: `cmd/server/main_test.go` (`Database is up to date (version 2).`)
+  and the version expectations in `internal/server/db/*_test.go` (for
+  example, `migrate_test.go` uses version 3 as "newer than this program";
+  make that 4).
 - Must not change: `api/`, `design/`, anything under `internal/worker/`,
   the web pages, `slices/` except this task's row in `plan.md`.
 
@@ -202,6 +217,8 @@ test calls `openConnection` with a revoked credential (set its row to
 | `TestMigrationOneActivePerMachine` — a second `active` credential for one machine is refused by the database; a `revoked` row without `ended_at` is refused | R18 |
 | `TestFindCredential` — finds `active`, `revoked`, `failed`, and `expired` rows by proof; a `pending` row past its expiry reads as `expired`; an unknown proof is not found | R18, R20 |
 | `TestRevokeCredential` — an `active` credential becomes `revoked` with `ended_at` set; a machine with none changes nothing and reports so | R18 |
+| `TestRevokedWhileOpening` — a credential revoked between the route's check and adding the connection (through the test hook) is closed with `4002` right after it is added, and the machine is Offline | R18, R20 |
+| `TestMigrationVersion` — `go run ./cmd/server migrate` reports version 3; the existing version tests expect 3, and 4 counts as newer than this program | R19 |
 | `TestConnectionRefusesRevoked` — a revoked credential gets `401 credential_revoked` and no WebSocket; unknown, `pending`, `failed`, and `expired` get `401 unknown_credential` | R20 |
 | `TestCloseRevoked` — a connected machine's connection closes with `4002` and the machine is Offline at once; a machine with no connection is a no-op; a server stopping meanwhile still waits for the close | R18 |
 | `TestListOnlyMachinesWithActiveCredential` — a machine whose credential is `revoked`, `pending`, `failed`, or `expired` is not listed; its row is still in `machines` | R19 |

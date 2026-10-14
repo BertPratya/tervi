@@ -17,7 +17,7 @@ appears anywhere.
   trying to connect, keep the pairing, and print
   `✓ Disconnected. tervi stays in the background but won't connect.` then
   `Connect again with: tervi connect`, and exit with `0`. The daemon shall
-  keep running.
+  keep running, and write the log line `○ Disconnected.`
 - R2. While the user has disconnected, the daemon shall not connect, also
   after the computer restarts, until the user runs `tervi connect`.
 - R7. While the user has disconnected, `tervi status` shall show
@@ -67,8 +67,8 @@ fake `systemctl`/`loginctl` runner that starts real daemons),
 `waitForControlState`, `f.audit`, `assertNoConnectionSecret`, and
 `assertCredentialOnlyInPrivateFile`. Extend the fixture where a test needs
 it: running `tervi disconnect` and `tervi unpair --yes`, a
-`/etc/machine-id` file of the fixture's own (task 07 reads its path from a
-field), calling the Revoke route as the page does, and answering the
+`/etc/machine-id` file of the fixture's own (passed through
+`pair.Options.MachineIDPath`, task 07), calling the Revoke route as the page does, and answering the
 approval page with Accept.
 
 ### The tests: `test/e2e/unpair_test.go` (new)

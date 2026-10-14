@@ -1,6 +1,6 @@
 # Task 03 — Server: recognizing a computer that pairs again, and the approval page
 
-Slice: 0003-disconnect-unpair    Risk: core    Depends on: 01
+Slice: 0003-disconnect-unpair    Risk: core    Depends on: 01, 02
 
 ## Goal
 
@@ -89,9 +89,12 @@ server looks for a match (next part) and stores it in
 
 A machine matches when `machines.identity_hash` equals the request's and the
 machine has at least one credential that is `active` or `revoked` (it was
-paired at least once). When several match, take the machine whose most
-recent credential (by `credentials.created_at`, then `credential_id`) was
-created last (R25). A null identity never matches anything. One query.
+paired at least once). When several match, take the machine whose latest
+`active` or `revoked` credential (by `credentials.created_at`, then
+`credential_id`) was created last (R25: the most recently paired). A
+`failed` or `expired` attempt does not count: a machine paired in January
+with a failed attempt in May loses to one paired in March. A null identity
+never matches anything. One query.
 
 ### The approval answer: `internal/server/pairing/approval.go`
 
@@ -150,9 +153,10 @@ bert-desktop, unpaired on 13 October.
 
 - Line 2 is `<display_name>, unpaired on <date>.`, or
   `<display_name>, still paired.` when `still_paired`.
-- `<date>` is `unpaired_at` in the browser's time zone, written as day and
-  month name (`13 October`), with the year added when it is not the current
-  year (`13 October 2025`).
+- `<date>` is `unpaired_at` in the browser's time zone, written as the day
+  and the English month name (`13 October`), never with the year (the user
+  chose no year). Take the month name from a fixed list of the twelve
+  English names, not from the browser's language settings.
 - Each button has its result next to it, as shown. With no
   `earlier_machine`, the page is exactly as in slice 1, buttons without
   results.
@@ -177,14 +181,14 @@ Put the text in `view.js` as pure functions and test it with `node --test`.
 | `TestStartStoresIdentity` — a valid `identity_hash` is stored as 32 bytes; none stores null | R23 |
 | `TestStartRejectsBadIdentity` — uppercase, 63 or 65 characters, non-hex, and a number answer `400 invalid_input`; the value is not in the log | R23 |
 | `TestMatchPairedBefore` — a machine with a `revoked` or `active` credential and the same identity matches; one whose only credentials `failed` or `expired` does not; a null identity matches nothing | R24, R28 |
-| `TestMatchMostRecent` — of two matching machines, the one whose latest credential is newer is chosen, also when its name differs | R25 |
+| `TestMatchMostRecent` — of two matching machines, the one whose latest `active` or `revoked` credential is newer is chosen, also when its name differs; a newer `failed` or `expired` attempt on the other machine does not change that | R25 |
 | `TestMatchDecidedOnce` — a machine that starts matching after the pairing started does not change the stored match | R24 |
 | `TestApprovalShowsEarlierMachine` — `earlier_machine` with `still_paired: false` and `unpaired_at`, or `still_paired: true` and `null`; absent with no match | R24, R28 |
 | `TestCodeAttachesToMatchedMachine` — the correct code creates no machine, attaches the `pending` credential to the matched machine, answers its ID; the earlier `active` credential still works | R26, R27 |
 | `TestAcknowledgeBringsMachineBack` — after the acknowledgment the new credential is `active`, the earlier one `revoked`, the machine's name and OS are the new ones, and it is listed once | R26 |
 | `TestAcknowledgeClosesEarlierConnection` — an earlier credential's open connection is closed with `4002` after commit | R26 |
 | `TestSaveFailureKeepsEarlierCredential` — a reported save failure or an expired credential leaves the matched machine and its earlier credential as they were | R26 |
-| `view.test.js` — the match lines for unpaired and still paired, the date with and without the year, the button results, and the page without a match unchanged | R24, R28 |
+| `view.test.js` — the match lines for unpaired and still paired, the date as day and English month name, also near midnight in another time zone, the button results, and the page without a match unchanged | R24, R28 |
 | Contract test — `startPairing` with `identity_hash`; `readApproval` with `earlier_machine` | contract |
 
 `go vet ./...`, `go test ./...`, and `node --test internal/server/web/static/`

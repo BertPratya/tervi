@@ -96,7 +96,7 @@ page). It also lets the server recognize a computer that pairs again.
   trying to connect, keep the pairing, and print
   `✓ Disconnected. tervi stays in the background but won't connect.` then
   `Connect again with: tervi connect`, and exit with `0`. The daemon shall
-  keep running.
+  keep running, and write the log line `○ Disconnected.`
 - R2. While the user has disconnected, the daemon shall not connect, also
   after the computer restarts, until the user runs `tervi connect`.
 - R3. When `tervi disconnect` runs and tervi is not running in the
@@ -166,8 +166,15 @@ page). It also lets the server recognize a computer that pairs again.
 - R15. When `tervi unpair` runs on a computer that is not paired, the worker
   shall print `This computer isn't paired. Nothing was changed.` and exit
   with `1`. When some of tervi's files are left but `credential.json` is
-  gone (after an earlier failure), `tervi unpair` shall remove what is left
-  as `--local-only` does, after `--local-only`'s question.
+  gone (after an earlier failure), damaged, or readable by others,
+  `tervi unpair` (with or without `--local-only`) shall not contact the
+  server, print
+  `This removes what is left of an earlier pairing on this computer. Continue? [y/N]`,
+  and on confirmation (answered as in R10) remove what is left as in R11,
+  print `✓ Removed what was left of the earlier pairing.`, and exit with
+  `0`. `--yes` skips the question. When `credential.json` is usable but the
+  pairing never finished, `tervi unpair` shall work as on a paired
+  computer.
 - R16. If removing something on the computer fails after the server was told
   (for example, `credential.json` cannot be deleted), then the worker shall
   say what could not be removed and print `Finish with: tervi unpair --local-only`,

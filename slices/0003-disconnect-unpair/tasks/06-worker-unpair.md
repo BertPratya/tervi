@@ -53,8 +53,15 @@ running the command again is always safe.
 - R15. When `tervi unpair` runs on a computer that is not paired, the worker
   shall print `This computer isn't paired. Nothing was changed.` and exit
   with `1`. When some of tervi's files are left but `credential.json` is
-  gone (after an earlier failure), `tervi unpair` shall remove what is left
-  as `--local-only` does, after `--local-only`'s question.
+  gone (after an earlier failure), damaged, or readable by others,
+  `tervi unpair` (with or without `--local-only`) shall not contact the
+  server, print
+  `This removes what is left of an earlier pairing on this computer. Continue? [y/N]`,
+  and on confirmation (answered as in R10) remove what is left as in R11,
+  print `✓ Removed what was left of the earlier pairing.`, and exit with
+  `0`. `--yes` skips the question. When `credential.json` is usable but the
+  pairing never finished, `tervi unpair` shall work as on a paired
+  computer.
 - R16. If removing something on the computer fails after the server was told
   (for example, `credential.json` cannot be deleted), then the worker shall
   say what could not be removed and print `Finish with: tervi unpair --local-only`,
@@ -74,9 +81,17 @@ running the command again is always safe.
   `Runner` (tests use a fake), and knows the service file's path.
 - `credential.Paired`, `credential.Store.Delete`, `state.DeleteState`
   (a missing file is not an error).
-- The pairing flow's HTTP client settings (10-second timeout, no
-  redirects followed with the credential) are in `internal/worker/pair`;
-  use the same rules.
+- `internal/worker/pair` builds its HTTP client in `newFlow` (a cloned
+  default transport with keep-alives off, and `CheckRedirect` answering
+  `http.ErrUseLastResponse`, so the credential never follows a redirect).
+  Move that construction into an exported `pair.NewHTTPClient()` in
+  `internal/worker/pair/client.go`, used by `newFlow` and by
+  `internal/worker/unpair`, so the rules exist once.
+- `internal/worker/credential/file.go` names the leftover files
+  (`credential-check.json`, and `.credential-*` from `os.CreateTemp`). Add
+  `credential.DeleteLeftovers(dir string) error` there, which deletes those
+  two kinds of file and treats missing ones as done, so the names are not
+  written twice.
 
 ### Removing the service: `internal/worker/service/remove.go` (new)
 
@@ -98,7 +113,12 @@ func LingerOn(ctx context.Context, runner Runner) (bool, error)
 
 Holds the steps, so `cli/unpair.go` only parses, asks, and prints. Like
 `internal/worker/pair`, it implements an interface the `cli` package
-defines, and `cmd/tervi` wires it.
+defines: `cli.Unpairer`, declared in `cli/unpair.go`, with the methods the
+command needs (tell the server; remove what is on the computer). `cli.Env`
+gets a field `Unpairer cli.Unpairer`, and `cmd/tervi` sets it to the
+`internal/worker/unpair` implementation. Do not add a parameter to
+`cli.Run`: `test/e2e` calls it, and builds `Env` with named fields, so a new
+field does not break it.
 
 1. **The server** (not with `--local-only`): one
    `POST <server>/api/v1/machines/current/unpair`, at most 10 seconds,
@@ -110,12 +130,10 @@ defines, and `cmd/tervi` wires it.
    `WithLock`, trying every 200 ms for up to 10 seconds, so no daemon is
    left (also one started by hand with `tervi daemon`). Holding the lock,
    do step 3.
-3. **The files**: delete `credential.json`; then every leftover
-   temporary file whose name starts with `.credential-` and
-   `credential-check.json` in the same folder (user's decision: after
-   unpairing, no copy of the secret may remain); then `state.json`. Delete
-   only those names; leave any other file in the folder, and the folder
-   itself.
+3. **The files**: delete `credential.json` (without reading it); then
+   `credential.DeleteLeftovers` (user's decision: after unpairing, no copy
+   of the secret may remain); then `state.json`. Delete only those names;
+   leave any other file in the folder, and the folder itself.
 4. **Linger**: `LingerOn`; if it says `yes`, the command prints R11's linger
    line. If it fails, print nothing about linger.
 
@@ -123,16 +141,15 @@ A failure in steps 2–3 stops there and reports what was not removed (R16).
 Every step treats something already gone as done, so running
 `tervi unpair` or `tervi unpair --local-only` again finishes the job.
 
-### What counts as paired
+### What the command finds (R15, the user's decisions)
 
-- `credential.json` readable and `state.json` confirmed: paired.
-- Neither file, and no service file: not paired (R15).
-- Anything in between (left by an earlier failure, for example a service
-  file and `state.json` but no `credential.json`): there is no credential
-  to send, so both forms remove what is left as `--local-only` does, after
-  the `--local-only` question (R15).
-- A `credential.json` that is not private or is damaged: reported as
-  `tervi connect` reports it in slice 2, and nothing is removed.
+| On the computer | What happens |
+| --- | --- |
+| A usable `credential.json` (private, not damaged), whether `state.json` is confirmed or the pairing never finished | Unpaired as above: R10's question (or R14's with `--local-only`), steps 1–4. A pairing that never finished has a `pending` credential, which the server answers with `401`, so step 1 counts it as done (R13) |
+| No usable `credential.json` (missing, damaged, or readable by others), but something else of tervi's: `state.json`, the service file, the damaged or exposed `credential.json`, or a leftover from `credential.DeleteLeftovers`'s list | Leftovers, with or without `--local-only`: the leftovers question, no request to the server, steps 2–4 |
+| None of these | Not paired (R15) |
+
+A damaged or exposed `credential.json` is deleted without being read.
 
 ### The command: `internal/worker/cli/unpair.go` (new)
 
@@ -152,11 +169,14 @@ an empty line or the end of input, prints `Nothing was changed.` and exits
 | … and linger is on (both) | then `  Linger is still on. Turn it off with: loginctl disable-linger` | `0` |
 | No answer from the server | `✗ No answer from <server>.` / `  The server may or may not have unpaired this computer. Nothing was removed here.` / `  Run tervi unpair again to finish, or revoke this computer on the Machines page.` | `1` |
 | Another answer (for example `500`) | `✗ <server> couldn't unpair this computer (HTTP <code>). Nothing was removed here.` / `  Run tervi unpair again to finish, or revoke this computer on the Machines page.` (R12) | `1` |
+| Leftovers: the question | `This removes what is left of an earlier pairing on this computer. Continue? [y/N]` | — |
+| Leftovers: done | `✓ Removed what was left of the earlier pairing.` (then the linger line, if on) | `0` |
 | Not paired | `This computer isn't paired. Nothing was changed.` | `1` |
 | Step 2 failed | `✗ Can't stop tervi in the background: <reason>` / `  Finish with: tervi unpair --local-only` | `1` |
 | Step 3 failed | `✗ Can't delete <path>: <reason>` / `  Finish with: tervi unpair --local-only` | `1` |
 
-`<server>` is from `credential.json`. Hint lines are indented two spaces
+`<server>` is from `credential.json`; the leftovers lines name no server,
+because none can be read. Hint lines are indented two spaces
 (slice 2, fix 6). No output may contain the credential; reuse the
 redaction used by `tervi connect`.
 
@@ -164,11 +184,15 @@ redaction used by `tervi connect`.
 
 - May create or change: `internal/worker/unpair/`,
   `internal/worker/service/remove.go`, `internal/worker/cli/` (the new
-  file, the dispatch, the usage line, the interface), `cmd/tervi/` (wiring
-  only), their tests.
+  file, the dispatch, the usage line, the interface, the `Env` field),
+  `cmd/tervi/` (wiring only), `internal/worker/pair/client.go` and
+  `pair.go` (only moving the client into `NewHTTPClient`),
+  `internal/worker/credential/file.go` (only adding `DeleteLeftovers`),
+  their tests.
 - Must not change: `internal/worker/control/` and
-  `internal/worker/daemon/` (use them), `internal/worker/pair/`,
-  `internal/worker/state/`, `internal/worker/credential/` (use them),
+  `internal/worker/daemon/` (use them), the rest of
+  `internal/worker/pair/` and `internal/worker/credential/`,
+  `internal/worker/state/` (use it),
   anything under `internal/server/`, `api/`, `design/`, `slices/` except
   this task's row in `plan.md`.
 
@@ -180,12 +204,14 @@ redaction used by `tervi connect`.
 | `TestUnpairYesSkipsQuestion` — `--yes` asks nothing | R10, R14 |
 | `TestUnpairRemovesInOrder` — with a fake server answering `204`: the request carries the credential; then disable, the lock, the service file, `credential.json`, `state.json`, in that order; the success line; exit `0`; the `tervi` program is untouched | R11 |
 | `TestUnpairLingerLine` — the linger line when `loginctl` says `yes`, none for `no` or a failure | R11 |
-| `TestUnpairNoAnswer` — no server, and a server that never answers within 10 seconds: R12's three lines, exit `1`, every file and the service untouched, one request only | R12 |
-| `TestUnpairOtherAnswer` — a `500`: its lines, exit `1`, nothing removed | R12 |
+| `TestUnpairNoAnswer` — no server, and a server that never answers within 10 seconds: R12's three lines, exit `1`, every file and the service untouched, one request only; a second run against a server answering `204` removes everything | R12 |
+| `TestUnpairOtherAnswer` — a `500`: its lines, exit `1`, nothing removed; a second run against a server answering `204` removes everything | R12 |
 | `TestUnpairServerAlreadyRefuses` — `401` with `unknown_credential`, `credential_revoked`, or another body: removes everything as for `204` | R13 |
 | `TestUnpairLocalOnly` — no request at all; the two question lines; removes everything; its success line | R14 |
 | `TestUnpairNotPaired` — no files: its line, exit `1` | R15 |
-| `TestUnpairLeftovers` — a service file and `state.json` but no `credential.json`: removed as `--local-only` | R15, R16 |
+| `TestUnpairLeftovers` — a service file and `state.json` but no `credential.json`; a damaged `credential.json`; one readable by others: no request, the leftovers question and success line, everything removed, with and without `--local-only` | R15, R16 |
+| `TestUnpairUnfinishedPairing` — a usable `credential.json` with `state.json` missing or not confirmed: the request is sent, `401` counts as done, everything removed, R11's success line | R13, R15 |
+| `TestDeleteLeftovers` — deletes `.credential-*` and `credential-check.json`, leaves other files, and a second call is a no-op | R11 |
 | `TestUnpairServiceFailure` and `TestUnpairDeleteFailure` — `systemctl` failing, a daemon that never lets go of the lock, and a file that cannot be deleted: what is left, `Finish with: tervi unpair --local-only`, exit `1`; a second run finishes | R16 |
 | `TestUnpairRemovesSecretLeftovers` — a `.credential-x1y2` file holding the credential and a `credential-check.json` are deleted after `credential.json`, also with `--local-only`; another file in the folder, and the folder, stay | R11, R14 |
 | `TestUnpairNoSecret` — no output line contains the credential, and no file in `~/.config/tervi/` does afterwards | R11 |

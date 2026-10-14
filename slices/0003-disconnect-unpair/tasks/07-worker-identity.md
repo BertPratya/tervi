@@ -1,6 +1,6 @@
 # Task 07 — Worker: the computer's identity when pairing
 
-Slice: 0003-disconnect-unpair    Risk: core    Depends on: 03, 04
+Slice: 0003-disconnect-unpair    Risk: core    Depends on: 03, 04, 06
 
 ## Goal
 
@@ -71,8 +71,9 @@ var appID = [16]byte{0xca, 0x6e, 0x70, 0xbc, 0x29, 0xab, 0x4e, 0xd1,
 
 (`ca6e70bc29ab4ed1bc52600794cbb122`, made once with `systemd-id128 new`.)
 
-- Read `/etc/machine-id` (the path is a field, so tests use a file of their
-  own). It must be exactly 32 hex characters, optionally followed by one
+- Read `/etc/machine-id`. The path is a new field, `pair.Options.MachineIDPath`
+  (empty means `/etc/machine-id`), so tests use a file of their own; task 08
+  uses this field. It must be exactly 32 hex characters, optionally followed by one
   newline; uppercase is accepted. Parse them into 16 bytes.
 - The identity is HMAC-SHA256 with those 16 bytes as the key and the 16
   bytes of `appID` as the message: all 32 bytes of the result, written as 64
@@ -88,12 +89,14 @@ var appID = [16]byte{0xca, 0x6e, 0x70, 0xbc, 0x29, 0xab, 0x4e, 0xd1,
 `StartNew` adds `identity_hash` to the start request when there is an
 identity, and leaves the field out when there is none.
 
-### The question: `internal/worker/cli`
+### The question: `internal/worker/cli/machineid.go` (new)
 
 `tervi pair` asks before step zero changes anything, so a "no" really
-changes nothing. The `Flow` interface gets a method that says whether the
-identity can be computed (implemented in `pair`, which `cli` cannot
-import). With no machine ID and no `--yes`:
+changes nothing. The `Flow` interface gets the method
+`HasMachineID() bool`, implemented in `pair` (which `cli` cannot import).
+The question and reading its answer live in the new file
+`internal/worker/cli/machineid.go`; `cli.go` only parses `--yes` and calls
+it, so `cli.go` stays under 300 lines. With no machine ID and no `--yes`:
 
 ```text
 ! tervi can't read this computer's machine ID (/etc/machine-id).
@@ -103,8 +106,8 @@ import). With no machine ID and no `--yes`:
 Pair without it? [y/N]
 ```
 
-`y` or `yes`, ignoring case and surrounding spaces, continues without an
-identity; anything else, including an empty line or the end of input,
+Spaces around the answer are removed first, then `y` or `yes` in any case
+continues without an identity (as in R10); anything else, including an empty line or the end of input,
 prints `Nothing was changed.` and exits `1`. `--yes` skips the question.
 `tervi pair --server <url> --yes` and `--yes --server <url>` both work;
 update the usage line.
@@ -120,7 +123,8 @@ is handled like the rejected case, with the line
 ## Boundaries
 
 - May create or change: `internal/worker/pair/`, `internal/worker/cli/`
-  (`cli.go`, `handover.go`, the `Flow` interface, the usage line),
+  (the new `machineid.go`, `cli.go`, `handover.go`, the `Flow` interface,
+  the usage line),
   `cmd/tervi/` (wiring only), their tests, `test/e2e/` helpers that start
   pairings (only to pass or skip the question).
 - Must not change: `internal/worker/daemon/`, `internal/worker/control/`,

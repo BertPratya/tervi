@@ -674,9 +674,9 @@ components:
           format: date-time
           nullable: true
           description: |
-            When its latest credential was revoked; `null` while
-            `still_paired`. The page shows only the date, in the browser's
-            time zone.
+            The `ended_at` of its most recently ended (revoked) credential;
+            `null` while `still_paired`. The page shows only the day and
+            month, in the browser's time zone.
       example:
         display_name: bert-desktop
         still_paired: false

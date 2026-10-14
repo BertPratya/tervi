@@ -142,8 +142,9 @@ recognized.
 
 **Matching.** When a pairing starts with an identity, the server looks for
 machines with the same `identity_hash` that have had an `active` or
-`revoked` credential, and takes the one whose latest credential was created
-last; that machine becomes the request's `matched_machine_id`.
+`revoked` credential, and takes the one whose latest `active` or `revoked`
+credential was created last (a `failed` or `expired` attempt does not
+count); that machine becomes the request's `matched_machine_id`.
 
 ### `credentials`
 
