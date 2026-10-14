@@ -198,8 +198,7 @@ page). It also lets the server recognize a computer that pairs again.
   identity shall never be shown on any page or printed.
 - R24. When the identity matches an earlier machine, the approval page shall
   show `This looks like a computer that was paired before:` and
-  `<earlier name>, <what happened> on <date>.`, where `<what happened>` is
-  `unpaired`, `revoked`, or `rejected`, or the line reads
+  `<earlier name>, unpaired on <date>.`, or
   `<earlier name>, still paired.` for a machine that is still paired. It
   shall offer three buttons, each with its result next to it:
   **Accept as the same computer** (`brings back <earlier name>, with its history`),
