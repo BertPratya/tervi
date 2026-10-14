@@ -182,7 +182,7 @@ func TestConnectControlError(t *testing.T) {
 	if code := Run(context.Background(), []string{"connect"}, env, nil); code != 1 {
 		t.Fatalf("Run(connect) = %d, want 1", code)
 	}
-	want := "✗ Can't reach tervi in the background: daemon control request failed\nCheck with: tervi status\n"
+	want := "✗ Can't reach tervi in the background: daemon control request failed\n  Check with: tervi status\n"
 	if stdout.String() != want || stderr.Len() != 0 {
 		t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
 	}
@@ -256,12 +256,12 @@ func TestConnectCommandResults(t *testing.T) {
 	}{
 		{name: "connected", answer: control.ConnectAnswer{Result: "connected"}, want: "✓ Connected.\n", code: 0},
 		{name: "already connected", answer: control.ConnectAnswer{Result: "already_connected"}, want: "Already connected.\n", code: 0},
-		{name: "still trying", answer: control.ConnectAnswer{Result: "still_trying", LastError: &lastError}, want: "Not connected yet: connection refused. tervi keeps trying in the background.\nCheck with: tervi status\n", code: 1},
-		{name: "still trying without error", answer: control.ConnectAnswer{Result: "still_trying"}, want: "Not connected yet. tervi keeps trying in the background.\nCheck with: tervi status\n", code: 1},
+		{name: "still trying", answer: control.ConnectAnswer{Result: "still_trying", LastError: &lastError}, want: "Not connected yet: connection refused. tervi keeps trying in the background.\n  Check with: tervi status\n", code: 1},
+		{name: "still trying without error", answer: control.ConnectAnswer{Result: "still_trying"}, want: "Not connected yet. tervi keeps trying in the background.\n  Check with: tervi status\n", code: 1},
 		{name: "write failed", answer: control.ConnectAnswer{Result: "failed", Path: "/home/user/.config/tervi/state.json"}, want: "✗ Can't write /home/user/.config/tervi/state.json.\n", code: 1},
-		{name: "rejected", answer: control.ConnectAnswer{Result: "rejected"}, want: "✗ The server doesn't accept this computer's credential.\nPair again with: tervi pair --server http://localhost:8080\n", code: 1},
+		{name: "rejected", answer: control.ConnectAnswer{Result: "rejected"}, want: "✗ The server doesn't accept this computer's credential.\n  Pair again with: tervi pair --server http://localhost:8080\n", code: 1},
 		{name: "not paired", answer: control.ConnectAnswer{Result: "not_paired"}, want: "This computer isn't paired. Pair it with: tervi pair --server <url>\n", code: 1},
-		{name: "control error", err: errors.New("socket unavailable"), want: "✗ Can't reach tervi in the background: socket unavailable\nCheck with: tervi status\n", code: 1},
+		{name: "control error", err: errors.New("socket unavailable"), want: "✗ Can't reach tervi in the background: socket unavailable\n  Check with: tervi status\n", code: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runner := &commandRunner{}
@@ -396,7 +396,7 @@ func TestConnectServiceFails(t *testing.T) {
 	if code := Run(context.Background(), []string{"connect"}, env, nil); code != 1 {
 		t.Fatalf("Run(connect) = %d, want 1", code)
 	}
-	want := "✗ Can't start tervi in the background: system bus not available\nTry again with: tervi connect\n"
+	want := "✗ Can't start tervi in the background: system bus not available\n  Try again with: tervi connect\n"
 	if stdout.String() != want || stderr.Len() != 0 || client.connectCalls != 0 {
 		t.Errorf("stdout=%q stderr=%q connect calls=%d", stdout.String(), stderr.String(), client.connectCalls)
 	}

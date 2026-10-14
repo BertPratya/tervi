@@ -119,17 +119,17 @@ func printConnectNotPaired(output io.Writer) {
 
 func printConnectRejected(output io.Writer, server string) {
 	fmt.Fprintln(output, "✗ The server doesn't accept this computer's credential.")
-	fmt.Fprintf(output, "Pair again with: tervi pair --server %s\n", server)
+	fmt.Fprintf(output, "  Pair again with: tervi pair --server %s\n", server)
 }
 
 func printServiceStartFailure(output io.Writer, err error, entry credential.Entry) {
 	fmt.Fprintf(output, "✗ Can't start tervi in the background: %s\n", redactText(err.Error(), entry))
-	fmt.Fprintln(output, "Try again with: tervi connect")
+	fmt.Fprintln(output, "  Try again with: tervi connect")
 }
 
 func printControlFailure(output io.Writer, err error, entry credential.Entry) {
 	printStatusControlFailure(output, err, entry)
-	fmt.Fprintln(output, "Check with: tervi status")
+	fmt.Fprintln(output, "  Check with: tervi status")
 }
 
 func printStillTrying(output io.Writer, lastError *string, entry credential.Entry, prefix string) {
@@ -138,7 +138,7 @@ func printStillTrying(output io.Writer, lastError *string, entry credential.Entr
 	} else {
 		fmt.Fprintf(output, "%s. tervi keeps trying in the background.\n", prefix)
 	}
-	fmt.Fprintln(output, "Check with: tervi status")
+	fmt.Fprintln(output, "  Check with: tervi status")
 }
 
 func printConnectWriteFailure(output io.Writer, path string, entry credential.Entry) {

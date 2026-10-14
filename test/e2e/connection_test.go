@@ -137,10 +137,10 @@ func rejectAndPairAgain(t *testing.T, f *connectedFixture) (livePair, livePair) 
 	}
 	if code, output := f.status(t); code != 1 ||
 		!strings.Contains(output, "✗ Not connecting: the server doesn't accept this computer's credential.") ||
-		!strings.Contains(output, "Pair again with: tervi pair --server "+f.serverURL) {
+		!strings.Contains(output, "  Pair again with: tervi pair --server "+f.serverURL) {
 		t.Errorf("tervi status after credential rejection exit = %d, rejection status = %t, re-pair instructions = %t", code,
 			strings.Contains(output, "✗ Not connecting: the server doesn't accept this computer's credential."),
-			strings.Contains(output, "Pair again with: tervi pair --server "+f.serverURL))
+			strings.Contains(output, "  Pair again with: tervi pair --server "+f.serverURL))
 	}
 	if !strings.Contains(f.daemonLogs.String(), "✗ The server doesn't accept this computer's credential. Pair again with: tervi pair --server "+f.serverURL) {
 		t.Error("daemon log omitted credential rejection and re-pair instructions")
