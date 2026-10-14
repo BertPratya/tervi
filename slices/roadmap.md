@@ -15,6 +15,12 @@ replies, actions, and approval requests stream to the browser, and the server
 saves them, so the user can close the browser and come back, or follow from
 another device. Files never leave the computer.
 
+Coding is the first thing tervi does, not the only one. tervi is the
+foundation for the user's own AI platform: computers, workspaces, chats with
+an agent, and extensions on top. A personal assistant, and later extensions
+such as a study tool or stock analysis, are built on the same foundation.
+The slices below build the foundation first.
+
 ## Slices
 
 | Slice | After it, the user can | Notes |
@@ -38,3 +44,15 @@ another device. Files never leave the computer.
 - The Theia IDE panel next to the chat.
 - Background jobs.
 - Managed workspaces (storage and execution provided by the platform).
+- Extensions: features added on top of the foundation, installed and turned
+  on from the browser, like extensions in VS Code. Each runs as its own
+  program and talks to tervi through a defined interface, so it can be
+  written in another language, such as Python. Examples: search over the
+  user's own files (RAG), a study tool, stock analysis.
+- Personal assistant: chats about anything, not only code, with memory that
+  lasts across chats, tasks that run on a schedule, and a way to reach the
+  user when they are away. It starts with an agent the user is already
+  signed into (Codex).
+- The user's own agent, added the same way as Codex and Claude Code. How it
+  pays for model use is a setting: an API key, a model on the user's own
+  computer, or the user's ChatGPT plan where OpenAI allows it.
