@@ -3,9 +3,9 @@
 Spec: [spec.md](spec.md)
 Tried on: — · Commit: —
 
-This checklist starts where slice 2 ended: this computer paired and
-connected. It disconnects and connects again, unpairs, pairs again, revokes
-from the Machines page, and pairs once more.
+This checklist starts from an empty database, with this computer paired
+again by slice 3's `tervi`. It disconnects and connects again, unpairs,
+pairs again, revokes from the Machines page, and pairs once more.
 
 ## Before you start
 
@@ -22,17 +22,20 @@ In terminal 2, from the project folder:
 ```bash
 git pull                          # the slice branch, slice/0003-disconnect-unpair
 docker compose up -d
-go run ./cmd/server migrate       # should say: Database is up to date (version 3).
 go install ./cmd/tervi
-systemctl --user restart tervi    # the daemon now runs the new program
+tervi unpair --local-only --yes   # removes this computer's slice-2 pairing
+docker compose down -v            # deletes the database and its data
+docker compose up -d              # a new, empty database
+go run ./cmd/server migrate       # should say: Database is up to date (version 3).
 ```
 
-In terminal 1: `go run ./cmd/server`. Then `tervi status` in terminal 2
-should show `● Connected to http://localhost:8080`.
+In terminal 1: `go run ./cmd/server`. In terminal 2, pair this computer
+again with `tervi pair --server http://localhost:8080`, Accept in the
+browser, and type the code. `tervi status` should then show
+`● Connected to http://localhost:8080`.
 
-**This computer was paired before this slice,** so the server has no
-identity for it yet (plan, "Moving existing machines"). The first pairing
-again (row 11) is therefore not recognized; the second one (row 15) is.
+Starting from an empty database means this computer is paired with
+slice 3's `tervi`, so the server knows its identity from the start.
 
 ## Check by hand
 
@@ -50,7 +53,7 @@ Do the rows in order: each one can depend on the state the row before left.
 | 8 | R10 | `tervi unpair`, answer `n` | `This removes this computer's pairing with http://localhost:8080.` / `tervi will stop running in the background. Continue? [y/N]`, then `Nothing was changed.`; still `Online` | ⬜ |
 | 9 | R12 | Stop the server (Ctrl+C in terminal 1), then `tervi unpair --yes` | `✗ No answer from http://localhost:8080.` and the two lines after it; `tervi status` shows it still paired (reconnecting). Start the server again; it connects | ⬜ |
 | 10 | R11, R19 | `tervi unpair`, answer `y` | `✓ Unpaired. This computer is no longer paired with http://localhost:8080.` / `  Linger is still on. Turn it off with: loginctl disable-linger`; the computer disappears from the page; `systemctl --user status tervi` says the unit could not be found; `ls ~/.config/tervi/` shows no `credential.json` or `state.json`; `which tervi` still prints its path | ⬜ |
-| 11 | R15, R28 | `tervi unpair`, then `tervi pair --server http://localhost:8080` and open the approval link | `This computer isn't paired. Nothing was changed.`; the approval page is exactly as in slice 1, with no "paired before" lines (this computer had no identity yet). Accept, type the code; the page lists the computer `Online` | ⬜ |
+| 11 | R15, R24, R26 | `tervi unpair`, then `tervi pair --server http://localhost:8080` and open the approval link | `This computer isn't paired. Nothing was changed.`; the page says `This looks like a computer that was paired before:` / `<name>, unpaired on <today's date>.` Accept, type the code; the page lists **one** entry for this computer, `Online` | ⬜ |
 | 12 | R17 | On the Machines page, click **Revoke** on this computer, then **Cancel** | `Revoke <name>? It stops working at once and must be paired again to come back.` with **Revoke** and **Cancel**; Cancel changes nothing | ⬜ |
 | 13 | R18, R20 | Click **Revoke**, then **Revoke**; then `tervi logs` | The row disappears at once; the log ends with `✗ This computer was unpaired on the server. Pair it again with: tervi pair --server http://localhost:8080` | ⬜ |
 | 14 | R21 | `tervi status`, then `tervi connect`, then `tervi disconnect` | Each prints `✗ This computer was unpaired on the server.` / `  Pair it again with: tervi pair --server http://localhost:8080`; status and connect exit with `1` (`echo $?`), disconnect with `0` | ⬜ |
@@ -58,7 +61,6 @@ Do the rows in order: each one can depend on the state the row before left.
 | 16 | R14 | `tervi unpair --local-only`, answer `y` | `This removes this computer's pairing without telling http://localhost:8080.` / `If that server still exists, it will keep listing this computer until you revoke it on its Machines page. Continue? [y/N]`, then `✓ Unpaired on this computer only.`; the page still lists the computer (Offline) | ⬜ |
 | 17 | R6, R18 | `tervi disconnect`; then Revoke the computer on the page | `This computer isn't paired. Pair it with: tervi pair --server <url>`; the row disappears | ⬜ |
 | 18 | — | Pair again to leave the computer paired: `tervi pair --server http://localhost:8080`, Accept, type the code | The page shows it `Online`, recognized as before | ⬜ |
-| 19 | R18 | On the Machines page, **Revoke** the old slice-1 machine (`Offline · never connected`) | The row disappears. Its credential, still in GNOME Keyring from before slice 2's fix 4, no longer works anywhere | ⬜ |
 
 ## Proved by tests
 

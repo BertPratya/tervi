@@ -244,7 +244,9 @@ page). It also lets the server recognize a computer that pairs again.
   recognized, and virtual machines copied from one image may look like the
   same computer; to pair such a copy as a computer of its own, give it a new
   machine ID first (delete `/etc/machine-id`, then run
-  `systemd-machine-id-setup`).
+  `systemd-machine-id-setup`). A computer paired before this slice has no
+  identity on the server, so the first time it pairs again it is not
+  recognized.
 
 **Known limitation**
 
