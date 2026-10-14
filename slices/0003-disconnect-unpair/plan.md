@@ -63,3 +63,13 @@ are recorded here as they are made.
   Not chosen: a `status` column on `machines` as well — every unpair,
   revoke, and pairing again would have to update both tables, and a missed
   update could list a computer whose credential no longer works.
+- The Revoke route takes no proof and has no `Origin` check (R30): any
+  request that reaches the server can revoke a machine whose `machine_id`
+  it names — the simplest route while there is no sign-in; the
+  `machine_id` is random, and another website cannot read the Machines list
+  to learn it. Sign-in comes before release, in a later slice.
+  Not chosen: accepting only requests whose `Origin` equals the address the
+  request was sent to — blocks a revoke sent by another website open in the
+  user's browser, but the user chose to keep this route as simple as
+  possible until sign-in; a token the page sends back — more code for the
+  same protection as the `Origin` check.
