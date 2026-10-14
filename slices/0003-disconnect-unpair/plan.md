@@ -12,8 +12,12 @@ are recorded here as they are made.
 - A computer's identity for recognizing it (R23) is a one-way hash of
   `/etc/machine-id` combined with a fixed tervi-specific value, so the same
   computer always gives the same identity, and the machine ID itself can't
-  be worked back from it. The worker computes it each time it pairs and
-  saves nothing; the server stores it on each machine — it survives a
+  be worked back from it. It is computed as systemd does for an
+  application-specific ID: HMAC-SHA256 keyed with the machine ID, over
+  tervi's fixed 16-byte app ID, a constant in the worker's code that never
+  changes. The worker computes it each time it pairs, sends only the
+  result, and saves nothing; the server only stores and compares it, on
+  each machine — it survives a
   rename and the loss of tervi's own files, and systemd's documentation asks
   applications to use an application-specific value derived from the
   machine ID instead of the confidential ID itself.
