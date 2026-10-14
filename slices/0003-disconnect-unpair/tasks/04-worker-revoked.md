@@ -72,6 +72,9 @@ Put the revocation handling in the new file `daemon/revoked.go`; `Run` and
   ```
 
   The daemon holds `daemon.lock`, so it is the writer (plan, "One writer").
+  R20's line is the only line logged for a revocation: no
+  `✗ Connection lost: …` after a `4002` close, and no `✗ … Next try in …`
+  after a `401 credential_revoked`, so R20's line stays the last one.
 - **`POST /connect`** works as after a rejection: it sets `connect: true`,
   clears the reason, and tries; a revocation on that try stops it again and
   the answer is the new result `revoked` (`daemon.ResultRevoked`), which
@@ -129,7 +132,7 @@ with `1`. Everything else is as in slice 2.
 | Test | Proves |
 | --- | --- |
 | `TestDaemonStopsOnRevokedAnswer` — a `401 credential_revoked` stops trying, writes `connect: false` and `credential_revoked`, logs the line once | R20 |
-| `TestDaemonStopsOnCloseRevoked` — a connection closed with `4002` stops the same way, with no further tries | R20 |
+| `TestDaemonStopsOnCloseRevoked` — a connection closed with `4002` stops the same way, with no further tries; R20's line is the last log line, with no "Connection lost" | R20 |
 | `TestDaemonRevokedBodyStrict` — a `401` with another body is a failed try, as in slice 2; `unknown_credential` still means rejected | R20 |
 | `TestConnectAfterRevoked` — `POST /connect` tries again and answers `revoked` when the server still refuses | R21 |
 | `TestStatusRevoked` — the unpaired message and exit `1`, with and without a daemon | R21 |

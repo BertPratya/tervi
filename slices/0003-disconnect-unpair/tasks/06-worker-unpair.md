@@ -96,30 +96,64 @@ running the command again is always safe.
 ### Removing the service: `internal/worker/service/remove.go` (new)
 
 ```go
-// Remove stops and disables the service and removes its file.
-// A service or file that is already gone counts as removed.
-func (service *Service) Remove(ctx context.Context) error
+// Stop stops the service and keeps it from starting at boot.
+// A service that is already gone counts as stopped.
+func (service *Service) Stop(ctx context.Context) error
+
+// RemoveFile removes the service file and reloads systemd.
+// A file that is already gone counts as removed.
+func (service *Service) RemoveFile(ctx context.Context) error
 
 // LingerOn reports whether linger is on for the calling user.
 func LingerOn(ctx context.Context, runner Runner) (bool, error)
 ```
 
-`Remove` runs `systemctl --user disable --now tervi` only when the service
-file exists (when it is gone, `systemctl` would fail; the lock in step 2
-still catches a daemon started by hand), removes
+`Stop` runs `systemctl --user disable --now tervi` when the service file
+exists. When it does not (for example, deleted by hand while systemd still
+runs the unit), it runs `systemctl --user stop tervi` instead, where
+"not loaded" (exit status `5`) counts as stopped. `RemoveFile` removes
 `~/.config/systemd/user/tervi.service`, then always runs
-`systemctl --user daemon-reload`. A failure of either `systemctl` command
-is a real failure (R16). `LingerOn` runs
+`systemctl --user daemon-reload`. Any other failure of a `systemctl`
+command is a real failure (R16). `LingerOn` runs
 `loginctl show-user --property=Linger --value` and reads `yes` or `no`.
 
 ### Unpairing: `internal/worker/unpair/unpair.go` (new package)
 
 Holds the steps, so `cli/unpair.go` only parses, asks, and prints. Like
 `internal/worker/pair`, it implements an interface the `cli` package
-defines: `cli.Unpairer`, declared in `cli/unpair.go`, with the methods the
-command needs (tell the server; remove what is on the computer). `cli.Env`
-gets a field `Unpairer cli.Unpairer`, and `cmd/tervi` sets it to the
-`internal/worker/unpair` implementation. Do not add a parameter to
+defines, in `cli/unpair.go`:
+
+```go
+// Unpairer does the work of tervi unpair; internal/worker/unpair
+// implements it.
+type Unpairer interface {
+    // TellServer sends the unpair request once (step 1).
+    TellServer(ctx context.Context, entry credential.Entry) UnpairAnswer
+    // RemoveLocal does steps 2 and 3. A nil result means everything is gone.
+    RemoveLocal(ctx context.Context, env Env) *RemoveFailure
+    // LingerOn does step 4; false when it cannot tell.
+    LingerOn(ctx context.Context) bool
+}
+
+// UnpairAnswer is the server's answer to the unpair request.
+type UnpairAnswer struct {
+    Done     bool // 204, or any 401: the server part is finished
+    Answered bool // false when no answer came
+    Status   int  // the HTTP status when Answered and not Done
+}
+
+// RemoveFailure says what could not be removed.
+type RemoveFailure struct {
+    Background bool   // step 2 failed (stopping tervi, or the lock)
+    Path       string // step 3: the file that could not be deleted
+    Reason     string // without the credential
+}
+```
+
+`internal/worker/unpair` exports `New(opts Options) cli.Unpairer`, with
+`Options{RequestTimeout, LockWait time.Duration}` (zero means 10 seconds
+each), so tests can use short ones. `cli.Env` gets a field
+`Unpairer cli.Unpairer`, and `cmd/tervi` sets it to `unpair.New(...)`. Do not add a parameter to
 `cli.Run`: `test/e2e` calls it, and builds `Env` with named fields, so a new
 field does not break it.
 
@@ -129,16 +163,15 @@ field does not break it.
    lock in step 2 cannot be taken.
 1. **The server** (not with `--local-only`): one
    `POST <server>/api/v1/machines/current/unpair`, at most 10 seconds,
-   never retried, never following a redirect. The 10 seconds come from an
-   option of the `unpair` package (default 10 seconds), like
-   `pair.Options.RequestTimeout`, so tests can use a short one.
+   never retried, never following a redirect. The 10 seconds are
+   `Options.RequestTimeout` (above).
    - `204`, or `401` with any body: the server part is done (R11, R13).
    - No answer (cannot connect, timeout): stop; nothing is removed (R12).
    - Any other answer: stop; nothing is removed (below).
-2. **The background**: `Service.Remove`, then take `daemon.lock` with
-   `WithLock`, trying every 200 ms for up to 10 seconds, so no daemon is
+2. **The background**: `Service.Stop`, then take `daemon.lock` with
+   `WithLock`, trying every 200 ms for up to `LockWait`, so no daemon is
    left (also one started by hand with `tervi daemon`). Holding the lock,
-   do step 3.
+   `Service.RemoveFile`, then step 3.
 3. **The files**: delete `credential.json` (without reading it); then
    `credential.DeleteLeftovers` (user's decision: after unpairing, no copy
    of the secret may remain); then `state.json`. Delete only those names;
@@ -218,16 +251,16 @@ redaction used by `tervi connect`.
 | --- | --- |
 | `TestUnpairAsks` — the two question lines; `y`, `Yes`, ` yes ` continue; `n`, empty, and end of input print `Nothing was changed.`, exit `1`, change nothing | R10 |
 | `TestUnpairYesSkipsQuestion` — `--yes` asks nothing | R10, R14 |
-| `TestUnpairRemovesInOrder` — with a fake server answering `204`: the request carries the credential; then disable, the lock, the service file, `credential.json`, `state.json`, in that order; the success line; exit `0`; the `tervi` program is untouched | R11 |
+| `TestUnpairRemovesInOrder` — with a fake server answering `204`: the request carries the credential; then stop and disable, the lock, the service file and `daemon-reload`, `credential.json`, the leftovers, `state.json`, in that order; the success line; exit `0`; the `tervi` program is untouched | R11 |
 | `TestUnpairLingerLine` — the linger line when `loginctl` says `yes`, none for `no` or a failure | R11 |
-| `TestUnpairNoAnswer` — no server, and a server that never answers within 10 seconds: R12's three lines, exit `1`, every file and the service untouched, one request only; a second run against a server answering `204` removes everything | R12 |
+| `TestUnpairNoAnswer` — no server, and a server that never answers within the (short, test-set) timeout: R12's three lines, exit `1`, every file and the service untouched, one request only; a second run against a server answering `204` removes everything | R12 |
 | `TestUnpairOtherAnswer` — a `500`: its lines, exit `1`, nothing removed; a second run against a server answering `204` removes everything | R12 |
 | `TestUnpairServerAlreadyRefuses` — `401` with `unknown_credential`, `credential_revoked`, or another body: removes everything as for `204` | R13 |
 | `TestUnpairLocalOnly` — no request at all; the two question lines; removes everything; its success line | R14 |
 | `TestUnpairNotPaired` — no files: its line, exit `1` | R15 |
 | `TestUnpairUnreadableCredential` — a `credential.json` with mode `0000`: the read failure with its path, exit `1`, nothing removed, no request | R15 |
 | `TestUnpairDamagedState` — a usable `credential.json` next to a damaged `state.json`: unpaired as usual, both files removed | R11 |
-| `TestRemoveServiceAlreadyGone` — with no service file, `disable --now` is not run, `daemon-reload` is, and `Remove` succeeds | R11, R16 |
+| `TestRemoveServiceAlreadyGone` — with no service file, `Stop` runs `stop` (not `disable --now`) and counts exit status `5` as stopped; `RemoveFile` still runs `daemon-reload`; both succeed | R11, R16 |
 | `TestUnpairNoRuntimeFolder` — without `XDG_RUNTIME_DIR`: the runtime folder line, exit `1`, no request, nothing removed | R11 |
 | `TestUnpairLeftovers` — a service file and `state.json` but no `credential.json`; a damaged `credential.json`; one readable by others: no request, the leftovers question and success line, everything removed, with and without `--local-only` | R15, R16 |
 | `TestUnpairUnfinishedPairing` — a usable `credential.json` with `state.json` missing or not confirmed: the request is sent, `401` counts as done, everything removed, R11's success line | R13, R15 |

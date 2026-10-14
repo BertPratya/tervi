@@ -118,6 +118,12 @@ update the usage line.
 
 When the computer has a machine ID, nothing new is printed.
 
+`machineid.go` holds one helper that asks when needed and reports whether
+to go on. It is called at the start of `runLeftover` (`leftover.go`), at the
+start of the rejected and revoked re-pair functions (`handover.go`), before
+`checkAndStart` in `cli.go`'s branch with no pairing at all, and in the
+`cli.StartNewPairing` handling (below), so `cli.go` gains only a few lines.
+
 The question is asked only on the paths that go on to start a new pairing
 (`Flow.StartNew`): no pairing yet, leftover pairing data, a rejected
 credential, and a revoked one; and on those paths before anything is
@@ -157,8 +163,8 @@ can only happen when `tervi pair` resumes that pairing
 ## Boundaries
 
 - May create or change: `internal/worker/pair/`, `internal/worker/cli/`
-  (the new `machineid.go`, `cli.go`, `handover.go`, the `Flow` interface,
-  the usage line),
+  (the new `machineid.go`, `cli.go`, `handover.go`, `leftover.go`, the
+  `Flow` interface, the usage line),
   `cmd/tervi/` (wiring only), their tests, `test/e2e/` helpers and tests
   that build `pair.Options` (only to set `MachineIDPath`).
 - Must not change: `internal/worker/daemon/`, `internal/worker/control/`,
