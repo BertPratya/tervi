@@ -229,3 +229,8 @@ server during pairing, the Swagger page) did not change in this slice.
 Tests run: `go vet ./...`, `go test -count=1 ./...`, and
 `node --test internal/server/web/static/machines-view.test.js` on 7114128 →
 all pass (every Go package ok; 9 of 9 page tests).
+
+Fix 6 (47d4aa5), made after the hand checks, indents the hint line under
+`tervi connect`'s and `tervi pair`'s messages (row 63 now prints
+`  Pair again with: …`); `TestConnectCommandResults` checks the new text, and `go test ./internal/worker/... ./test/e2e/` passes
+on 47d4aa5.
