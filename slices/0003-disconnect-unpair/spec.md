@@ -38,11 +38,14 @@ Status: draft
    This removes this computer's pairing with http://localhost:8080.
    tervi will stop running in the background. Continue? [y/N] y
    ✓ Unpaired. This computer is no longer paired with http://localhost:8080.
+     Linger is still on. Turn it off with: loginctl disable-linger
    $
    ```
 
    The computer disappears from the Machines page. tervi no longer runs in
    the background, also after a restart. The `tervi` program stays installed.
+   Linger, which `tervi pair` turned on, stays on until the user turns it
+   off.
 
 6. On another computer, the user clicks **Revoke** on the Machines page and
    confirms. That computer disappears from the page at once. On it,
@@ -135,7 +138,9 @@ page). It also lets the server recognize a computer that pairs again.
   at boot, remove its service file, delete `credential.json`, and delete
   `state.json`, print
   `✓ Unpaired. This computer is no longer paired with <server>.`, and exit
-  with `0`. The `tervi` program shall stay installed.
+  with `0`. The `tervi` program shall stay installed. Linger shall stay as
+  it is; if it is on, the worker shall then print
+  `  Linger is still on. Turn it off with: loginctl disable-linger`.
 - R12. If the server cannot be reached, then `tervi unpair` shall change
   nothing, print
   `✗ Can't reach <server>. Nothing was changed.` then
@@ -239,12 +244,13 @@ page). It also lets the server recognize a computer that pairs again.
 
 ## Open questions
 
-1. Should `tervi unpair` turn linger off again (`loginctl disable-linger`)?
-   Slice 2's fix 4 turns it on when pairing. Turning it off would also stop
-   any other user services that rely on it, which tervi cannot know about;
-   leaving it on keeps those running but leaves a setting tervi made.
+None.
 
 ## Decisions
+
+- `tervi unpair` leaves linger on and says how to turn it off (R11) —
+  turning it off would also stop any other user service that relies on it,
+  which tervi cannot know about; saying so leaves the choice to the user.
 
 - `tervi disconnect` pauses; it does not remove anything — like
   `tailscale down`; `tervi unpair` is the way to remove.
