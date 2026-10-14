@@ -120,6 +120,10 @@ gets a field `Unpairer cli.Unpairer`, and `cmd/tervi` sets it to the
 `cli.Run`: `test/e2e` calls it, and builds `Env` with named fields, so a new
 field does not break it.
 
+0. **The runtime folder**, before anything else: `requireRuntimeFolder`, as
+   `tervi status` does. Without `XDG_RUNTIME_DIR` it prints that line,
+   exits `1`, and changes nothing, so the server is never told while the
+   lock in step 2 cannot be taken.
 1. **The server** (not with `--local-only`): one
    `POST <server>/api/v1/machines/current/unpair`, at most 10 seconds,
    never retried, never following a redirect.
@@ -149,7 +153,11 @@ Every step treats something already gone as done, so running
 | No usable `credential.json` (missing, damaged, or readable by others), but something else of tervi's: `state.json`, the service file, the damaged or exposed `credential.json`, or a leftover from `credential.DeleteLeftovers`'s list | Leftovers, with or without `--local-only`: the leftovers question, no request to the server, steps 2–4 |
 | None of these | Not paired (R15) |
 
-A damaged or exposed `credential.json` is deleted without being read.
+A damaged or exposed `credential.json` is deleted without being read. A
+`credential.json` that exists but cannot be read at all (for example mode
+`0000`, or a folder of that name; `credential.ErrStoreUnreadable`) is none of
+these: it is reported as slice 2 reports a store that cannot be read (the
+path, and nothing removed), exit `1`.
 
 ### The command: `internal/worker/cli/unpair.go` (new)
 
@@ -209,6 +217,8 @@ redaction used by `tervi connect`.
 | `TestUnpairServerAlreadyRefuses` — `401` with `unknown_credential`, `credential_revoked`, or another body: removes everything as for `204` | R13 |
 | `TestUnpairLocalOnly` — no request at all; the two question lines; removes everything; its success line | R14 |
 | `TestUnpairNotPaired` — no files: its line, exit `1` | R15 |
+| `TestUnpairUnreadableCredential` — a `credential.json` with mode `0000`: the read failure with its path, exit `1`, nothing removed, no request | R15 |
+| `TestUnpairNoRuntimeFolder` — without `XDG_RUNTIME_DIR`: the runtime folder line, exit `1`, no request, nothing removed | R11 |
 | `TestUnpairLeftovers` — a service file and `state.json` but no `credential.json`; a damaged `credential.json`; one readable by others: no request, the leftovers question and success line, everything removed, with and without `--local-only` | R15, R16 |
 | `TestUnpairUnfinishedPairing` — a usable `credential.json` with `state.json` missing or not confirmed: the request is sent, `401` counts as done, everything removed, R11's success line | R13, R15 |
 | `TestDeleteLeftovers` — deletes `.credential-*` and `credential-check.json`, leaves other files, and a second call is a no-op | R11 |

@@ -65,7 +65,14 @@ server on a test database, the worker's commands run in-process, and a
 fake `systemctl`/`loginctl` runner that starts real daemons),
 `pairLiveMachine`, `f.status`, `f.machine`, `waitForMachineOnline`,
 `waitForControlState`, `f.audit`, `assertNoConnectionSecret`, and
-`assertCredentialOnlyInPrivateFile`. Extend the fixture where a test needs
+`assertCredentialOnlyInPrivateFile`. The fake runner today only starts daemons: it ignores
+`systemctl --user disable --now tervi` and `daemon-reload`, has nothing for
+`loginctl show-user`, and runs every daemon on one shared context. Extend
+it: one context per daemon it starts; `stop tervi` and `disable --now tervi`
+stop the running in-process daemon and wait for it to end (so
+`tervi unpair` gets the lock at once); `daemon-reload` succeeds;
+`loginctl show-user --property=Linger --value` answers a fixed `no`. Tests
+2 and 5 stop the daemon through the fake's `stop`. Extend the fixture where a test needs
 it: running `tervi disconnect` and `tervi unpair --yes`, a
 `/etc/machine-id` file of the fixture's own (passed through
 `pair.Options.MachineIDPath`, task 07), calling the Revoke route as the page does, and answering the

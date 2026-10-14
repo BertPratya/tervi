@@ -100,6 +100,16 @@ func (d *Daemon) Disconnect(ctx context.Context) DisconnectResult
 | `not_paired` | nothing | `not_paired` |
 | writing `state.json` fails | nothing else changes | `failed`, with the path |
 
+**The run loop after a disconnect.** Today, whenever `serveConnection`
+returns, `Run` logs `✗ Connection lost: <reason>` and waits to reconnect.
+A disconnect must not do that: the only log line is `○ Disconnected.`, with
+no "Connection lost" and no "Reconnecting" after it, and the loop goes
+straight to idle. An attempt in progress when `Disconnect` runs (dialing,
+or waiting for `hello`) is cancelled; if it connects anyway after
+`connect` became false, the daemon closes it with `1000` at once and logs
+no "Connected". Keep this logic in `daemon/disconnect.go`; `daemon.go`'s
+loop only calls it, so `daemon.go` stays under 300 lines.
+
 `Disconnect` and `Connect` never run at the same time (they share
 `connectMu`). A `Connect` can hold it for up to 30 seconds while it waits
 for a connection, so `Disconnect` waits for it, and `Client.Disconnect`'s
@@ -121,6 +131,9 @@ a 40-second timeout (above).
 `tervi disconnect`, no arguments (anything else prints the usage line and
 exits with `2`). Steps:
 
+0. Check the runtime folder first, with `requireRuntimeFolder`, as
+   `tervi status` does: without `XDG_RUNTIME_DIR` it prints that line,
+   exits `1`, and changes nothing.
 1. Read the pairing (`credential.Paired`). Not paired: print
    `This computer isn't paired. Pair it with: tervi pair --server <url>`
    and exit `1` (R6). Unreadable files: as `tervi connect` reports them.
@@ -174,7 +187,9 @@ usage line.
 | `TestWithLockBusy` — while a daemon holds the lock, `WithLock` returns `ErrAlreadyRunning` and does not run the change; a daemon cannot start while `WithLock` runs | R1, R3 |
 | `TestDisconnectWriteFailure` — a `state.json` that cannot be written prints the path and exits `1`, both ways | R1, R3 |
 | `TestDisconnectDuringConnect` — a `tervi disconnect` sent while a `POST /connect` waits for an unreachable server answers `disconnected` once the connect ends, and no try follows | R1 |
-| `TestDisconnectLogLine` — the daemon writes `○ Disconnected.` once | R1 |
+| `TestDisconnectLogLine` — the daemon writes `○ Disconnected.` once, and it stays the last log line: no "Connection lost" or "Reconnecting" follows | R1 |
+| `TestDisconnectDuringAttempt` — with a server that holds the opening request until after the disconnect, the attempt is cancelled or closed with `1000` at once; the machine never shows Online and no "Connected" is logged | R1, R2 |
+| `TestDisconnectNoRuntimeFolder` — without `XDG_RUNTIME_DIR`: the runtime folder line, exit `1`, `state.json` unchanged | R3 |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md`
 changes to `done`.

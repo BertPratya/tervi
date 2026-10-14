@@ -60,7 +60,7 @@ Do the rows in order: each one can depend on the state the row before left.
 | 15 | — | Stop the server: Ctrl+C in terminal 1 | The server stops | ⬜ |
 | 16 | R12 | `tervi unpair --yes` | `✗ No answer from http://localhost:8080.` / `  The server may or may not have unpaired this computer. Nothing was removed here.` / `  Run tervi unpair again to finish, or revoke this computer on the Machines page.` | ⬜ |
 | 17 | R12 | `tervi status` | `○ Reconnecting to http://localhost:8080`: still paired | ⬜ |
-| 18 | — | Start the server again: `go run ./cmd/server` in terminal 1 | Within a few seconds the page shows this computer `Online` | ⬜ |
+| 18 | — | Start the server again: `go run ./cmd/server` in terminal 1 | Within 40 seconds the page shows this computer `Online` (the next try can be up to 36 seconds away) | ⬜ |
 | 19 | R11 | `tervi unpair`, answer `y` | `✓ Unpaired. This computer is no longer paired with http://localhost:8080.` / `  Linger is still on. Turn it off with: loginctl disable-linger` | ⬜ |
 | 20 | R19 | Look at the Machines page | This computer is gone | ⬜ |
 | 21 | R11 | `systemctl --user status tervi` | `Unit tervi.service could not be found.` | ⬜ |
@@ -68,29 +68,34 @@ Do the rows in order: each one can depend on the state the row before left.
 | 23 | R11 | `which tervi` | Still prints its path: the program stays installed | ⬜ |
 | 24 | R15 | `tervi unpair` | `This computer isn't paired. Nothing was changed.` | ⬜ |
 | 25 | R24 | `tervi pair --server http://localhost:8080`, and open the approval link | `This looks like a computer that was paired before:` / `<name>, unpaired on <today's day and month>.`, with `[ Accept ]  brings back <name>, with its history` and `[ Reject ]  doesn't pair it` | ⬜ |
-| 26 | R26 | Click **Accept**, and type the code in terminal 2 | The page lists **one** entry for this computer, `Online` | ⬜ |
-| 27 | R17 | Click **Revoke** on this computer, then **Cancel** | The question `Revoke <name>? It stops working at once and must be paired again to come back.` with **Revoke** and **Cancel**; Cancel changes nothing | ⬜ |
-| 28 | — | Stop the server: Ctrl+C in terminal 1 | The server stops | ⬜ |
-| 29 | R18 | On the still-open page, click **Revoke**, then **Revoke** | The row stays, and the page shows `Couldn't revoke <name>. Try again.` (after the next refresh, `Can't reach the server. Trying again…`) | ⬜ |
-| 30 | — | Start the server again | The page shows this computer `Online` again | ⬜ |
-| 31 | R18 | Click **Revoke**, then **Revoke** | The row disappears at once | ⬜ |
-| 32 | R20 | `tervi logs` | The last line is `✗ This computer was unpaired on the server. Pair it again with: tervi pair --server http://localhost:8080` | ⬜ |
-| 33 | R21 | `tervi status; echo $?` | `✗ This computer was unpaired on the server.` / `  Pair it again with: tervi pair --server http://localhost:8080`, then `1` | ⬜ |
-| 34 | R21 | `tervi connect; echo $?` | The same two lines, then `1` | ⬜ |
-| 35 | R21 | `tervi disconnect; echo $?` | The same two lines, then `0` | ⬜ |
-| 36 | R22 | `tervi pair --server http://localhost:8080` | The first line is `This computer was unpaired on the server. Starting a new pairing.` | ⬜ |
-| 37 | R24, R26 | Open the approval link, click **Accept**, and type the code | The page says `<name>, unpaired on <today's day and month>.`; afterwards the Machines page lists **one** entry for this computer, `Online` | ⬜ |
-| 38 | R14 | `tervi unpair --local-only`, answer `y` | `This removes this computer's pairing without telling http://localhost:8080.` / `If that server still exists, it will keep listing this computer until you revoke it on its Machines page. Continue? [y/N]`, then `✓ Unpaired on this computer only.` and the linger line | ⬜ |
-| 39 | R14 | Look at the Machines page | This computer is still listed, `Offline` | ⬜ |
-| 40 | R6 | `tervi disconnect` | `This computer isn't paired. Pair it with: tervi pair --server <url>` | ⬜ |
-| 41 | R18 | Revoke this computer on the page | The row disappears | ⬜ |
-| 42 | — | Pair again to leave the computer paired: `tervi pair --server http://localhost:8080`, Accept, type the code | The page shows it `Online`, recognized as before | ⬜ |
+| 26 | R26 | Click **Accept** | The page shows the 8-digit pairing code, as in slice 1 | ⬜ |
+| 27 | R26 | Type the code in terminal 2 | The Machines page lists **one** entry for this computer, `Online` | ⬜ |
+| 28 | R17 | Click **Revoke** on this computer, then **Cancel** | The question `Revoke <name>? It stops working at once and must be paired again to come back.` with **Revoke** and **Cancel**; Cancel changes nothing | ⬜ |
+| 29 | — | Stop the server: Ctrl+C in terminal 1 | The server stops | ⬜ |
+| 30 | R18 | On the still-open page, click **Revoke**, then **Revoke** | The row stays, and the page shows `Couldn't revoke <name>. Try again.` (after the next refresh, `Can't reach the server. Trying again…`) | ⬜ |
+| 31 | — | Start the server again | The page shows this computer `Online` again | ⬜ |
+| 32 | R18 | Click **Revoke**, then **Revoke** | The row disappears at once | ⬜ |
+| 33 | R20 | `tervi logs` | The last line is `✗ This computer was unpaired on the server. Pair it again with: tervi pair --server http://localhost:8080` | ⬜ |
+| 34 | R21 | `tervi status; echo $?` | `✗ This computer was unpaired on the server.` / `  Pair it again with: tervi pair --server http://localhost:8080`, then `1` | ⬜ |
+| 35 | R21 | `tervi connect; echo $?` | The same two lines, then `1` | ⬜ |
+| 36 | R21 | `tervi disconnect; echo $?` | The same two lines, then `0` | ⬜ |
+| 37 | R22 | `tervi pair --server http://localhost:8080` | The first line is `This computer was unpaired on the server. Starting a new pairing.` | ⬜ |
+| 38 | R24 | Open the approval link | `This looks like a computer that was paired before:` / `<name>, unpaired on <today's day and month>.` | ⬜ |
+| 39 | R26 | Click **Accept** | The page shows the 8-digit pairing code | ⬜ |
+| 40 | R26 | Type the code in terminal 2 | The Machines page lists **one** entry for this computer, `Online` | ⬜ |
+| 41 | R14 | `tervi unpair --local-only`, answer `y` | `This removes this computer's pairing without telling http://localhost:8080.` / `If that server still exists, it will keep listing this computer until you revoke it on its Machines page. Continue? [y/N]`, then `✓ Unpaired on this computer only.` and the linger line | ⬜ |
+| 42 | R14 | Look at the Machines page | This computer is still listed, `Offline` | ⬜ |
+| 43 | R6 | `tervi disconnect` | `This computer isn't paired. Pair it with: tervi pair --server <url>` | ⬜ |
+| 44 | R18 | Revoke this computer on the page | The row disappears | ⬜ |
+| 45 | R24 | `tervi pair --server http://localhost:8080`, and open the approval link | `<name>, unpaired on <today's day and month>.` | ⬜ |
+| 46 | R26 | Click **Accept** | The page shows the 8-digit pairing code | ⬜ |
+| 47 | R26 | Type the code in terminal 2 | The Machines page lists **one** entry for this computer, `Online`; it stays paired after the checklist | ⬜ |
 
 ## Proved by tests
 
 | Requirement | What the tests prove | Tests | Result |
 | --- | --- | --- | --- |
-| R1, R2, R7, R8, R9 | Disconnect and connect with the real server, including a daemon started afterwards staying idle | `TestDisconnectEndToEnd`, `TestDisconnectWithoutDaemonEndToEnd`, `TestDisconnectConnected`, `TestDisconnectReconnecting`, `TestDisconnectedAfterRestart`, `TestDisconnectLogLine`, `TestDisconnectDuringConnect` | ⬜ |
+| R1, R2, R7, R8, R9 | Disconnect and connect with the real server, including a daemon started afterwards staying idle | `TestDisconnectEndToEnd`, `TestDisconnectWithoutDaemonEndToEnd`, `TestDisconnectConnected`, `TestDisconnectReconnecting`, `TestDisconnectedAfterRestart`, `TestDisconnectLogLine`, `TestDisconnectDuringConnect`, `TestDisconnectDuringAttempt` | ⬜ |
 | R3 | No daemon is started; the lock keeps a starting daemon out while the file is written | `TestDisconnectNoDaemon`, `TestWithLockBusy` | ⬜ |
 | R4, R5, R6 | Each case, both with and without a daemon | `TestDisconnectAlready`, `TestDisconnectRejectedOrRevoked`, `TestDisconnectNotPaired` | ⬜ |
 | R7 | `○ Disconnected.` from the daemon and from `state.json` | `TestStatusDisconnected`, `TestStatusNoDaemonConnectTrue`, `TestDisconnectThenStatus` | ⬜ |
@@ -105,7 +110,7 @@ Do the rows in order: each one can depend on the state the row before left.
 | R19 | Ended machines are not listed but stay in the database; the migration keeps every machine | `TestListOnlyMachinesWithActiveCredential`, `TestMigrationMovesCredentials` | ⬜ |
 | R20 | `4002` and `credential_revoked` both stop the daemon, also when it was offline | `TestDaemonStopsOnRevokedAnswer`, `TestDaemonStopsOnCloseRevoked`, `TestConnectionRefusesRevoked`, `TestRevokeOfflineEndToEnd` | ⬜ |
 | R21 | The unpaired message in status, connect, and disconnect | `TestStatusRevoked`, `TestConnectRevokedMessage`, `TestDisconnectRejectedOrRevoked` | ⬜ |
-| R22 | Pairing after a revocation | `TestPairAfterRevoked` | ⬜ |
+| R22 | Pairing after a revocation, also when the acknowledgment or save-failure report is the one refused | `TestPairAfterRevoked`, `TestConfirmRevoked` | ⬜ |
 | R23 | The identity's value, that it is never shown, and the question without a machine ID (which needs root to cause by hand) | `TestIdentityKnownValue`, `TestIdentityParsing`, `TestStartSendsIdentity`, `TestIdentityNeverShown`, `TestNoMachineIDQuestion`, `TestNoMachineIDYes`, `TestStartStoresIdentity`, `TestStartRejectsBadIdentity` | ⬜ |
 | R24, R25, R28 | Which machine matches, decided once, and the page's lines | `TestMatchPairedBefore`, `TestMatchMostRecent`, `TestMatchDecidedOnce`, `TestApprovalShowsEarlierMachine`, `view.test.js` | ⬜ |
 | R26, R27 | Accept brings the machine back and ends its earlier credential; failures leave it alone | `TestCodeAttachesToMatchedMachine`, `TestAcknowledgeBringsMachineBack`, `TestAcknowledgeClosesEarlierConnection`, `TestSaveFailureKeepsEarlierCredential`, `TestPairSameComputerAgainEndToEnd` | ⬜ |

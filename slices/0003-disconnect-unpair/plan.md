@@ -29,7 +29,9 @@ decisions for recognizing a computer are too few for a slice of their own.
 | Unpairing | `internal/worker/unpair/unpair.go` (new) | Tells the server, then removes the pairing on the computer in order (R11–R16) |
 | Talking to the daemon | `internal/worker/control` | Adds `POST /disconnect`, and taking the lock when no daemon runs (R1, R3) |
 | Taking the lock without a daemon | `internal/worker/control/lock.go` (new) | Takes `daemon.lock`, runs one change, and lets go; the lock code moves here from `daemon.go` |
-| Daemon | `internal/worker/daemon` | Disconnects on request; stops on `4002` or `credential_revoked` and records it (R1, R20) |
+| Daemon | `internal/worker/daemon` | The run loop calls the two files below (R1, R20) |
+| A revoked credential | `internal/worker/daemon/revoked.go` (new) | Stops on `4002` or `credential_revoked`, records it, logs it (R20) |
+| Disconnecting | `internal/worker/daemon/disconnect.go` (new) | `Disconnect`: closes with `1000`, cancels an attempt in progress, logs only `○ Disconnected.` (R1) |
 | Removing the service | `internal/worker/service/remove.go` (new) | Stops and disables the service, removes its file, and says whether linger is on (R11) |
 | Worker command line | `internal/worker/cli` | `tervi status` shows `Disconnected` and the unpaired message, also without a daemon, and `tervi connect` the unpaired message (R7, R21); `--yes` for `tervi pair`; the usage line |
 | Machine ID question | `internal/worker/cli/machineid.go` (new) | The question `tervi pair` asks when the computer has no machine ID (R23) |

@@ -71,9 +71,13 @@ var appID = [16]byte{0xca, 0x6e, 0x70, 0xbc, 0x29, 0xab, 0x4e, 0xd1,
 
 (`ca6e70bc29ab4ed1bc52600794cbb122`, made once with `systemd-id128 new`.)
 
-- Read `/etc/machine-id`. The path is a new field, `pair.Options.MachineIDPath`
-  (empty means `/etc/machine-id`), so tests use a file of their own; task 08
-  uses this field. It must be exactly 32 hex characters, optionally followed by one
+- Read `/etc/machine-id`. The path is a new field,
+  `pair.Options.MachineIDPath` (empty means `/etc/machine-id`). Every test
+  that builds `pair.Options` (in `internal/worker/pair` and `test/e2e`) sets
+  it, to a file of its own or to a missing path together with `--yes`, so
+  no test reads the real `/etc/machine-id` and no result depends on the
+  test computer. Task 08 uses this field too.
+- The file must be exactly 32 hex characters, optionally followed by one
   newline; uppercase is accepted. Parse them into 16 bytes.
 - The identity is HMAC-SHA256 with those 16 bytes as the key and the 16
   bytes of `appID` as the message: all 32 bytes of the result, written as 64
@@ -114,19 +118,35 @@ update the usage line.
 
 When the computer has a machine ID, nothing new is printed.
 
+The question is asked only on the paths that go on to start a new pairing
+(`Flow.StartNew`): no pairing yet, leftover pairing data, a rejected
+credential, and a revoked one; and on those paths before anything is
+deleted. It is never asked when the computer is already paired, when an
+unfinished pairing is resumed (`FinishEarlier`, which sends no identity),
+or when `tervi pair` refuses because another server's pairing is
+unfinished.
+
 ### After a revocation (R22)
 
 In step zero, a confirmed pairing with `stop_reason: "credential_revoked"`
 is handled like the rejected case, with the line
 `This computer was unpaired on the server. Starting a new pairing.`
 
+The acknowledgment and save-failure routes now also answer
+`401 credential_revoked` (task 01). Today `pair/confirm.go` treats any `401`
+other than `unknown_credential` as "✗ Unexpected answer from the server."
+Case: a pairing whose acknowledgment answer was lost, whose machine was
+then revoked on the page; every `tervi pair` would repeat that message.
+Treat `credential_revoked` from either route like R22: print R22's line,
+remove the old pairing, and start a new one.
+
 ## Boundaries
 
 - May create or change: `internal/worker/pair/`, `internal/worker/cli/`
   (the new `machineid.go`, `cli.go`, `handover.go`, the `Flow` interface,
   the usage line),
-  `cmd/tervi/` (wiring only), their tests, `test/e2e/` helpers that start
-  pairings (only to pass or skip the question).
+  `cmd/tervi/` (wiring only), their tests, `test/e2e/` helpers and tests
+  that build `pair.Options` (only to set `MachineIDPath`).
 - Must not change: `internal/worker/daemon/`, `internal/worker/control/`,
   `internal/worker/state/`, `internal/worker/service/`, anything under
   `internal/server/`, `api/`, `design/`, `slices/` except this task's row
@@ -144,6 +164,8 @@ is handled like the rejected case, with the line
 | `TestNoMachineIDQuestion` — the five lines; `y` continues without an identity; `n`, empty, end of input: `Nothing was changed.`, exit `1`, and step zero has removed nothing | R23 |
 | `TestNoMachineIDYes` — `--yes` (both flag orders) asks nothing and continues | R23 |
 | `TestPairAfterRevoked` — a revoked pairing prints R22's line, removes the old pairing, and starts a new one | R22 |
+| `TestConfirmRevoked` — `401 credential_revoked` from the acknowledgment or the save-failure report: R22's line, the old pairing removed, a new one started | R22 |
+| `TestQuestionOnlyWhenStarting` — with no machine ID: already paired, resuming an unfinished pairing, and another server's unfinished pairing ask nothing; no pairing yet, leftovers, rejected, and revoked ask | R23 |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md`
 changes to `done`.

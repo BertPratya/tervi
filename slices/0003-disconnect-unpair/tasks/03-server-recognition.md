@@ -124,8 +124,16 @@ is not touched here: it keeps working until the acknowledgment (R26).
 In the transaction that makes the new credential `active` (and the pairing
 request `paired`), when the request has a `matched_machine_id`:
 
+0. First lock the matched machine's row (`SELECT … FROM machines WHERE
+   machine_id = $1 FOR UPDATE`), so two acknowledgments for the same
+   machine at the same moment run one after the other instead of breaking
+   the one-`active` rule. Then find the request's own credential and check
+   that it is `pending` and not expired. Only then go on; otherwise answer
+   as slice 1 does (a repeated acknowledgment of an `active` credential
+   answers `ok` and changes nothing: no revoke, no close).
 1. `credential.Revoke` the machine's earlier `active` credential, before
    activating the new one (the database allows one `active` per machine).
+   Because of step 0, this is never the request's own credential.
 2. Update the machine's `hostname`, `os_name`, `os_version` from the pairing
    request, and `display_name` as for a new machine (the hostname, or
    `unknown`).
@@ -185,7 +193,7 @@ Put the text in `view.js` as pure functions and test it with `node --test`.
 | `TestMatchDecidedOnce` — a machine that starts matching after the pairing started does not change the stored match | R24 |
 | `TestApprovalShowsEarlierMachine` — `earlier_machine` with `still_paired: false` and `unpaired_at`, or `still_paired: true` and `null`; absent with no match | R24, R28 |
 | `TestCodeAttachesToMatchedMachine` — the correct code creates no machine, attaches the `pending` credential to the matched machine, answers its ID; the earlier `active` credential still works | R26, R27 |
-| `TestAcknowledgeBringsMachineBack` — after the acknowledgment the new credential is `active`, the earlier one `revoked`, the machine's name and OS are the new ones, and it is listed once | R26 |
+| `TestAcknowledgeBringsMachineBack` — after the acknowledgment the new credential is `active`, the earlier one `revoked`, the machine's name and OS are the new ones, and it is listed once; a second acknowledgment answers `ok`, the new credential stays `active`, and no connection is closed | R26 |
 | `TestAcknowledgeClosesEarlierConnection` — an earlier credential's open connection is closed with `4002` after commit | R26 |
 | `TestSaveFailureKeepsEarlierCredential` — a reported save failure or an expired credential leaves the matched machine and its earlier credential as they were | R26 |
 | `view.test.js` — the match lines for unpaired and still paired, the date as day and English month name, also near midnight in another time zone, the button results, and the page without a match unchanged | R24, R28 |

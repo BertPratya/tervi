@@ -36,7 +36,9 @@ no daemon is running.
 - `internal/protocol` has `CloseRevoked = 4002` (task 01).
 - The server answers a revoked credential with
   `401 {"error": "credential_revoked"}` on the connection route, and closes
-  a connected machine with `4002` when it is revoked (tasks 01, 02, 03).
+  a connected machine with `4002` when it is revoked. Task 01 provides both
+  the answer and the code; the routes that revoke (tasks 02, 03) may still
+  be in progress, so this task's tests use a fake server.
 - `internal/worker/daemon/errors.go` recognizes exactly
   `401 {"error": "unknown_credential"}` as a rejection
   (`isUnknownCredentialBody`). On it, `reject` writes `connect: false` and
@@ -51,7 +53,10 @@ no daemon is running.
 Add `StopReasonCredentialRevoked = "credential_revoked"` next to
 `StopReasonCredentialRejected`. `design/data-model.md` already describes it.
 
-### The daemon: `internal/worker/daemon`
+### The daemon: `internal/worker/daemon/revoked.go` (new)
+
+Put the revocation handling in the new file `daemon/revoked.go`; `Run` and
+`tryConnection` only call it, so `daemon.go` stays under 300 lines.
 
 - **Recognizing it.** A `401` whose body is exactly
   `{"error": "credential_revoked"}` (same strict parsing as today) is a
