@@ -112,3 +112,11 @@ are recorded here as they are made.
   no server step at all — that is `--local-only` (R14); answering a repeat
   with `401 credential_revoked` — it also finishes (R13), but a normal
   retry would go through the path for refusals.
+- The match is decided once, when the pairing starts, and stored on the
+  pairing request as `matched_machine_id`; the approval page shows that
+  machine, and the correct code attaches the new credential to that same
+  machine (R24–R26) — what the user saw is what Accept does, even if
+  another pairing of the same computer finishes in the minutes between.
+  Not chosen: looking the match up again when the code arrives — nothing
+  new to store, but the page could show one machine while Accept attaches
+  the computer to another.
