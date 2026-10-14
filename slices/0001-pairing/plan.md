@@ -618,9 +618,14 @@ The worker saves the standard form in its secret store entry.
 - The server address is saved only in the secret store entry, next to the
   credential, not in `state.json` — a plain file is easy to edit or copy by
   mistake, and a credential sent to the wrong server cannot be taken back.
+  *Since slice 0002 (fix 4), both are in `credential.json`, still apart from
+  `state.json`.*
 - `github.com/zalando/go-keyring` for the secret store — widely used, small,
   and covers Linux, Windows, and macOS. It does not always say whether the
   store is locked or missing, which slice 1's single message does not need.
+  *Superseded in slice 0002 (fix 4): the credential and the server address
+  moved to `credential.json`, and this library was removed. See slice
+  0002's Technical decisions.*
 - Secrets live in their own Go types that print as `[hidden]` — "never in
   logs" is easy to break by accident; a type makes the safe behavior the
   default, and a test checks the full flow's output.

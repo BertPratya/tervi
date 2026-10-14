@@ -1,6 +1,6 @@
 # 0002 Connection — plan
 
-Status: draft
+Status: approved
 Spec: [spec.md](spec.md)
 
 ## Overview
@@ -15,10 +15,10 @@ Spec: [spec.md](spec.md)
 | Connection messages | `internal/protocol` | Shared by both sides: the messages sent over the connection, and the check timing the server sends the worker |
 | Daemon | `internal/worker/daemon` | The long-running engine: obeys `connect`, connects, reconnects with growing waits, stops on a rejected credential, writes the log lines |
 | Talking to the daemon | `internal/worker/control` | The runtime folder, the lock that allows one daemon per user account, the socket `tervi status` and `tervi connect` use to reach the running daemon, and its answers |
-| Background service | `internal/worker/service` | Sets up, starts, and enables the systemd user service; checks that tervi is installed (R28); reads the log for `tervi logs` |
+| Background service | `internal/worker/service` | Sets up, starts, and enables the systemd user service, and turns on linger (R5); checks that tervi is installed (R28); reads the log for `tervi logs` |
 | Worker command line | `internal/worker/cli` | Adds `tervi connect`, `tervi status`, `tervi logs`, and `tervi daemon`; after pairing, starts the background service and waits for the connection |
 | Worker local record | `internal/worker/state` | Adds `connect` and the rejection reason to `state.json` |
-| Worker credential | `internal/worker/credential` | Adds one "is this computer paired?" check (a confirmed `state.json` and a secret store entry), used by the daemon and the commands |
+| Worker credential | `internal/worker/credential` | Adds one "is this computer paired?" check (a confirmed `state.json` and a credential file), used by the daemon and the commands; replaces the OS secret store backend with the private file `credential.json` (R35, R36; fix 4) |
 | End-to-end test | `test/e2e` | Adds the connection: pairing connects, the server stops and comes back, a rejected credential |
 | API contract | `api` | `openapi.yaml` gets the connection route and the machines list; a new `asyncapi.yaml` holds the messages sent over the connection |
 
@@ -29,7 +29,8 @@ that add routes do not edit the same file.
 
 This slice adds the `last_seen_at` column to `machines` (migration `0002`),
 the `connect` and `stop_reason` fields to `state.json`, and the systemd
-service file. All of it is described in
+service file, and moves the credential from the OS secret store to
+`credential.json` (fix 4). All of it is described in
 [`design/data-model.md`](../../design/data-model.md). Which machines are
 Online is kept only in the server's memory (R23).
 
@@ -67,7 +68,7 @@ worker's own commands call it, so it is described here, not in `api/`.
 | Operation | Called by | Answer |
 | --- | --- | --- |
 | `GET /status` | `tervi status` | The state: `connected` (server, connected since), `reconnecting` (server, try number, seconds until the next try, last error), `not_connecting` (the stop reason), or `not_paired` |
-| `POST /connect` | `tervi connect`, and `tervi pair` after pairing | Sets `connect` to true, reads the pairing again, and answers once the result is known or 30 seconds have passed: `connected`, `already_connected`, `still_trying` (with the last error), `rejected`, or `not_paired` |
+| `POST /connect` | `tervi connect`, and `tervi pair` after pairing | Sets `connect` to true, reads the pairing again, and answers once the result is known or 30 seconds have passed: `connected`, `already_connected`, `still_trying` (with the last error, if a try has failed), `rejected`, `not_paired`, or `failed` (`state.json` could not be written, with its path; nothing changes) |
 
 A program from another user account is refused before any operation runs
 (R26).
@@ -108,9 +109,9 @@ is made longer or shorter at random by up to 20%. After a lost connection,
 the daemon waits before try 1. The first try after the daemon starts, or
 after `POST /connect`, is try 1 with no wait. The count starts again from 1
 once a connection succeeds, which means `hello` arrived. Every failure
-leads to another try except a `401` (next mechanism); a secret store that
-cannot be read is a failed try too, read again on every try, so a keyring
-that unlocks a little after login still connects. Each try's request waits
+leads to another try except a `401` (next mechanism); a `credential.json`
+that cannot be read, is damaged, or is not private (R36) is a failed try
+too, read again on every try, so the daemon connects once the file is fixed. Each try's request waits
 at most 10 seconds, as in slice 1.
 
 ### Rejection
@@ -138,10 +139,14 @@ same moment.
 ### Last seen
 
 Covers R24. The server writes `last_seen_at` when a machine connects, when
-a message arrives and the last write was a minute or more ago, and when the
-connection ends (the time of the last message received). The check
-interval is at most 60 seconds, so a connected machine sends a message, and
-gets a write, at least once a minute. Every write uses the database's
+a message arrives and the last write was 60 seconds minus the check interval
+or more ago (50 seconds with the default interval), and when the connection
+ends (the time of the last message received). A connected machine sends a
+message every interval, and the interval is at most 60 seconds, so the first
+message after that threshold arrives less than a minute after the last
+write: a connected machine gets a write at least once a minute. A write that
+fails does not count as a write, so the next message tries again. Every
+write uses the database's
 clock: `now()`, or at the end `now()` minus the time since the last message
 as measured by the server. The machines list also computes "seconds ago"
 with the database's clock, so the two never disagree.
@@ -149,11 +154,15 @@ with the database's clock, so the two never disagree.
 ### Server stopping
 
 Covers R12, R24. On Ctrl+C, the server closes every connection with code
-`1001` and waits until each connection has written its final
-`last_seen_at`, before it stops serving and closes the database. Each worker
-notices at once and starts reconnecting. Closing every connection is final:
-a connection that finishes opening after it is closed at once with `1001`
-and waited for too, so nothing writes after the database is closed.
+`1001` and waits for each connection to write its final `last_seen_at`,
+before it stops serving and closes the database. Each worker notices at
+once and starts reconnecting. Closing every connection is final: a
+connection that finishes opening after it is closed at once with `1001` and
+waited for too. All this waiting shares one 5-second limit (decided during
+the slice review): a connection whose worker does not answer the close by
+then is closed at once, and its final `last_seen_at` write may be lost or
+fail after the database is closed, so its "last seen" can be up to a minute
+early (R24).
 
 ### Starting the background service
 
@@ -164,7 +173,10 @@ waits at most 30 seconds (R11):
 1. Check that tervi is installed: the running program's path must not be
    inside the system's temporary folder or a `go-build` folder, where
    `go run` builds programs (R28). `tervi pair` does this before contacting the server.
-2. If the service file is missing or names another program path, write it
+2. Run `loginctl enable-linger`, every time (it changes nothing when linger
+   is already on), so the service starts at boot and keeps running when no
+   one is logged in (R5). Then, if the service file is missing or names
+   another program path, write it
    (as in [`design/data-model.md`](../../design/data-model.md)), run
    `systemctl --user daemon-reload`, `systemctl --user enable tervi`, and
    `systemctl --user restart tervi`, so a daemon still running an old
@@ -201,12 +213,17 @@ with `0`.
   running to act on it, so it would change nothing.
 - The service file is `~/.config/systemd/user/tervi.service`, runs the full
   path of the installed `tervi` with `daemon`, restarts only after a crash
-  (5 seconds later), and starts at login — `~/.config` is the folder for
+  (5 seconds later), and is wanted by `default.target`, which starts with
+  the user's service manager: at boot once linger is on (fix 4), at login
+  before that — `~/.config` is the folder for
   services a user sets up; systemd does not use the user's `PATH`; R6 asks
-  for a restart only when it stops unexpectedly.
+  for a restart only when it stops unexpectedly. The path is written in
+  double quotes (added after the task reviews: an unquoted path with a space
+  would be split by systemd).
   Not chosen: `~/.local/share/systemd/user/` — meant for software installed
   by a package; `ExecStart=tervi daemon` — systemd might not find it;
-  `Restart=always` — it would also restart after a clean stop.
+  `Restart=always` — it would also restart after a clean stop; an unquoted
+  path — breaks on a path with a space.
 - The worker and the server talk over one WebSocket that the worker opens
   and keeps open — both sides can send at any time, a close is noticed at
   once (R12), and later slices run agents and terminals over it.
@@ -285,7 +302,8 @@ with `0`.
   still bring every worker at once.
 - tervi gives instructions to systemd by running its commands
   (`systemctl --user daemon-reload`, `enable`, `restart`, `enable --now`,
-  `journalctl --user -u tervi`) — no new library, the steps are the ones a
+  `journalctl --user -u tervi`, and `loginctl enable-linger` since fix 4)
+  — no new library, the steps are the ones a
   user would type, systemd's own error messages can be shown as they are,
   and `tervi logs` shows exactly what `journalctl` would.
   Not chosen: `github.com/coreos/go-systemd` over D-Bus — a new library and
@@ -303,10 +321,15 @@ with `0`.
   folder; "is it the `tervi` on `PATH`" — wrongly refuses a tervi installed
   outside `PATH`.
 - `last_seen_at` is rewritten when a message arrives and the last write was
-  a minute or more ago, with the check interval capped at 60 seconds so the
-  minute always holds — no extra timer.
+  60 seconds minus the check interval or more ago, with the check interval
+  capped at 60 seconds, so the next message always lands within the minute
+  — no extra timer, and about one write a minute. (Changed during task 01:
+  the first rule, "a minute or more ago", could leave a gap of nearly 70
+  seconds, breaking R24.)
   Not chosen: a timer per connection writing every minute — works with no
-  messages, but adds a timer for every machine.
+  messages, but adds a timer for every machine; a write on every message —
+  six writes a minute per machine instead of one; "a minute or more ago"
+  with R24 loosened to two minutes — changes the spec for no gain.
 - The connection route refuses any
   request that carries an `Origin` header with `403 forbidden_origin`,
   before anything else — only browsers send `Origin`, and the worker never
@@ -315,6 +338,38 @@ with `0`.
   plain text, breaking the rule that every `/api/` answer is JSON; skipping
   the `Origin` check — a page in the user's browser could open the
   connection if it ever had a credential.
+- The credential and its server address are kept in
+  `~/.config/tervi/credential.json` (the same JSON the secret store entry
+  held), mode `0600`, in the `0700` folder that holds `state.json`; it is
+  written to a temporary file in the same folder and renamed over the old
+  one, as `state.json` is; a file with any group or other permission, or
+  owned by another account, is refused and never repaired (R35, R36); the
+  library `github.com/zalando/go-keyring` is removed. A separate file, not a
+  field in `state.json` — the daemon rewrites `state.json` often, while the
+  secret is written once, at pairing. Decided by the user while trying the
+  slice (fix 4): GNOME Keyring is locked or missing over SSH and without a
+  desktop, and Tailscale, cloudflared, and Claude Code on Linux use such a
+  file. This supersedes slice 1's choice of the OS secret store and
+  `go-keyring`.
+  Not chosen: the OS secret store — unusable over SSH and on computers
+  without a desktop; the secret store with a file fallback, or a setting to
+  choose — two ways to store, each to build and test, and a quiet fallback
+  hides where the secret went (`gh` is criticised for this); a file
+  encrypted to this computer with `systemd-creds --user` — needs systemd
+  256, and this computer has 255; it could be added on top later; the
+  credential inside `state.json` — the secret would be rewritten every time
+  `connect` changes; quietly repairing a file others can read — hides that
+  someone may already have read it.
+- Pairing and `tervi connect` turn on linger with `loginctl enable-linger`
+  (no user name: the calling user) before enabling the service (R5); a
+  failure is reported like any other failure to set up the service (R29).
+  On Ubuntu, systemd's policy lets users turn on linger for themselves
+  without `sudo`, also over SSH. Decided by the user while trying the slice
+  (fix 4): without linger, systemd stops the user's services when the last
+  login ends, desktop or SSH.
+  Not chosen: no linger — the computer goes Offline whenever nobody is
+  logged in; a system service — runs as another account, without the user's
+  files and agent logins.
 
 ## Requirement coverage
 
@@ -354,6 +409,8 @@ with `0`.
 | R32 | 05 |
 | R33 | 06, 07 |
 | R34 | 08, 01, 02 |
+| R35 | 05 (fix 4) |
+| R36 | 03, 05 (fix 4) |
 
 R1 is met through the daemon: pairing asks it to connect, and it writes
 `connect: true` (decision 1). If the background service cannot start, the
@@ -363,14 +420,14 @@ user finishes with `tervi connect` (R29).
 
 | # | Task | Depends on | Risk | Status |
 | --- | --- | --- | --- | --- |
-| 08 | [Server: shared JSON helpers, and logging each `500`](tasks/08-server-http-helpers.md) | — | normal | todo |
-| 01 | [Server: the machine connection](tasks/01-server-connection.md) | 08 | core | todo |
-| 02 | [Server: the machines list and the Machines page](tasks/02-machines-page.md) | 01, 08 | normal | todo |
-| 03 | [Worker: the daemon's connection](tasks/03-daemon-connection.md) | 01 | core | todo |
-| 04 | [Worker: the daemon's socket, its lock, and `tervi daemon`](tasks/04-daemon-socket.md) | 03 | core | todo |
-| 05 | [Worker: the background service, `tervi connect`, `tervi status`, `tervi logs`](tasks/05-service-and-commands.md) | 04 | core | todo |
-| 06 | [Worker: pairing hands over to the daemon](tasks/06-pairing-hands-over.md) | 05 | core | todo |
-| 07 | [End-to-end test of the connection](tasks/07-end-to-end.md) | 01–06, 08 | normal | todo |
+| 08 | [Server: shared JSON helpers, and logging each `500`](tasks/08-server-http-helpers.md) | — | normal | done |
+| 01 | [Server: the machine connection](tasks/01-server-connection.md) | 08 | core | done |
+| 02 | [Server: the machines list and the Machines page](tasks/02-machines-page.md) | 01, 08 | normal | done |
+| 03 | [Worker: the daemon's connection](tasks/03-daemon-connection.md) | 01 | core | done |
+| 04 | [Worker: the daemon's socket, its lock, and `tervi daemon`](tasks/04-daemon-socket.md) | 03 | core | done |
+| 05 | [Worker: the background service, `tervi connect`, `tervi status`, `tervi logs`](tasks/05-service-and-commands.md) | 04 | core | done |
+| 06 | [Worker: pairing hands over to the daemon](tasks/06-pairing-hands-over.md) | 05 | core | done |
+| 07 | [End-to-end test of the connection](tasks/07-end-to-end.md) | 01–06, 08 | normal | done |
 
 The table is in build order. Task 08 is built first and numbered 08 only
 because it was split out of task 01 during plan review, after the other
@@ -391,4 +448,11 @@ This slice has 11 design decisions, one more than the 10 after which
 `AGENTS.md` says a slice is probably too big. The user accepted 11 for this
 slice: a split into a server half and a worker half would leave neither
 half demonstrable end to end, and every decision was already made one at a
-time.
+time. Two more were made by the user while trying the slice (fix 4): the
+credential file and linger, so the slice has 13. The user accepted 13 for
+this slice after trying it; a split was no longer possible, since every
+task was built.
+
+Fix 4 (the credential file and linger) is described in task 05's section
+"Decision during building: the credential file and linger (fix 4)"; tasks
+03 and 06 note what it changes for them.

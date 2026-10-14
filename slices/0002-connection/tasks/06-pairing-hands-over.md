@@ -54,12 +54,14 @@ rejected pair again.
 - `internal/worker/service`: the installed check (R28 message) and
   `EnsureRunning(ctx) error`.
 - `internal/worker/control`: `Client.Connect(ctx)` with results
-  `connected`, `already_connected`, `still_trying` (with the last error),
-  `rejected`, `not_paired`.
+  `connected`, `already_connected`, `still_trying` (with the last error, or
+  none if no try has failed yet), `rejected`, `not_paired`, `failed` (with
+  the path of `state.json`).
 - `internal/worker/cli` (task 05): `cli.Env` carries the program path, the
   systemd `Runner`, the service-file folder (`ServiceDir`), and the control
   client, so tests set fakes; an empty or nil one stops the hand-over with
-  the internal-setting line; functions
+  the internal-setting line, checked once by task 05's `ensureRunning`
+  helper (use it; do not repeat the checks); functions
   that print the two R29 lines and the two rejected lines. Reuse those
   functions; do not print the same messages a second way.
 - `tervi pair` is handled in `internal/worker/cli` (step zero and the
@@ -94,7 +96,17 @@ is, and the printed `Try again with: tervi connect` is how the user finishes.
    stays exactly as it is.
 4. Pairing as today.
 5. **Hand-over**, only when the pairing flow returned `0`:
-   - `service.EnsureRunning(ctx)`. On failure: `✗ Can't start tervi in the background: <reason>`,
+   - The hand-over gets the secret store entry that this pairing just saved
+     from the pairing flow (the small hook in `internal/worker/pair` the
+     Boundaries allow); it never reads the secret store again, so no
+     store-read error can appear after `✓ Paired successfully.` (added
+     during task 06 review).
+   - Without `XDG_RUNTIME_DIR`: print
+     `✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).`,
+     exit `1`, and do nothing else. The pairing stays saved. (Decided by the
+     user during task 05.)
+   - `ensureRunning(ctx, env)`, task 05's helper in `cli` that calls
+     `service.EnsureRunning`. On failure: `✗ Can't start tervi in the background: <reason>`,
      `Try again with: tervi connect`, exit `1`. The pairing stays saved.
    - Print `✓ tervi now runs in the background and starts when you log in.`
    - `control.Client.Connect(ctx)`, then:
@@ -103,6 +115,8 @@ is, and the printed `Try again with: tervi connect` is how the user finishes.
 | --- | --- | --- |
 | `connected`, `already_connected` | `✓ Connected.` | `0` |
 | `still_trying` | `Paired, but not connected yet: <last error>. tervi keeps trying in the background.` then `Check with: tervi status` | `0` |
+| `still_trying` with no last error (no try has failed yet) | `Paired, but not connected yet. tervi keeps trying in the background.` then `Check with: tervi status` (decided by the user during task 03) | `0` |
+| `failed` (`state.json` could not be written) | `✗ Can't write <path>.` (decided by the user during task 03) | `1` |
 | `rejected` | `✗ The server doesn't accept this computer's credential.` then `Pair again with: tervi pair --server <server>` | `1` |
 | a control error | `✗ Can't reach tervi in the background: <reason>` then `Check with: tervi status` (task 05's function) | `1` |
 
@@ -137,8 +151,10 @@ and exits `130`. The pairing stays saved.
 | `TestMissingInternalSetting` — extended: `tervi pair` with an empty program path prints the internal-setting line and exits `1` before reading anything | R28 |
 | `TestPairHandsOver` — after `✓ Paired successfully.`, the start steps run, then the two lines in order, exit `0`; the service file is written in the test's `t.TempDir()` `ServiceDir` and nowhere else | R5, R10 |
 | `TestPairSetsConnectThroughDaemon` — the hand-over calls `Connect`, and the fake daemon wrote `connect: true` | R1 |
-| `TestPairStillTrying` — the R11 lines, exit `0` | R11 |
+| `TestPairStillTrying` — the R11 lines, exit `0`; and with no last error, the same lines without the error | R11 |
+| `TestPairConnectFailed` — `failed` prints `✗ Can't write <path>.`, exit `1`, and the pairing stays saved | R11 |
 | `TestPairServiceFails` — the R29 lines, exit `1`, `state.json` and the secret store entry still hold the pairing | R29 |
+| `TestPairNoRuntimeFolder` — without `XDG_RUNTIME_DIR`, after `✓ Paired successfully.` the runtime-folder line, exit `1`, no `systemctl` call, and the pairing still saved | R29 |
 | `TestPairFinishEarlierHandsOver` — finishing an earlier pairing also hands over | R5, R10 |
 | `TestPairReturnsAfterLastLine` — the command returns while the fake daemon keeps running | R31 |
 | `TestPairAgainAfterRejection` — with `stop_reason: credential_rejected`, the R33 line, both deleted, a new pairing starts | R33 |
@@ -160,3 +176,14 @@ to `done`.
 ## If anything is unclear
 
 Stop and report the question. Do not guess.
+
+## Decision during building: the credential file and linger (fix 4)
+
+The credential moved from the OS secret store to the private file
+`~/.config/tervi/credential.json` (spec R35, R36), and pairing turns on
+linger (R5). For this task's code: R33 now removes `credential.json`
+instead of the secret store entry; the line after `✓ Paired successfully.`
+becomes `✓ tervi now runs in the background and starts when the computer starts.`
+(R10); and the secret store messages in `tervi pair` change as listed in
+task 05's section "Decision during building: the credential file and
+linger (fix 4)", which has the full instruction and its tests.

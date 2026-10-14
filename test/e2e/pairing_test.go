@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -18,8 +18,10 @@ import (
 	"time"
 
 	"github.com/bertpratya/tervi/internal/server"
+	"github.com/bertpratya/tervi/internal/server/connection"
 	"github.com/bertpratya/tervi/internal/server/db/dbtest"
 	"github.com/bertpratya/tervi/internal/worker/cli"
+	"github.com/bertpratya/tervi/internal/worker/control"
 	"github.com/bertpratya/tervi/internal/worker/credential"
 	"github.com/bertpratya/tervi/internal/worker/pair"
 	workerstate "github.com/bertpratya/tervi/internal/worker/state"
@@ -200,37 +202,34 @@ func (p *testProxy) recordSecrets(path string, body []byte) {
 }
 
 type fixture struct {
-	serverURL string
-	store     *credential.Store
-	stateDir  string
-	proxy     *testProxy
-	logs      *safeBuffer
+	serverURL  string
+	store      *credential.Store
+	stateDir   string
+	serviceDir string
+	proxy      *testProxy
+	logs       *safeBuffer
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	pool := dbtest.New(t)
 	logs := &safeBuffer{}
 	logger := slog.New(slog.NewTextHandler(logs, nil))
 	proxy, proxyServer := newTestProxy(t)
 	t.Cleanup(proxyServer.Close)
-	origin := httptest.NewServer(server.New(server.Config{PublicURL: proxyServer.URL}, pool, logger))
+	origin := httptest.NewServer(server.New(server.Config{PublicURL: proxyServer.URL}, pool, logger, connection.NewList()))
 	t.Cleanup(origin.Close)
 	proxy.setTarget(origin.URL)
-	return &fixture{
-		serverURL: proxyServer.URL,
-		store:     credential.NewStore(credential.NewMemoryBackend()),
-		stateDir:  filepath.Join(t.TempDir(), "state"),
-		proxy:     proxy,
-		logs:      logs,
+	f := &fixture{
+		serverURL:  proxyServer.URL,
+		stateDir:   filepath.Join(t.TempDir(), "state"),
+		serviceDir: t.TempDir(),
+		proxy:      proxy,
+		logs:       logs,
 	}
-}
-
-type workerRun struct {
-	input  *io.PipeWriter
-	stdout *safeBuffer
-	stderr *safeBuffer
-	done   chan int
+	f.store = credential.NewStore(credential.NewFileBackend(f.stateDir))
+	return f
 }
 
 func (f *fixture) startWorker(parent context.Context) *workerRun {
@@ -240,10 +239,38 @@ func (f *fixture) startWorker(parent context.Context) *workerRun {
 	go func() {
 		run.done <- cli.Run(parent, []string{"pair", "--server", f.serverURL}, cli.Env{
 			Stdin: stdin, Stdout: stdout, Stderr: stderr, Store: f.store, StateDir: f.stateDir,
+			ProgramPath: "/usr/bin/true", Runner: fixtureServiceRunner{}, ServiceDir: f.serviceDir, ControlClient: fixtureControlClient{stateDir: f.stateDir},
 		}, pair.New(pair.Options{RequestTimeout: 300 * time.Millisecond, PollInterval: 10 * time.Millisecond}))
 		_ = stdin.Close()
 	}()
 	return run
+}
+
+type fixtureServiceRunner struct{}
+
+func (fixtureServiceRunner) Run(context.Context, string, ...string) (string, error) { return "", nil }
+
+func (fixtureServiceRunner) Stream(context.Context, io.Writer, string, ...string) error { return nil }
+
+type fixtureControlClient struct{ stateDir string }
+
+func (client fixtureControlClient) Status(context.Context) (control.StatusAnswer, error) {
+	return control.StatusAnswer{State: "reconnecting", Server: "http://localhost"}, nil
+}
+
+func (client fixtureControlClient) Connect(context.Context) (control.ConnectAnswer, error) {
+	record, exists, err := workerstate.ReadState(client.stateDir)
+	if err != nil {
+		return control.ConnectAnswer{}, fmt.Errorf("read state for fake daemon: %w", err)
+	}
+	if !exists {
+		return control.ConnectAnswer{}, errors.New("state for fake daemon is missing")
+	}
+	record.Connect = true
+	if err := workerstate.WriteState(client.stateDir, record); err != nil {
+		return control.ConnectAnswer{}, fmt.Errorf("write state for fake daemon: %w", err)
+	}
+	return control.ConnectAnswer{Result: "connected"}, nil
 }
 
 func TestPairingHappyPath(t *testing.T) {
@@ -319,9 +346,9 @@ func runHappyPath(t *testing.T) secretAudit {
 		t.Fatal("approval API did not return the pairing code")
 	}
 	pairingCode := approval.PairingCode
-	waitFor(t, run.stdout, "Code: ")
-	writeCode(t, run, pairingCode)
-	if code := awaitRun(t, run); code != 0 {
+	waitFor(t, run.stdout, "Code: ", quickWait)
+	writeCode(t, run, pairingCode, quickWait)
+	if code := awaitRun(t, run, quickWait); code != 0 {
 		t.Fatalf("worker exit = %d, want 0; stdout=%q stderr=%q", code, run.stdout.String(), run.stderr.String())
 	}
 	if !strings.Contains(run.stdout.String(), "✓ Paired successfully.") {
@@ -340,7 +367,7 @@ func runHappyPath(t *testing.T) secretAudit {
 	}
 	entry, entryExists, err := f.store.Get()
 	if err != nil || !entryExists || entry.Server != f.serverURL || entry.Credential.Reveal() == "" {
-		t.Fatalf("secret store entry = %#v, exists=%t, error=%v; want server and credential", entry, entryExists, err)
+		t.Fatalf("credential file entry = %#v, exists=%t, error=%v; want server and credential", entry, entryExists, err)
 	}
 	assertCredentialAbsentFromFiles(t, f.stateDir, entry.Credential.Reveal())
 	audit := f.audit(approvalKey, pairingCode, run)
@@ -357,7 +384,7 @@ func runReject(t *testing.T) secretAudit {
 	approvalKey := waitForApprovalKey(t, run.stdout)
 	_ = approvalRequest(t, f.serverURL, approvalKey, http.MethodPost, "/reject")
 	approval := waitForApprovalStatus(t, f.serverURL, approvalKey, "rejected")
-	if code := awaitRun(t, run); code != 1 {
+	if code := awaitRun(t, run, quickWait); code != 1 {
 		t.Fatalf("worker exit = %d, want 1; stdout=%q", code, run.stdout.String())
 	}
 	if !strings.Contains(run.stdout.String(), "✗ Pairing was rejected in the browser.") {
@@ -377,18 +404,18 @@ func runFiveWrongCodes(t *testing.T) secretAudit {
 	_ = approvalRequest(t, f.serverURL, approvalKey, http.MethodPost, "/accept")
 	approval := waitForApprovalStatus(t, f.serverURL, approvalKey, "waiting_for_code")
 	pairingCode := approval.PairingCode
-	waitFor(t, run.stdout, "Code: ")
+	waitFor(t, run.stdout, "Code: ", quickWait)
 	wrongCode := "0000-0000"
 	if wrongCode == approval.PairingCode {
 		wrongCode = "1111-1111"
 	}
 	for triesLeft := 4; triesLeft > 0; triesLeft-- {
-		writeCode(t, run, wrongCode)
-		waitFor(t, run.stdout, fmt.Sprintf("Wrong code. %d tries left.", triesLeft))
+		writeCode(t, run, wrongCode, quickWait)
+		waitFor(t, run.stdout, fmt.Sprintf("Wrong code. %d tries left.", triesLeft), quickWait)
 	}
-	writeCode(t, run, wrongCode)
+	writeCode(t, run, wrongCode, quickWait)
 	approval = waitForApprovalStatus(t, f.serverURL, approvalKey, "failed")
-	if code := awaitRun(t, run); code != 1 {
+	if code := awaitRun(t, run, quickWait); code != 1 {
 		t.Fatalf("worker exit = %d, want 1; stdout=%q", code, run.stdout.String())
 	}
 	if !strings.Contains(run.stdout.String(), "✗ Too many wrong codes. Pairing failed.") {
@@ -410,8 +437,8 @@ func runCtrlCAfterSavingThenFinish(t *testing.T) secretAudit {
 	_ = approvalRequest(t, f.serverURL, approvalKey, http.MethodPost, "/accept")
 	approval := waitForApprovalStatus(t, f.serverURL, approvalKey, "waiting_for_code")
 	pairingCode := approval.PairingCode
-	waitFor(t, run.stdout, "Code: ")
-	writeCode(t, run, pairingCode)
+	waitFor(t, run.stdout, "Code: ", quickWait)
+	writeCode(t, run, pairingCode, quickWait)
 	select {
 	case <-f.proxy.heldAck:
 	case <-time.After(quickWait):
@@ -428,7 +455,7 @@ func runCtrlCAfterSavingThenFinish(t *testing.T) secretAudit {
 	assertCredentialAbsentFromFiles(t, f.stateDir, entry.Credential.Reveal())
 	cancel()
 	close(f.proxy.releaseAck)
-	if code := awaitRun(t, run); code != 130 {
+	if code := awaitRun(t, run, quickWait); code != 130 {
 		t.Fatalf("cancelled worker exit = %d, want 130; stdout=%q", code, run.stdout.String())
 	}
 	if !strings.Contains(run.stdout.String(), "Pairing cancelled before it was confirmed.") ||
@@ -438,7 +465,7 @@ func runCtrlCAfterSavingThenFinish(t *testing.T) secretAudit {
 
 	f.proxy.setHoldAck(false)
 	resume := f.startWorker(context.Background())
-	if code := awaitRun(t, resume); code != 0 {
+	if code := awaitRun(t, resume, quickWait); code != 0 {
 		t.Fatalf("finish worker exit = %d, want 0; stdout=%q", code, resume.stdout.String())
 	}
 	if !strings.Contains(resume.stdout.String(), "✓ Paired successfully.") {
@@ -457,14 +484,14 @@ func runLostAcknowledgmentThenFinish(t *testing.T) secretAudit {
 	_ = approvalRequest(t, f.serverURL, approvalKey, http.MethodPost, "/accept")
 	approval := waitForApprovalStatus(t, f.serverURL, approvalKey, "waiting_for_code")
 	pairingCode := approval.PairingCode
-	waitFor(t, run.stdout, "Code: ")
-	writeCode(t, run, pairingCode)
+	waitFor(t, run.stdout, "Code: ", quickWait)
+	writeCode(t, run, pairingCode, quickWait)
 	select {
 	case <-f.proxy.threeAcks:
 	case <-time.After(quickWait):
 		t.Fatal("proxy did not observe three acknowledgment requests")
 	}
-	if code := awaitRun(t, run); code != 1 {
+	if code := awaitRun(t, run, quickWait); code != 1 {
 		t.Fatalf("worker exit = %d, want 1; stdout=%q", code, run.stdout.String())
 	}
 	if got := f.proxy.ackRequests(); got != 3 {
@@ -482,7 +509,7 @@ func runLostAcknowledgmentThenFinish(t *testing.T) secretAudit {
 		}
 	}
 	resume := f.startWorker(context.Background())
-	if code := awaitRun(t, resume); code != 0 {
+	if code := awaitRun(t, resume, quickWait); code != 0 {
 		t.Fatalf("finish worker exit = %d, want 0; stdout=%q", code, resume.stdout.String())
 	}
 	if !strings.Contains(resume.stdout.String(), "✓ Paired successfully.") {
@@ -542,7 +569,7 @@ func waitForApprovalStatus(t *testing.T, serverURL, key, wanted string) approval
 
 func waitForApprovalKey(t *testing.T, output *safeBuffer) string {
 	t.Helper()
-	waitFor(t, output, "/pair/")
+	waitFor(t, output, "/pair/", quickWait)
 	for _, line := range strings.Split(output.String(), "\n") {
 		line = strings.TrimSpace(line)
 		parsed, err := url.Parse(line)
@@ -555,49 +582,6 @@ func waitForApprovalKey(t *testing.T, output *safeBuffer) string {
 	}
 	t.Fatalf("approval URL not found in worker output: %q", output.String())
 	return ""
-}
-
-func waitFor(t *testing.T, output *safeBuffer, text string) {
-	t.Helper()
-	deadline := time.Now().Add(quickWait)
-	for time.Now().Before(deadline) {
-		if strings.Contains(output.String(), text) {
-			return
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	t.Fatalf("worker output did not contain %q before timeout: %q", text, output.String())
-}
-
-func writeCode(t *testing.T, run *workerRun, code string) {
-	t.Helper()
-	written := make(chan error, 1)
-	go func() {
-		_, err := io.WriteString(run.input, code+"\n")
-		written <- err
-	}()
-	select {
-	case err := <-written:
-		if err != nil {
-			t.Fatalf("write code to worker: %v", err)
-		}
-	case <-time.After(quickWait):
-		_ = run.input.Close()
-		t.Fatalf("worker did not read code within %s", quickWait)
-	}
-}
-
-func awaitRun(t *testing.T, run *workerRun) int {
-	t.Helper()
-	select {
-	case code := <-run.done:
-		_ = run.input.Close()
-		return code
-	case <-time.After(quickWait):
-		_ = run.input.Close()
-		t.Fatalf("worker did not exit; stdout=%q stderr=%q", run.stdout.String(), run.stderr.String())
-		return -1
-	}
 }
 
 func (f *fixture) audit(approvalKey, pairingCode string, runs ...*workerRun) secretAudit {
@@ -656,25 +640,7 @@ func assertNoSecretLeaks(t *testing.T, audit secretAudit) {
 	}
 }
 
-func assertCredentialAbsentFromFiles(t *testing.T, stateDir, credential string) {
+func assertCredentialAbsentFromFiles(t *testing.T, stateDir, credentialValue string) {
 	t.Helper()
-	err := filepath.WalkDir(stateDir, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if bytes.Contains(data, []byte(credential)) {
-			t.Errorf("credential was written to local file %q", path)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("inspect state directory: %v", err)
-	}
+	assertCredentialInPrivateStateFile(t, stateDir, credentialValue)
 }

@@ -6,7 +6,9 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -15,10 +17,12 @@ const loopbackAddressError = "SERVER_ADDR must be a loopback address (127.0.0.1,
 
 // Config contains the settings used to run the server.
 type Config struct {
-	ServerAddr  string
-	PublicURL   string
-	DatabaseURL string
-	APIDocs     bool
+	ServerAddr        string
+	PublicURL         string
+	DatabaseURL       string
+	APIDocs           bool
+	CheckInterval     time.Duration
+	ConnectionTimeout time.Duration
 }
 
 // LoadConfig loads .env from the working directory and validates server settings.
@@ -54,12 +58,41 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	checkInterval, connectionTimeout, err := connectionTimingFromEnvironment()
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
-		ServerAddr:  addr,
-		PublicURL:   publicURL,
-		DatabaseURL: databaseURL,
-		APIDocs:     apiDocs,
+		ServerAddr:        addr,
+		PublicURL:         publicURL,
+		DatabaseURL:       databaseURL,
+		APIDocs:           apiDocs,
+		CheckInterval:     checkInterval,
+		ConnectionTimeout: connectionTimeout,
 	}, nil
+}
+
+func connectionTimingFromEnvironment() (time.Duration, time.Duration, error) {
+	interval := 10
+	if raw := os.Getenv("TERVI_CHECK_INTERVAL_SECONDS"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 60 {
+			return 0, 0, fmt.Errorf("TERVI_CHECK_INTERVAL_SECONDS must be a whole number of seconds, from 1 to 60")
+		}
+		interval = value
+	}
+	timeout := 30
+	if raw := os.Getenv("TERVI_CONNECTION_TIMEOUT_SECONDS"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= interval {
+			return 0, 0, fmt.Errorf("TERVI_CONNECTION_TIMEOUT_SECONDS must be a whole number of seconds, greater than TERVI_CHECK_INTERVAL_SECONDS")
+		}
+		timeout = value
+	}
+	if timeout <= interval {
+		return 0, 0, fmt.Errorf("TERVI_CONNECTION_TIMEOUT_SECONDS must be a whole number of seconds, greater than TERVI_CHECK_INTERVAL_SECONDS")
+	}
+	return time.Duration(interval) * time.Second, time.Duration(timeout) * time.Second, nil
 }
 
 func apiDocsFromEnvironment(value string) (bool, error) {

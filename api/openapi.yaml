@@ -233,7 +233,6 @@ paths:
       tags: [worker]
       summary: Open the machine's connection (WebSocket)
       operationId: openConnection
-      x-planned: true
       description: |
         A WebSocket opening request. The credential is checked first; an
         unknown credential, or one whose machine is not `active`, gets `401`
@@ -285,7 +284,6 @@ paths:
       tags: [browser]
       summary: Every paired machine, for the Machines page
       operationId: listMachines
-      x-planned: true
       description: |
         Only `active` machines, sorted by `display_name`. No proof yet: the
         server has no sign-in (spec R27).
@@ -307,7 +305,6 @@ paths:
       tags: [browser]
       summary: The Machines page (HTML)
       operationId: machinesPage
-      x-planned: true
       description: Reads `/api/v1/machines` when it opens and every 5 seconds after.
       security: []
       responses:
@@ -427,7 +424,7 @@ components:
     credential:
       type: http
       scheme: bearer
-      description: The machine credential from the code answer. Saved by the worker in the OS secret store.
+      description: The machine credential from the code answer. Saved by the worker in ~/.config/tervi/credential.json, readable only by the user's own account.
 
   schemas:
     Error:

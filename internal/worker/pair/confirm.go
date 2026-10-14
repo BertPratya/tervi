@@ -65,8 +65,8 @@ func (f *pairingFlow) saveFailed(ctx context.Context, env cli.Env, entry credent
 		if ctx.Err() != nil {
 			return cancelAfterSaving(env, entry.Server)
 		}
-		fmt.Fprintln(output(env), "✗ Couldn't remove the partly saved secret store entry.")
-		fmt.Fprintln(output(env), "  Make sure you are logged in to a desktop session and the keyring is unlocked, then run the same command again.")
+		fmt.Fprintf(output(env), "✗ Couldn't remove the partly saved %s.\n", credential.Path(env.StateDir))
+		fmt.Fprintln(output(env), "  Delete it, then run the same command again.")
 		return 1
 	}
 	if ctx.Err() != nil {
@@ -164,6 +164,9 @@ func (f *pairingFlow) confirm(ctx context.Context, env cli.Env, entry credential
 			if ctx.Err() != nil {
 				return cancelAfterSaving(env, entry.Server)
 			}
+			if env.OnPairingSuccess != nil {
+				env.OnPairingSuccess(entry)
+			}
 			fmt.Fprintln(output(env), "✓ Paired successfully.")
 			return 0
 		case "expired":
@@ -199,8 +202,7 @@ func (f *pairingFlow) cleanupAndReport(ctx context.Context, env cli.Env, entry c
 		if ctx.Err() != nil {
 			return cancelAfterSaving(env, entry.Server)
 		}
-		fmt.Fprintln(output(env), "✗ Can't delete the secret store entry.")
-		fmt.Fprintln(output(env), "  Make sure you are logged in to a desktop session and the keyring is unlocked.")
+		fmt.Fprintf(output(env), "✗ Can't delete %s.\n", credential.Path(env.StateDir))
 		return 1
 	}
 	if ctx.Err() != nil {

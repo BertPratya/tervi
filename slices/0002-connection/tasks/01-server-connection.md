@@ -39,7 +39,8 @@ the shared message types both sides use.
 - R24. The server shall record when it last heard from each machine: when it
   connects, at least once a minute while connected, and when the connection
   ends (the time of the last message received). "Last seen" may be up to one
-  minute early if the server itself stopped suddenly.
+  minute early if the server itself stopped suddenly, or if the machine had
+  stopped answering when the server stopped.
 - R25. The credential shall never appear in terminal output, logs, the
   Machines page, or `state.json`. *This task: server logs.*
 - R34. When the server answers `internal_error`, it shall log what kind of
@@ -147,8 +148,24 @@ runs behind the existing Host check like every route.
    - `ping` → send `pong`.
    - An unknown `type` is ignored. A message that is not a JSON object with a
      string `type` closes the connection with `1008`.
-   - When a message arrives and `last_seen_at` was last written a minute or
-     more ago, write `last_seen_at = now()`.
+   - When a message arrives and `last_seen_at` was last written
+     `60 seconds − check interval` or more ago (50 seconds with the default
+     interval; every message when the interval is 60), write
+     `last_seen_at = now()`. A write that fails does not count as written,
+     so the next message tries again. (Decided by the user during task 01:
+     the first rule, "a minute or more ago", could leave a gap of nearly 70
+     seconds.)
+
+   **When something fails after the WebSocket opens** (added during task 01
+   review): the server never sends a close code that `api/asyncapi.yaml`
+   does not list.
+   - A `last_seen_at` write that fails (in step 5, step 6, or step 8) is
+     logged with `httpapi.LogInternalError` and kind `"write last seen"`;
+     the connection stays open.
+   - A failed socket write (`hello` or `pong`) means the connection is
+     already broken: end it with `CloseNow()`, which sends no close code.
+   - A `hello` that cannot be encoded is logged with kind `"send hello"`,
+     and the connection ends with `CloseNow()`.
 7. Timeout: when nothing has been received for the timeout (counted from the
    last message received, or from when the connection opened), close with
    `4001`.
@@ -186,6 +203,13 @@ read at the same moment (protect it with a mutex; run its tests with
   `CloseAll` (or a second call to it) waits for that connection's handler
   too, within the same 5 seconds. A server that keeps running never calls
   `CloseAll`.
+- **One 5-second limit for the whole stop** (decided by the user during
+  the slice review): the server's stop never takes much more than 5
+  seconds, however many times `Run` calls `CloseAll`. All the calls share
+  one deadline that starts at the first call. A connection whose worker
+  does not answer the `1001` close before the deadline is closed at once
+  (`CloseNow`); its final `last_seen_at` write still runs if the deadline
+  allows. Today a silent worker can make the stop take about 15 seconds.
 
 Every machine is Offline after a restart because the list starts empty.
 
@@ -228,8 +252,10 @@ Never log the credential, the `Authorization` header, or the hash.
   `test/contract/contract_test.go`, `test/e2e/pairing_test.go` (only the
   `server.New` call), `.env.example` (the two settings),
   `api/openapi.yaml` (only the `x-planned` line of `openConnection`),
-  `go.mod`, `go.sum`.
-- Must not change: anything under `internal/worker/`,
+  `go.mod`, `go.sum`, `internal/server/httpapi/` (only to add
+  `LogInternalError(logger, kind, err)`, which `WriteInternalError` calls,
+  and its test; added during task 01 review).
+- Must not change: anything under `internal/worker/`, anything else in
   `internal/server/httpapi/` (report a missing piece instead),
   `internal/server/pairing/`, `internal/server/web/`, `design/`, `slices/`
   except this task's row in `plan.md`.
@@ -247,12 +273,15 @@ Never log the credential, the `Authorization` header, or the hash.
 | `TestClientCloseNoticedAtOnce` — a client close removes the entry at once | R12 |
 | `TestCloseAllOnStop` — cancelling `Run`'s context closes every connection with `1001`, and each connection's final `last_seen_at` is written before `Run` returns | R12, R24 |
 | `TestAddAfterCloseAll` — a connection added after `CloseAll` is closed at once with `1001`, is never Online, and its handler is waited for | R12, R24 |
+| `TestCloseAllSharesDeadlineAndForcesClose` — three `CloseAll` calls with a worker that never answers the close finish within about 5 s together, and the connection is closed with `CloseNow` (added in fix 1) | R12 |
+| `TestRunBoundsStopWhenWorkerDoesNotAnswerClose` — `Run` returns within about 5 s after its context ends while a worker never answers the close (added in fix 1) | R12 |
+| `TestLastSeenThresholdUsesTenSecondInterval` — with a 10 s interval, a message at 50 s − 1 ms does not write and one at 50 s does (added in fix 1) | R24 |
 | `TestNotAnUpgradeRequest` — a known credential without the upgrade headers, or with a missing or malformed `Sec-WebSocket-Key`, gets `400 invalid_input` in JSON | contract |
 | `TestNewestWins` — a second connection for the same machine closes the first with `4000`, logs the warning with the machine id, and the machine stays Online | R15 |
 | `TestReplacedCloseKeepsNewEntry` — the old connection's end does not remove the new entry | R15, R23 |
 | `TestListSafeUnderLoad` — many goroutines add, replace, remove, and read at once, under `go test -race` | R15, R23 |
 | `TestOnlineListStartsEmpty` | R23 |
-| `TestLastSeen` — set on connect; rewritten on a message only after a minute (use an injected clock); set to the last message time when the connection ends, using the database's clock | R24 |
+| `TestLastSeen` — set on connect; rewritten on a message only once `60 s − check interval` has passed since the last write, and not before (use an injected clock); set to the last message time when the connection ends, using the database's clock | R24 |
 | `TestOversizedMessageCloses` | contract rule |
 | `TestUnknownTypeIgnored` | contract rule |
 | `TestCredentialNeverLogged` — the log output of every test above contains no credential | R25 |

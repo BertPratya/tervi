@@ -8,11 +8,16 @@ import (
 	"path/filepath"
 )
 
-// State is the non-secret local record used to recover an interrupted pairing.
+// StopReasonCredentialRejected is the persisted reason for a rejected credential.
+const StopReasonCredentialRejected = "credential_rejected"
+
+// State is the non-secret local record for pairing and connection lifecycle.
 type State struct {
-	MachineID       string `json:"machine_id"`
-	CredentialSaved bool   `json:"credential_saved"`
-	Confirmed       bool   `json:"confirmed"`
+	MachineID       string  `json:"machine_id"`
+	CredentialSaved bool    `json:"credential_saved"`
+	Confirmed       bool    `json:"confirmed"`
+	Connect         bool    `json:"connect"`
+	StopReason      *string `json:"stop_reason"`
 }
 
 // StatePath returns the path to the worker state file in dir.

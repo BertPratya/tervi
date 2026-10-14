@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/bertpratya/tervi/internal/worker/control"
 	"github.com/bertpratya/tervi/internal/worker/credential"
 	"github.com/bertpratya/tervi/internal/worker/state"
 )
@@ -27,15 +29,21 @@ type flowRecorder struct {
 	finishCode  int
 }
 
-func (f *flowRecorder) StartNew(_ context.Context, _ Env, server string) int {
+func (f *flowRecorder) StartNew(_ context.Context, env Env, server string) int {
 	f.startCalls++
 	f.server = server
+	if f.startCode == 0 {
+		fmt.Fprintln(env.Stdout, "✓ Paired successfully.")
+	}
 	return f.startCode
 }
 
-func (f *flowRecorder) FinishEarlier(_ context.Context, _ Env, entry credential.Entry) int {
+func (f *flowRecorder) FinishEarlier(_ context.Context, env Env, entry credential.Entry) int {
 	f.finishCalls++
 	f.entry = entry
+	if f.finishCode == 0 {
+		fmt.Fprintln(env.Stdout, "✓ Paired successfully.")
+	}
 	return f.finishCode
 }
 
@@ -75,7 +83,7 @@ func usageEnv(t *testing.T) (Env, *countingBackend, *trapReader, *bytes.Buffer, 
 }
 
 func TestUsageErrors(t *testing.T) {
-	usage := "Usage: tervi pair --server <url>\n"
+	usage := "Usage: tervi pair --server <url>\n       tervi connect\n       tervi status\n       tervi logs [-f]\n       tervi daemon\n"
 	cases := []struct {
 		name string
 		args []string
@@ -92,6 +100,8 @@ func TestUsageErrors(t *testing.T) {
 		{"flag before command", []string{"--server", "x", "pair"}, "Unknown command: --server\n" + usage},
 		{"unknown argument", []string{"pair", "extra"}, "Unknown argument: extra\n" + usage},
 		{"unknown command", []string{"other"}, "Unknown command: other\n" + usage},
+		{"daemon with flag", []string{"daemon", "--foo"}, usage},
+		{"daemon with argument", []string{"daemon", "anything"}, usage},
 		{"short help after pair", []string{"pair", "-h"}, usage},
 		{"help after pair", []string{"pair", "--help"}, usage},
 		{"help before pair", []string{"--help", "pair"}, usage},
@@ -117,7 +127,7 @@ func TestUsageErrors(t *testing.T) {
 				t.Errorf("usage handling did work: reads=%d flow=%+v", stdin.reads, flow)
 			}
 			if backend.gets != 0 || backend.sets != 0 || backend.deletes != 0 {
-				t.Errorf("usage handling touched secret store: %+v", backend)
+				t.Errorf("usage handling touched credential file: %+v", backend)
 			}
 			if _, err := os.Stat(env.StateDir); !os.IsNotExist(err) {
 				t.Errorf("usage handling touched state directory: stat error %v", err)
@@ -126,18 +136,197 @@ func TestUsageErrors(t *testing.T) {
 	}
 	for _, args := range [][]string{{"pair", "--server=http://localhost"}, {"pair", "--server", "http://localhost"}} {
 		var stdout, stderr bytes.Buffer
-		env := Env{Stdin: bytes.NewReader(nil), Stdout: &stdout, Stderr: &stderr, Store: credential.NewStore(credential.NewMemoryBackend()), StateDir: filepath.Join(t.TempDir(), "state")}
+		t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+		env := Env{
+			Stdin: bytes.NewReader(nil), Stdout: &stdout, Stderr: &stderr, Store: credential.NewStore(credential.NewMemoryBackend()), StateDir: filepath.Join(t.TempDir(), "state"),
+			ProgramPath: "/usr/bin/true", Runner: &commandRunner{}, ServiceDir: t.TempDir(), ControlClient: &commandControl{connect: control.ConnectAnswer{Result: "connected"}},
+		}
 		flow := &flowRecorder{}
 		if code := Run(context.Background(), args, env, flow); code != 0 {
-			t.Errorf("Run(%q) = %d, want 0", args, code)
+			t.Errorf("Run(%q) = %d, want success", args, code)
 		}
 		if flow.startCalls != 1 || flow.server != "http://localhost" {
 			t.Errorf("flow = %+v, want one start at standard address", flow)
 		}
-		if stdout.Len() != 0 || stderr.Len() != 0 {
-			t.Errorf("unexpected output: stdout=%q stderr=%q", stdout.String(), stderr.String())
+		wantOutput := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n"
+		if stdout.String() != wantOutput || stderr.Len() != 0 {
+			t.Errorf("output: stdout=%q stderr=%q, want stdout=%q", stdout.String(), stderr.String(), wantOutput)
 		}
 	}
+}
+
+func TestUsage(t *testing.T) {
+	usage := "Usage: tervi pair --server <url>\n       tervi connect\n       tervi status\n       tervi logs [-f]\n       tervi daemon\n"
+	env, _, _, stdout, stderr := usageEnv(t)
+	if code := Run(context.Background(), []string{"daemon", "--unexpected"}, env, nil); code != 2 {
+		t.Fatalf("Run() = %d, want 2", code)
+	}
+	if stderr.String() != usage || stdout.Len() != 0 {
+		t.Errorf("stderr=%q stdout=%q, want full usage and no stdout", stderr.String(), stdout.String())
+	}
+	var out, errOut bytes.Buffer
+	usageEnv := Env{Stdout: &out, Stderr: &errOut}
+	if code := Run(context.Background(), []string{"logs", "extra"}, usageEnv, nil); code != 2 || out.Len() != 0 || errOut.String() != usage {
+		t.Errorf("Run(logs extra) = code %d, stdout %q, stderr %q", code, out.String(), errOut.String())
+	}
+}
+
+func TestSecondDaemonExits(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	firstEnv, _, _, _, _ := usageEnv(t)
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	firstDone := make(chan int, 1)
+	go func() { firstDone <- Run(firstCtx, []string{"daemon"}, firstEnv, nil) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := (control.Client{RuntimeDir: mustRuntimeDir(t)}).Status(context.Background()); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancelFirst()
+			t.Fatal("first daemon socket did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	secondEnv, _, _, secondStdout, secondStderr := usageEnv(t)
+	if code := Run(context.Background(), []string{"daemon"}, secondEnv, nil); code != 0 {
+		cancelFirst()
+		t.Fatalf("second daemon Run() = %d, want 0", code)
+	}
+	want := "tervi is already running in the background.\n"
+	if secondStdout.String() != want || secondStderr.Len() != 0 {
+		cancelFirst()
+		t.Errorf("second daemon stdout=%q stderr=%q, want %q and empty", secondStdout.String(), secondStderr.String(), want)
+	}
+	if _, err := (control.Client{RuntimeDir: mustRuntimeDir(t)}).Status(context.Background()); err != nil {
+		cancelFirst()
+		t.Fatalf("second daemon affected first daemon: %v", err)
+	}
+	cancelFirst()
+	if code := <-firstDone; code != 0 {
+		t.Errorf("first daemon Run() = %d, want 0", code)
+	}
+}
+
+func TestDaemonCommandStops(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	env, _, _, stdout, stderr := usageEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int, 1)
+	go func() { done <- Run(ctx, []string{"daemon"}, env, nil) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := (control.Client{RuntimeDir: mustRuntimeDir(t)}).Status(context.Background()); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("daemon socket did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Errorf("daemon Run() = %d, want 0", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("daemon did not stop after context cancellation")
+	}
+	if stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Errorf("stdout=%q stderr=%q, want empty", stdout.String(), stderr.String())
+	}
+	if _, err := (control.Client{RuntimeDir: mustRuntimeDir(t)}).Status(context.Background()); !errors.Is(err, control.ErrNotRunning) {
+		t.Errorf("Status() after stop error = %v, want ErrNotRunning", err)
+	}
+}
+
+func TestDaemonPrintsLogLines(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	env, _, _, stdout, stderr := usageEnv(t)
+	if err := state.WriteState(env.StateDir, state.State{MachineID: "machine", CredentialSaved: true, Confirmed: true, Connect: true}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int, 1)
+	go func() { done <- Run(ctx, []string{"daemon"}, env, nil) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		answer, err := (control.Client{RuntimeDir: mustRuntimeDir(t)}).Status(context.Background())
+		if err == nil && answer.LastError != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("daemon did not attempt a connection: status=%+v err=%v", answer, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	if code := <-done; code != 0 {
+		t.Fatalf("daemon Run() = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), "Next try in") {
+		t.Errorf("stdout = %q, want a connection log line", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestNoRuntimeFolder(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	env, _, _, stdout, stderr := usageEnv(t)
+	if code := Run(context.Background(), []string{"daemon"}, env, nil); code != 1 {
+		t.Fatalf("Run() = %d, want 1", code)
+	}
+	want := "✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).\n"
+	if stdout.String() != want || stderr.Len() != 0 {
+		t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
+	}
+	for _, command := range []string{"status", "connect"} {
+		t.Run(command, func(t *testing.T) {
+			runner := &commandRunner{}
+			client := &commandControl{}
+			env, _, stdout, stderr := commandEnv(t, runner, client, true)
+			t.Setenv("XDG_RUNTIME_DIR", "")
+			if code := Run(context.Background(), []string{command}, env, nil); code != 1 {
+				t.Fatalf("Run(%s) = %d, want 1", command, code)
+			}
+			if stdout.String() != want || stderr.Len() != 0 || client.statusCalls != 0 || client.connectCalls != 0 || len(runner.calls) != 0 {
+				t.Errorf("Run(%s) = stdout %q stderr %q status calls %d connect calls %d systemctl %v", command, stdout.String(), stderr.String(), client.statusCalls, client.connectCalls, runner.calls)
+			}
+		})
+	}
+}
+
+func TestDaemonUnexpectedFailure(t *testing.T) {
+	runtimeBase := filepath.Join(t.TempDir(), strings.Repeat("r", 110))
+	if err := os.MkdirAll(runtimeBase, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtimeBase)
+	env, _, _, stdout, stderr := usageEnv(t)
+	if code := Run(context.Background(), []string{"daemon"}, env, nil); code != 1 {
+		t.Fatalf("Run() = %d, want 1", code)
+	}
+	got := stdout.String()
+	if !strings.HasPrefix(got, "✗ tervi stopped unexpectedly: ") || !strings.Contains(got, "listen on daemon socket") {
+		t.Errorf("stdout = %q, want unexpected failure with socket error reason", got)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func mustRuntimeDir(t *testing.T) string {
+	t.Helper()
+	path, err := control.RuntimeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestStateFileBroken(t *testing.T) {
@@ -188,17 +377,18 @@ func TestStepZero(t *testing.T) {
 		wantEntryExists bool
 	}{
 		{name: "missing both", wantCode: 0, start: 1},
-		{name: "missing state", entry: entryRaw(server), wantOut: "Found incomplete pairing data: the secret store entry exists, but state.json is missing.\n" + baseMessage, wantCode: 0, start: 1},
+		{name: "missing state", entry: entryRaw(server), wantOut: "Found incomplete pairing data: credential.json exists, but state.json is missing.\n" + baseMessage, wantCode: 0, start: 1},
 		{name: "saved false but entry missing", state: &state.State{MachineID: "m"}, wantOut: "The earlier pairing was interrupted before the credential was saved.\n" + baseMessage, wantCode: 0, start: 1},
 		{name: "saved false and entry exists", state: &state.State{MachineID: "m"}, entry: entryRaw(server), wantCode: 0, finish: 1, wantState: &state.State{MachineID: "m", CredentialSaved: true}, wantStateExists: true, wantEntry: entryRaw(server), wantEntryExists: true},
 		{name: "saved true and entry exists", state: &state.State{MachineID: "m", CredentialSaved: true}, entry: entryRaw(server), wantCode: 0, finish: 1, wantState: &state.State{MachineID: "m", CredentialSaved: true}, wantStateExists: true, wantEntry: entryRaw(server), wantEntryExists: true},
-		{name: "saved true but entry missing", state: &state.State{MachineID: "m", CredentialSaved: true}, wantOut: "Found incomplete pairing data: state.json exists, but the secret store entry is missing.\n" + baseMessage, wantCode: 0, start: 1},
+		{name: "saved true but entry missing", state: &state.State{MachineID: "m", CredentialSaved: true}, wantOut: "Found incomplete pairing data: state.json exists, but credential.json is missing.\n" + baseMessage, wantCode: 0, start: 1},
 		{name: "confirmed", state: &state.State{MachineID: "m", CredentialSaved: true, Confirmed: true}, entry: entryRaw(server), wantOut: "This computer is already paired with http://localhost. Nothing was changed.\n", wantCode: 1, wantState: &state.State{MachineID: "m", CredentialSaved: true, Confirmed: true}, wantStateExists: true, wantStateSame: true, wantEntry: entryRaw(server), wantEntryExists: true},
-		{name: "damaged entry", state: &state.State{MachineID: "m"}, entry: "damaged json", wantOut: "Found a damaged secret store entry for tervi.\n" + baseMessage, wantCode: 0, start: 1},
+		{name: "damaged entry", state: &state.State{MachineID: "m"}, entry: "damaged json", wantOut: "Found a damaged {{credential}}.\n" + baseMessage, wantCode: 0, start: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
+			wantOut := strings.ReplaceAll(tc.wantOut, "{{credential}}", credential.Path(dir))
 			backend := credential.NewMemoryBackend()
 			if tc.state != nil {
 				if err := state.WriteState(dir, *tc.state); err != nil {
@@ -221,6 +411,9 @@ func TestStepZero(t *testing.T) {
 			env, stdout, stderr := runEnv(t, dir, backend)
 			flow := &flowRecorder{}
 			code := Run(context.Background(), []string{"pair", "--server", "HTTP://LOCALHOST/"}, env, flow)
+			if code == 0 && flow.startCalls+flow.finishCalls > 0 {
+				wantOut += "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n"
+			}
 			if code != tc.wantCode || flow.startCalls != tc.start || flow.finishCalls != tc.finish {
 				t.Errorf("Run()=%d flow=%+v; want code=%d start=%d finish=%d", code, flow, tc.wantCode, tc.start, tc.finish)
 			}
@@ -230,8 +423,8 @@ func TestStepZero(t *testing.T) {
 			if flow.finishCalls > 0 && (flow.entry.Server != server || flow.entry.Credential.Reveal() != testCredential) {
 				t.Errorf("FinishEarlier received an unexpected entry")
 			}
-			if got := stdout.String(); got != tc.wantOut {
-				t.Errorf("stdout = %q, want %q", got, tc.wantOut)
+			if got := stdout.String(); got != wantOut {
+				t.Errorf("stdout = %q, want %q", got, wantOut)
 			}
 			if stderr.Len() != 0 {
 				t.Errorf("stderr = %q, want empty", stderr.String())
@@ -297,7 +490,7 @@ func TestStepZeroOtherServerChangesNothing(t *testing.T) {
 				t.Errorf("unexpected flow calls: %+v", flow)
 			}
 			if _, ok := backend.Value("worker"); !ok {
-				t.Error("secret store entry changed")
+				t.Error("credential file entry changed")
 			}
 			assertNoCredential(t, stdout.String(), stderr.String())
 		})
@@ -312,7 +505,7 @@ func TestUnusableStoreStopsBeforeFlow(t *testing.T) {
 	if code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow); code != 1 {
 		t.Fatalf("Run() = %d, want 1", code)
 	}
-	want := "✗ Can't use this computer's secret store (GNOME Keyring). Pairing needs it to keep the credential safe.\n  Make sure you are logged in to a desktop session and the keyring is unlocked.\n"
+	want := fmt.Sprintf("✗ Can't write %s.\n", credential.Path(env.StateDir))
 	if stdout.String() != want || stderr.Len() != 0 || flow.startCalls != 0 {
 		t.Errorf("stdout=%q stderr=%q flow=%+v", stdout.String(), stderr.String(), flow)
 	}
@@ -390,7 +583,7 @@ func TestCtrlCDuringStepZero(t *testing.T) {
 			t.Errorf("stdout=%q stderr=%q flow=%+v", stdout.String(), stderr.String(), flow)
 		}
 	})
-	t.Run("cancelled during secret store check", func(t *testing.T) {
+	t.Run("cancelled during credential file check", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		backend := &cancelSetBackend{MemoryBackend: credential.NewMemoryBackend(), cancel: cancel}
@@ -403,7 +596,7 @@ func TestCtrlCDuringStepZero(t *testing.T) {
 			t.Errorf("stdout=%q stderr=%q flow=%+v", stdout.String(), stderr.String(), flow)
 		}
 		if backend.gets != 1 || backend.deletes != 0 {
-			t.Errorf("secret store operations after cancellation: gets=%d deletes=%d", backend.gets, backend.deletes)
+			t.Errorf("credential file operations after cancellation: gets=%d deletes=%d", backend.gets, backend.deletes)
 		}
 	})
 }
@@ -461,7 +654,7 @@ func TestDamagedEntryWins(t *testing.T) {
 			if code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow); code != 0 {
 				t.Fatalf("Run() = %d, want 0", code)
 			}
-			want := "Found a damaged secret store entry for tervi.\n  Removed the leftover pairing data. Starting a new pairing.\n"
+			want := fmt.Sprintf("Found a damaged %s.\n  Removed the leftover pairing data. Starting a new pairing.\n✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n", credential.Path(dir))
 			if stdout.String() != want || stderr.Len() != 0 || flow.startCalls != 1 || flow.finishCalls != 0 {
 				t.Errorf("stdout=%q stderr=%q flow=%+v", stdout.String(), stderr.String(), flow)
 			}
@@ -482,8 +675,8 @@ func TestLeftoverThenStartNew(t *testing.T) {
 		entry bool
 		msg   string
 	}{
-		{"A", nil, true, "Found incomplete pairing data: the secret store entry exists, but state.json is missing."},
-		{"B", &state.State{MachineID: "m", CredentialSaved: true}, false, "Found incomplete pairing data: state.json exists, but the secret store entry is missing."},
+		{"A", nil, true, "Found incomplete pairing data: credential.json exists, but state.json is missing."},
+		{"B", &state.State{MachineID: "m", CredentialSaved: true}, false, "Found incomplete pairing data: state.json exists, but credential.json is missing."},
 		{"D", &state.State{MachineID: "m"}, false, "The earlier pairing was interrupted before the credential was saved."},
 	}
 	for _, tc := range cases {
@@ -501,7 +694,7 @@ func TestLeftoverThenStartNew(t *testing.T) {
 			if code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow); code != 0 {
 				t.Fatalf("Run() = %d, want 0", code)
 			}
-			want := tc.msg + "\n  Removed the leftover pairing data. Starting a new pairing.\n"
+			want := tc.msg + "\n  Removed the leftover pairing data. Starting a new pairing.\n✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n✓ Connected.\n"
 			if stdout.String() != want || stderr.Len() != 0 || flow.startCalls != 1 {
 				t.Errorf("stdout=%q stderr=%q flow=%+v, want %q and StartNew", stdout.String(), stderr.String(), flow, want)
 			}
@@ -516,7 +709,7 @@ func TestLeftoverThenStartNew(t *testing.T) {
 }
 
 func TestLeftoverDeleteFails(t *testing.T) {
-	t.Run("secret store delete", func(t *testing.T) {
+	t.Run("credential file delete", func(t *testing.T) {
 		dir := t.TempDir()
 		_ = state.WriteState(dir, state.State{MachineID: "m"})
 		backend := credential.NewMemoryBackend()
@@ -527,7 +720,7 @@ func TestLeftoverDeleteFails(t *testing.T) {
 		if code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow); code != 1 {
 			t.Fatalf("Run() = %d, want 1", code)
 		}
-		want := "✗ Can't delete the secret store entry.\n  Make sure you are logged in to a desktop session and the keyring is unlocked.\n"
+		want := fmt.Sprintf("✗ Can't delete %s.\n", credential.Path(dir))
 		if stdout.String() != want || stderr.Len() != 0 || flow.startCalls != 0 {
 			t.Errorf("stdout=%q stderr=%q flow=%+v", stdout.String(), stderr.String(), flow)
 		}
@@ -574,8 +767,12 @@ func TestCredentialNeverPrinted(t *testing.T) {
 
 func runEnv(t *testing.T, dir string, backend credential.Backend) (Env, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	var stdout, stderr bytes.Buffer
-	return Env{Stdin: bytes.NewReader(nil), Stdout: &stdout, Stderr: &stderr, Store: credential.NewStore(backend), StateDir: dir}, &stdout, &stderr
+	return Env{
+		Stdin: bytes.NewReader(nil), Stdout: &stdout, Stderr: &stderr, Store: credential.NewStore(backend), StateDir: dir,
+		Runner: &commandRunner{}, ProgramPath: "/usr/bin/true", ServiceDir: t.TempDir(), ControlClient: &commandControl{connect: control.ConnectAnswer{Result: "connected"}},
+	}, &stdout, &stderr
 }
 
 func assertNoCredential(t *testing.T, streams ...string) {

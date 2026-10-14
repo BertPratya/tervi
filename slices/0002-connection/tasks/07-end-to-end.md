@@ -46,7 +46,8 @@ a fake that runs the real daemon in the same test process.
 - R24. The server shall record when it last heard from each machine: when it
   connects, at least once a minute while connected, and when the connection
   ends (the time of the last message received). "Last seen" may be up to one
-  minute early if the server itself stopped suddenly.
+  minute early if the server itself stopped suddenly, or if the machine had
+  stopped answering when the server stopped.
 - R25. The credential shall never appear in terminal output, logs, the
   Machines page, or `state.json`.
 - R33. When `tervi pair` runs on a computer whose credential was rejected
@@ -141,6 +142,14 @@ address.
    `connect: false` and `stop_reason: "credential_rejected"`, and
    `tervi status` shows the R16 rejection lines. `tervi pair` then prints the
    R33 line and a new pairing completes and connects.
+   The new pairing connects through the **first daemon, still running and
+   not restarted** (added during task 07 review). After the re-pair, assert:
+   - the fake systemd recorded `--user enable --now tervi` for the re-pair,
+     and no second `restart`;
+   - the second daemon the fake started exited with `0`, and the daemon log
+     has `tervi is already running in the background.`;
+   - the first daemon is still running, and a `✓ Connected to <server>` line
+     follows the rejection line in its log.
 5. **No secrets.** Across every scenario, no terminal output, daemon log,
    server log, list answer, or `state.json` contains the credential.
 
@@ -171,3 +180,16 @@ pass. This task's row in `plan.md` changes to `done`.
 ## If anything is unclear
 
 Stop and report the question. Do not guess.
+
+## Decision during building: the credential file and linger (fix 4)
+
+The credential moved from the OS secret store to the private file
+`~/.config/tervi/credential.json` (spec R35, R36), and pairing turns on
+linger (R5). R10's line is now
+`✓ tervi now runs in the background and starts when the computer starts.`,
+and R33 removes `credential.json` instead of the secret store entry. Both
+worker fixtures in this task's tests use the real file backend on the
+test's state folder instead of the in-memory store, and
+`TestNoSecretsEndToEnd` also checks the file's mode and that the credential
+is in no other file. Task 05's section "Decision during building: the
+credential file and linger (fix 4)" has the full instruction.

@@ -182,7 +182,8 @@ picked up. Then:
 | No confirmed `state.json`, or no secret store entry | `not_paired` |
 | `state.json` cannot be read or parsed | `still_trying` with the last error `can't read state.json`; nothing is written, and the loop stays idle |
 | Already connected | `already_connected` (nothing changes) |
-| Otherwise (including a secret store that cannot be read, or a damaged entry) | Writes `connect: true`, `stop_reason: null`; wakes the loop; waits until connected (`connected`), rejected (`rejected`), or 30 seconds or `ctx` end (`still_trying`, with the last error, for example `can't read the secret store`) |
+| Otherwise (including a secret store that cannot be read, or a damaged entry) | Writes `connect: true`, `stop_reason: null`; wakes the loop; waits until connected (`connected`), rejected (`rejected`), or 30 seconds or `ctx` end (`still_trying`, with the last error, for example `can't read the secret store`; no last error if no try has failed yet) |
+| Writing `connect: true` to `state.json` fails | `failed`, with the path of `state.json`. Nothing changes: the loop is not woken and stays as it was. (Decided by the user during task 03.) |
 
 ### `Status()`
 
@@ -204,6 +205,11 @@ failed:
   none before any try has failed.
 
 `server` is read from the secret store entry, never from `state.json`.
+While `reconnecting`, `server` is the last server the daemon read; it is
+empty if the daemon has not read one yet (for example, the keyring was
+locked from the start). The daemon never answers `not_connecting` while
+`connect` is true: an unknown server does not change the state (added
+during fix 1; `tervi status` fills in the server, see task 05).
 
 ### Error texts
 
@@ -216,6 +222,7 @@ The same error has one text, written in two ways:
 | An HTTP answer other than `101` and the rejection | `the server answered <status code>` | `The server answered <status code>` |
 | The secret store cannot be read | `can't read the secret store` | `Can't read the secret store` |
 | The secret store entry is damaged | `the secret store entry is damaged` | `The secret store entry is damaged` |
+| The secret store entry is missing (`state.json` is confirmed) — decided by the user during task 03 | `the secret store entry is missing` | `The secret store entry is missing` |
 | `state.json` cannot be read or parsed (only in `Connect`) | `can't read state.json` | — (never logged as a try) |
 | Any other network error | Go's error text, first letter lower-case | the same, first letter upper-case |
 
@@ -230,7 +237,7 @@ Each line starts with the local time `15:04:05` and a space. Exact texts:
 | Connected | `✓ Connected to <server>` |
 | Lost | `✗ Connection lost: <reason>` |
 | A try starts | `… Reconnecting (try <n>)` |
-| A try failed | `✗ <error>. Next try in <s> seconds` |
+| A try failed | `✗ <error>. Next try in <s> seconds` (`1 second` when `<s>` is 1, decided by the user during the slice review) |
 | Rejected | `✗ The server doesn't accept this computer's credential. Pair again with: tervi pair --server <server>` |
 
 `<reason>`: `the server is stopping` (1001), `replaced by a newer connection`
@@ -269,14 +276,16 @@ injected clock and `Rand`, and short test timings.
 | `TestReconnectWaits` — after a loss: wait before try 1, then 2, 4, 8, 16, 30, 30 s as bases; the first try after start has no wait; the logged "Next try in" is the wait before the next try; with `Rand` 0 and almost 1 each wait is within 0.8–1.2 × base; the count resets after `hello` | R9, R8 |
 | `TestStoreUnreadableIsFailedTry` — while `connect` is true, an unreadable store, a damaged entry, and a missing entry each give a failed try with its log line and wait, `connect` stays true, and the next try reads the store again and connects | R2, R5 |
 | `TestStatusWhileTrying` — `Status` during a try under way (`next_try_in_seconds` 0) and before any failure (no last error) | R16 support |
+| `TestStatusReconnectsWhenCredentialFileIsUnreadable`, `TestRefreshStateKeepsLastServer` — with the store unreadable, `Status` is `reconnecting` with its last error, never `not_connecting`; the last server read is kept (added in fix 1) | R2, R16 support |
 | `TestErrorTexts` — each failure's `last error` and log forms from the table | R8, R16 support |
+| `TestSecondsText` — `1 second` for 1, `2 seconds` for 2, the one rule the log and `tervi status` share (added in fix 1) | R8, R16 support |
 | `TestPaired` — `credential.Paired` for: paired; no `state.json`; not confirmed; no entry; unreadable store; damaged entry | R4, R16 support |
 | `TestKeepsTryingForever` — many failed tries never stop the loop or change `connect` | R2, R19 |
 | `TestOnlyUnknownCredentialStops` — `500`, `404`, other `401` bodies, refused connections, and timeouts all lead to another try | R19 |
 | `TestRejectionStops` — `401 unknown_credential` stops trying, writes `connect: false` and `stop_reason`, logs the line | R18 |
 | `TestConnectAfterRejection` — `Connect` tries again; a second rejection stops again | R20 |
 | `TestIdleWhileConnectFalse` — no network activity while `connect` is false; `Status` still answers | R3 |
-| `TestDaemonConnectResults` — `not_paired`, `already_connected`, `connected`, `rejected`, `still_trying` after 30 s (injected clock), and `still_trying` with `can't read state.json` for an unreadable `state.json`, which is left byte-for-byte unchanged | R3, R20, R4 |
+| `TestDaemonConnectResults` — `not_paired`, `already_connected`, `connected`, `rejected`, `still_trying` after 30 s (injected clock), and `still_trying` with `can't read state.json` for an unreadable `state.json`, which is left byte-for-byte unchanged; `failed` with the path when writing `state.json` fails, and the loop is not woken (no dial) | R3, R20, R4 |
 | `TestUnreadableStateStaysIdle` — with an unparsable `state.json`, `Run` stays idle with no network, writes nothing, and `Status` is `not_connecting` | R3 |
 | `TestConnectReadsNewPairing` — after the pairing changes, `Connect` uses the new server and credential | R20 |
 | `TestStateKeepsPairingFields` — writing `connect` keeps the other fields; a file without `connect` reads as false | R1 data rule |
@@ -296,3 +305,17 @@ to `done`.
 ## If anything is unclear
 
 Stop and report the question. Do not guess.
+
+## Decision during building: the credential file (fix 4)
+
+The credential moved from the OS secret store to the private file
+`~/.config/tervi/credential.json` (spec R35, R36). For this task's code it
+changes only the "Error texts" table: the four credential texts become
+`credential.json is missing`, `credential.json is damaged`,
+`can't read credential.json`, and the new
+`other users may be able to read credential.json`, which is a failed try
+like any other. Where this file says "secret store", read
+`credential.json`; the reason given above for reading it on every try
+(GNOME Keyring unlocking after login) no longer applies, but the rule
+stays: a fixed file is picked up on the next try. Task 05's section "Decision during building: the credential
+file and linger (fix 4)" has the full instruction and its tests.

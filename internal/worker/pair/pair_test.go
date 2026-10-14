@@ -150,7 +150,7 @@ func TestCannotReach(t *testing.T) {
 		t.Errorf("state directory exists after failed start: %v", err)
 	}
 	if _, exists := backend.Value("worker"); exists {
-		t.Error("secret store entry exists after failed start")
+		t.Error("credential file entry exists after failed start")
 	}
 }
 
@@ -612,7 +612,7 @@ func runCancelledFlow(t *testing.T, server *httptest.Server, requested <-chan st
 		t.Errorf("state directory exists after cancellation: %v", err)
 	}
 	if _, exists := backend.Value("worker"); exists {
-		t.Error("secret store entry exists after cancellation")
+		t.Error("credential file entry exists after cancellation")
 	}
 	if got := requests.Load(); got != int32(wantRequests) {
 		t.Errorf("server received %d requests, want exactly %d", got, wantRequests)

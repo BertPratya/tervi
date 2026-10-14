@@ -22,7 +22,8 @@ for offline machines, refreshing every 5 seconds.
 - R24. The server shall record when it last heard from each machine: when it
   connects, at least once a minute while connected, and when the connection
   ends (the time of the last message received). "Last seen" may be up to one
-  minute early if the server itself stopped suddenly. *This task: showing
+  minute early if the server itself stopped suddenly, or if the machine had
+  stopped answering when the server stopped. *This task: showing
   it.*
 - R25. The credential shall never appear in terminal output, logs, the
   Machines page, or `state.json`. *This task: the Machines page and its
@@ -106,6 +107,17 @@ When a request fails: keep the last list and show `Can't reach the server. Tryin
 above it until a request succeeds. Names come from the computer, so insert
 them as text, never as HTML.
 
+Screen readers (decided by the user during the slice review): only the
+`Can't reach the server. Trying again…` line is announced (`aria-live`
+on that line alone), so a screen reader does not read the whole list aloud
+on every 5-second refresh. That line is one element written in
+`machines.html`, outside the part each refresh rebuilds; a refresh only sets
+its text (the failure message, or empty), and only when the text changes,
+so an outage is announced once, not every 5 seconds. A live region created
+together with its text is often not announced at all (added in fix 2). The
+line stays in the page's centered column, under the `Machines` heading,
+as before.
+
 ### Contract
 
 Remove `x-planned: true` from `listMachines` and `machinesPage` in
@@ -133,6 +145,7 @@ return `200` and `403`, with at least one machine in the answer.
 | `TestListHasNoCredential` — the answer has no credential or hash | R25 |
 | `TestListDatabaseFailure` — a database failure answers `500 internal_error`, and the server log has the kind `list machines` | R34 |
 | `TestMachinesPageServed` — `/machines` and its scripts answer with the right types and headers; the test file answers `404` | R21 |
+| `TestMachinesPageAnnouncesOnlyFailureLineAndPreservesRowSpacing` — one failure line, already on the page and outside the part that refreshes, is the only `aria-live` region; rows keep their spacing (added in fix 1, changed in fix 2) | R21, R22 |
 | `machines-view.test.js` — each row form, every `<time ago>` boundary (59, 60, 3599, 3600, 86399, 86400), the empty state, the failure line, and that a name with `<b>` is shown as text | R21, R22 |
 | `machines-view.test.js` — `REFRESH_MS` is `5000` | R22 |
 | Contract test — `listMachines` and `machinesPage` return `200` and `403`; no `x-planned` left on them | contract |

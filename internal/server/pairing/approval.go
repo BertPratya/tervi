@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/bertpratya/tervi/internal/secret"
+	"github.com/bertpratya/tervi/internal/server/httpapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -21,21 +22,21 @@ type approvalRow struct {
 }
 
 func (deps Deps) readApproval(w http.ResponseWriter, r *http.Request) {
-	proof, ok := bearerProof(r)
+	proof, ok := httpapi.BearerProof(r)
 	if !ok {
-		writeError(w, http.StatusNotFound, "invalid_link")
+		httpapi.WriteError(w, http.StatusNotFound, "invalid_link")
 		return
 	}
 	row, err := queryApproval(r.Context(), deps.Pool, secret.Hash(secret.FromString(proof)))
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "invalid_link")
+		httpapi.WriteError(w, http.StatusNotFound, "invalid_link")
 		return
 	}
 	if err != nil {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, "read approval", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, approvalBody(row, false))
+	httpapi.WriteJSON(w, http.StatusOK, approvalBody(row, false))
 }
 
 func (deps Deps) accept(w http.ResponseWriter, r *http.Request) {
@@ -47,9 +48,13 @@ func (deps Deps) reject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (deps Deps) decide(w http.ResponseWriter, r *http.Request, accept bool) {
-	proof, ok := bearerProof(r)
+	kind := "reject approval"
+	if accept {
+		kind = "accept approval"
+	}
+	proof, ok := httpapi.BearerProof(r)
 	if !ok {
-		writeError(w, http.StatusNotFound, "invalid_link")
+		httpapi.WriteError(w, http.StatusNotFound, "invalid_link")
 		return
 	}
 	approvalHash := secret.Hash(secret.FromString(proof))
@@ -58,7 +63,7 @@ func (deps Deps) decide(w http.ResponseWriter, r *http.Request, accept bool) {
 	if accept {
 		code, generationErr := secret.NewPairingCode()
 		if generationErr != nil {
-			writeInternalError(w)
+			httpapi.WriteInternalError(w, deps.Logger, kind, generationErr)
 			return
 		}
 		err = deps.Pool.QueryRow(r.Context(), `UPDATE pairing_requests
@@ -76,24 +81,24 @@ func (deps Deps) decide(w http.ResponseWriter, r *http.Request, accept bool) {
 			&row.status, &row.hostname, &row.osName, &row.osVersion, &row.pairingCode, &row.failureReason, &row.displayName)
 	}
 	if err == nil {
-		writeJSON(w, http.StatusOK, approvalBody(row, false))
+		httpapi.WriteJSON(w, http.StatusOK, approvalBody(row, false))
 		return
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, kind, err)
 		return
 	}
 
 	row, err = queryApproval(r.Context(), deps.Pool, approvalHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "invalid_link")
+		httpapi.WriteError(w, http.StatusNotFound, "invalid_link")
 		return
 	}
 	if err != nil {
-		writeInternalError(w)
+		httpapi.WriteInternalError(w, deps.Logger, kind, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, approvalBody(row, row.status != "expired"))
+	httpapi.WriteJSON(w, http.StatusOK, approvalBody(row, row.status != "expired"))
 }
 
 func queryApproval(ctx context.Context, pool *pgxpool.Pool, approvalHash []byte) (approvalRow, error) {

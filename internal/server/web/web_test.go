@@ -57,6 +57,79 @@ func TestStaticFilesServed(t *testing.T) {
 	assertPageHeaders(t, recorder)
 }
 
+func TestMachinesPageServed(t *testing.T) {
+	mux := http.NewServeMux()
+	Register(mux)
+
+	page := webRequest(t, mux, http.MethodGet, "/machines")
+	if page.Code != http.StatusOK {
+		t.Fatalf("GET /machines status = %d, want %d", page.Code, http.StatusOK)
+	}
+	if !strings.Contains(page.Header().Get("Content-Type"), "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", page.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(page.Body.String(), "Machines") {
+		t.Error("page does not contain its Machines heading")
+	}
+	assertPageHeaders(t, page)
+
+	for _, path := range []string{"/static/machines.js", "/static/machines-view.js"} {
+		t.Run(path, func(t *testing.T) {
+			recorder := webRequest(t, mux, http.MethodGet, path)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("GET %s status = %d, want %d", path, recorder.Code, http.StatusOK)
+			}
+			if !strings.Contains(recorder.Header().Get("Content-Type"), "javascript") {
+				t.Errorf("Content-Type = %q, want JavaScript", recorder.Header().Get("Content-Type"))
+			}
+			assertPageHeaders(t, recorder)
+		})
+	}
+
+	testFile := webRequest(t, mux, http.MethodGet, "/static/machines-view.test.js")
+	if testFile.Code != http.StatusNotFound {
+		t.Errorf("GET /static/machines-view.test.js status = %d, want %d", testFile.Code, http.StatusNotFound)
+	}
+	assertPageHeaders(t, testFile)
+}
+
+func TestMachinesPageAnnouncesOnlyFailureLineAndPreservesRowSpacing(t *testing.T) {
+	page, err := staticFiles.ReadFile("static/machines.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageText := string(page)
+	const failureLine = `<p class="warning" aria-live="polite"></p>`
+	if strings.Count(pageText, "aria-live=") != 1 || !strings.Contains(pageText, failureLine) {
+		t.Fatal("Machines page must have one empty polite live region for the failure line")
+	}
+	mainStart := strings.Index(pageText, `<main>`)
+	mainEnd := strings.Index(pageText, `</main>`)
+	failureIndex := strings.Index(pageText, failureLine)
+	headingIndex := strings.Index(pageText, `<h1>Machines</h1>`)
+	appIndex := strings.Index(pageText, `<div id="app">`)
+	if mainStart < 0 || mainEnd < 0 || headingIndex < mainStart || headingIndex > failureIndex || failureIndex > mainEnd {
+		t.Fatal("failure line must be under the heading inside the centered main column")
+	}
+	if appIndex < 0 || failureIndex > appIndex {
+		t.Fatal("failure line must be outside the part of the page that render replaces")
+	}
+	script, err := staticFiles.ReadFile("static/machines.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scriptText := string(script)
+	if !strings.Contains(scriptText, `failureLine.textContent !== page.failureMessage`) || !strings.Contains(scriptText, `failureLine.textContent = page.failureMessage;`) || strings.Contains(scriptText, `aria-live`) {
+		t.Fatal("render must update the existing failure line only when its text changes")
+	}
+	if !strings.Contains(scriptText, `const app = document.querySelector('#app');`) || !strings.Contains(scriptText, `app.replaceChildren();`) {
+		t.Fatal("render must replace only the inner app content, leaving the failure line in place")
+	}
+	if !strings.Contains(pageText, `white-space: pre-wrap;`) {
+		t.Fatal("machine rows do not preserve their spacing")
+	}
+}
+
 func TestPageLoadsNothingExternal(t *testing.T) {
 	checkEmbeddedFiles(t, func(path string, contents []byte) {
 		if strings.Contains(string(contents), "http://") || strings.Contains(string(contents), "https://") {

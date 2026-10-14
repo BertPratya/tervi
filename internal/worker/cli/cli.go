@@ -5,20 +5,34 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
+	"github.com/bertpratya/tervi/internal/worker/control"
 	"github.com/bertpratya/tervi/internal/worker/credential"
+	"github.com/bertpratya/tervi/internal/worker/service"
 	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
-const usageLine = "Usage: tervi pair --server <url>"
+const usageLine = "Usage: tervi pair --server <url>\n       tervi connect\n       tervi status\n       tervi logs [-f]\n       tervi daemon"
 
 // Env supplies the worker's local inputs, outputs, and state locations.
 type Env struct {
-	Stdin          io.Reader
-	Stdout, Stderr io.Writer
-	Store          *credential.Store
-	StateDir       string
+	Stdin            io.Reader
+	Stdout, Stderr   io.Writer
+	Store            *credential.Store
+	StateDir         string
+	Runner           service.Runner
+	ProgramPath      string
+	ServiceDir       string
+	ControlClient    ControlClient
+	OnPairingSuccess func(credential.Entry)
+}
+
+// ControlClient is the private client used by commands to talk to the daemon.
+type ControlClient interface {
+	Status(ctx context.Context) (control.StatusAnswer, error)
+	Connect(ctx context.Context) (control.ConnectAnswer, error)
 }
 
 // Flow runs the network portion of a new or resumed pairing.
@@ -89,6 +103,25 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 	if env.Stderr == nil {
 		env.Stderr = io.Discard
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if len(args) > 0 {
+		switch args[0] {
+		case "daemon":
+			if len(args) != 1 {
+				fmt.Fprintln(env.Stderr, usageLine)
+				return 2
+			}
+			return runDaemon(ctx, env)
+		case "connect":
+			return runConnect(ctx, args[1:], env)
+		case "status":
+			return runStatus(ctx, args[1:], env)
+		case "logs":
+			return runLogs(ctx, args[1:], env)
+		}
+	}
 	cmd, parseMessage, usageOnly := parseCommand(args)
 	if usageOnly || parseMessage != "" {
 		if parseMessage != "" {
@@ -97,8 +130,12 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		fmt.Fprintln(env.Stderr, usageLine)
 		return 2
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	if env.ProgramPath == "" {
+		return missingSetting(env.Stdout, "ProgramPath")
+	}
+	if service.IsTemporaryProgram(env.ProgramPath, os.TempDir()) {
+		fmt.Fprintln(env.Stdout, installRequiredMessage)
+		return 1
 	}
 	if cancelled(ctx, env.Stdout, false) {
 		return 130
@@ -109,7 +146,7 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		return 130
 	}
 	if err != nil {
-		fmt.Fprintf(env.Stdout, "✗ Can't read %s.\n", state.StatePath(env.StateDir))
+		printStateReadFailure(env.Stdout, env.StateDir)
 		return 1
 	}
 	if cancelled(ctx, env.Stdout, false) {
@@ -119,7 +156,7 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 	var entryExists bool
 	var entryErr error
 	if env.Store == nil {
-		entryErr = errors.New("secret store unavailable")
+		entryErr = errors.New("credential file unavailable")
 	} else {
 		entry, entryExists, entryErr = env.Store.Get()
 	}
@@ -127,19 +164,26 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 	if cancelled(ctx, env.Stdout, candidate, cmd.server) {
 		return 130
 	}
+	if errors.Is(entryErr, credential.ErrUnprotected) {
+		printUnprotectedCredential(env.Stdout, credential.Path(env.StateDir))
+		return 1
+	}
 	if errors.Is(entryErr, credential.ErrDamaged) {
-		return runLeftover(ctx, env, true, stateExists, "Found a damaged secret store entry for tervi.", true, cmd.server, flow)
+		return runLeftover(ctx, env, true, stateExists, fmt.Sprintf("Found a damaged %s.", credential.Path(env.StateDir)), true, cmd.server, flow)
 	}
 	if entryErr != nil {
-		printStoreReadFailure(env.Stdout)
+		printStoreReadFailure(env.Stdout, credential.Path(env.StateDir))
 		return 1
+	}
+	if stateExists && record.Confirmed && entryExists && record.StopReason != nil && *record.StopReason == state.StopReasonCredentialRejected {
+		return runRejectedRePair(ctx, env, flow, cmd.server)
 	}
 
 	if !stateExists && !entryExists {
 		return checkAndStart(ctx, env, flow, cmd.server)
 	}
 	if !stateExists && entryExists {
-		return runLeftover(ctx, env, true, false, "Found incomplete pairing data: the secret store entry exists, but state.json is missing.", true, cmd.server, flow)
+		return runLeftover(ctx, env, true, false, "Found incomplete pairing data: credential.json exists, but state.json is missing.", true, cmd.server, flow)
 	}
 	if stateExists && !record.CredentialSaved && !entryExists {
 		return runLeftover(ctx, env, false, true, "The earlier pairing was interrupted before the credential was saved.", true, cmd.server, flow)
@@ -167,10 +211,10 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		if flow == nil {
 			return 1
 		}
-		return flow.FinishEarlier(ctx, env, entry)
+		return runPairFinish(ctx, env, flow, entry)
 	}
 	if stateExists && record.CredentialSaved && !entryExists {
-		return runLeftover(ctx, env, false, true, "Found incomplete pairing data: state.json exists, but the secret store entry is missing.", true, cmd.server, flow)
+		return runLeftover(ctx, env, false, true, "Found incomplete pairing data: state.json exists, but credential.json is missing.", true, cmd.server, flow)
 	}
 	if stateExists && record.Confirmed && entryExists {
 		fmt.Fprintf(env.Stdout, "This computer is already paired with %s. Nothing was changed.\n", entry.Server)
@@ -194,17 +238,31 @@ func cancelled(ctx context.Context, output io.Writer, resumable bool, server ...
 	return true
 }
 
-func printStoreReadFailure(output io.Writer) {
-	fmt.Fprintln(output, "✗ Can't read the secret store entry.")
-	fmt.Fprintln(output, "  Make sure you are logged in to a desktop session and the keyring is unlocked.")
+func printStoreReadFailure(output io.Writer, path string) {
+	fmt.Fprintf(output, "✗ Can't read %s.\n", path)
 }
 
-func printStoreDeleteFailure(output io.Writer) {
-	fmt.Fprintln(output, "✗ Can't delete the secret store entry.")
-	fmt.Fprintln(output, "  Make sure you are logged in to a desktop session and the keyring is unlocked.")
+func requireRuntimeFolder(output io.Writer) bool {
+	if _, err := control.RuntimeDir(); errors.Is(err, control.ErrRuntimeDirNotSet) {
+		fmt.Fprintln(output, "✗ Can't find this session's runtime folder (XDG_RUNTIME_DIR is not set).")
+		return false
+	}
+	return true
 }
 
-func printUnusableStore(output io.Writer) {
-	fmt.Fprintln(output, "✗ Can't use this computer's secret store (GNOME Keyring). Pairing needs it to keep the credential safe.")
-	fmt.Fprintln(output, "  Make sure you are logged in to a desktop session and the keyring is unlocked.")
+func printStateReadFailure(output io.Writer, stateDir string) {
+	fmt.Fprintf(output, "✗ Can't read %s.\n", state.StatePath(stateDir))
+}
+
+func printStoreDeleteFailure(output io.Writer, path string) {
+	fmt.Fprintf(output, "✗ Can't delete %s.\n", path)
+}
+
+func printUnusableStore(output io.Writer, path string) {
+	fmt.Fprintf(output, "✗ Can't write %s.\n", path)
+}
+
+func printUnprotectedCredential(output io.Writer, path string) {
+	fmt.Fprintf(output, "✗ Other users may be able to read %s, so tervi won't use it.\n", path)
+	fmt.Fprintf(output, "  Make it private with: chmod 600 %s\n", path)
 }

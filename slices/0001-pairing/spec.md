@@ -76,6 +76,8 @@ protections, Windows, and sign-in.
   server it is paired with, change nothing, and stop.
 - R3. If the OS secret store cannot be used, then the worker shall say so and
   stop, before contacting the server.
+  *Superseded by slice 0002's R35: the credential is kept in a private file,
+  and an unwritable file stops pairing the same way.*
 - R4. If the server cannot be reached when starting, then the worker shall say
   so and stop.
 - R5. When pairing starts, the worker shall show the computer name, the OS, an
@@ -121,6 +123,9 @@ protections, Windows, and sign-in.
 - R17. When the correct code is typed, the worker shall receive its credential.
 - R18. The worker shall save the credential in the OS secret store, and never
   in a plain file, in terminal output, or in logs.
+  *Superseded by slice 0002's R35 and R36: the credential is kept only in
+  `~/.config/tervi/credential.json` (mode `0600`), and still never in
+  terminal output or logs.*
 - R19. When the credential is saved, the worker shall confirm with the server.
   Then the terminal shall show `✓ Paired successfully.`, and the browser shall
   show that the computer is paired, with its name and OS, and that the tab can
@@ -147,11 +152,15 @@ protections, Windows, and sign-in.
   credential shall never be sent to any server other than the one that issued
   it: the server address is saved with the credential in the OS secret store,
   and only that saved address decides where the credential may go.
+  *Since slice 0002's R35, the address is saved with the credential in
+  `credential.json`; the rule is unchanged.*
 - R31. If the local pairing data is incomplete or damaged (the state file
   without the secret store entry, the entry without the state file, or an
   entry that cannot be read as pairing data), then the worker shall remove
   what is left, say what it found and removed, and start a new pairing. If
   removing fails, then the worker shall say so and stop.
+  *Since slice 0002's R35, "the secret store entry" here is
+  `credential.json`; the rule is unchanged.*
 
 **Running the server**
 
@@ -240,6 +249,9 @@ None.
   pairs again.
 - The credential lives in the OS secret store, never in a file — other programs
   can read or copy files.
+  *Superseded in slice 0002 (fix 4): the secret store cannot be used over SSH
+  or without a desktop, so the credential moved to a file only the user can
+  read. See slice 0002's Decisions.*
 - An already-paired computer refuses to pair again — re-pairing needs crash
   recovery and unpairing, which come in later slices.
 - Database changes run only through a separate `migrate` command, never at

@@ -3,6 +3,7 @@ package server_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bertpratya/tervi/internal/server"
 )
@@ -12,6 +13,8 @@ func setConfigEnv(t *testing.T, addr, publicURL string) {
 	t.Setenv("DATABASE_URL", "postgres://localhost/tervi")
 	t.Setenv("SERVER_ADDR", addr)
 	t.Setenv("TERVI_PUBLIC_URL", publicURL)
+	t.Setenv("TERVI_CHECK_INTERVAL_SECONDS", "")
+	t.Setenv("TERVI_CONNECTION_TIMEOUT_SECONDS", "")
 }
 
 func TestDefaultListenAddress(t *testing.T) {
@@ -70,4 +73,61 @@ func TestPublicURL(t *testing.T) {
 	if cfg.PublicURL != "http://localhost:8080" {
 		t.Fatalf("PublicURL = %q, want %q", cfg.PublicURL, "http://localhost:8080")
 	}
+}
+
+func TestConnectionTimingSettings(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		setConfigEnv(t, "127.0.0.1:8080", "http://localhost:8080")
+		cfg, err := server.LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig() error = %v", err)
+		}
+		if cfg.CheckInterval != 10*time.Second || cfg.ConnectionTimeout != 30*time.Second {
+			t.Fatalf("timing = (%s, %s), want (10s, 30s)", cfg.CheckInterval, cfg.ConnectionTimeout)
+		}
+	})
+
+	t.Run("valid values", func(t *testing.T) {
+		setConfigEnv(t, "127.0.0.1:8080", "http://localhost:8080")
+		t.Setenv("TERVI_CHECK_INTERVAL_SECONDS", "4")
+		t.Setenv("TERVI_CONNECTION_TIMEOUT_SECONDS", "13")
+		cfg, err := server.LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig() error = %v", err)
+		}
+		if cfg.CheckInterval != 4*time.Second || cfg.ConnectionTimeout != 13*time.Second {
+			t.Fatalf("timing = (%s, %s), want (4s, 13s)", cfg.CheckInterval, cfg.ConnectionTimeout)
+		}
+	})
+
+	t.Run("interval above maximum", func(t *testing.T) {
+		setConfigEnv(t, "127.0.0.1:8080", "http://localhost:8080")
+		t.Setenv("TERVI_CHECK_INTERVAL_SECONDS", "61")
+		_, err := server.LoadConfig()
+		const want = "TERVI_CHECK_INTERVAL_SECONDS must be a whole number of seconds, from 1 to 60"
+		if err == nil || err.Error() != want {
+			t.Fatalf("LoadConfig() error = %v, want %q", err, want)
+		}
+	})
+
+	t.Run("interval must be whole seconds", func(t *testing.T) {
+		setConfigEnv(t, "127.0.0.1:8080", "http://localhost:8080")
+		t.Setenv("TERVI_CHECK_INTERVAL_SECONDS", "1.5")
+		_, err := server.LoadConfig()
+		const want = "TERVI_CHECK_INTERVAL_SECONDS must be a whole number of seconds, from 1 to 60"
+		if err == nil || err.Error() != want {
+			t.Fatalf("LoadConfig() error = %v, want %q", err, want)
+		}
+	})
+
+	t.Run("timeout must exceed interval", func(t *testing.T) {
+		setConfigEnv(t, "127.0.0.1:8080", "http://localhost:8080")
+		t.Setenv("TERVI_CHECK_INTERVAL_SECONDS", "5")
+		t.Setenv("TERVI_CONNECTION_TIMEOUT_SECONDS", "5")
+		_, err := server.LoadConfig()
+		const want = "TERVI_CONNECTION_TIMEOUT_SECONDS must be a whole number of seconds, greater than TERVI_CHECK_INTERVAL_SECONDS"
+		if err == nil || err.Error() != want {
+			t.Fatalf("LoadConfig() error = %v, want %q", err, want)
+		}
+	})
 }

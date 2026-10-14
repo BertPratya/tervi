@@ -68,19 +68,42 @@ Serve HTTP over the socket with `net/http`:
 | Request | Answer (JSON) |
 | --- | --- |
 | `GET /status` | `{"state": "connected", "server": "…", "since": "<RFC 3339>"}`, `{"state": "reconnecting", "server": "…", "try": 3, "next_try_in_seconds": 4, "last_error": "…"}`, `{"state": "not_connecting", "stop_reason": "credential_rejected"}` (or `null`), or `{"state": "not_paired"}` |
-| `POST /connect` | `{"result": "connected"}`, `already_connected`, `rejected`, `not_paired`, or `{"result": "still_trying", "last_error": "…"}` — from `Daemon.Connect` |
+| `POST /connect` | `{"result": "connected"}`, `already_connected`, `rejected`, `not_paired`, `{"result": "still_trying", "last_error": "…"}` (`last_error` is `null` if no try has failed yet), or `{"result": "failed", "path": "<path of state.json>"}` (`state.json` could not be written; added during task 03) — from `Daemon.Connect` |
 
 `next_try_in_seconds` is rounded to the nearest whole second, at least 0.
+`server` may be empty while `reconnecting` if the daemon has not read the
+secret store yet (see task 03, `Status()`; added in fix 1).
 `last_error` is `null` before any try has failed (see task 03's `Status`).
+A request that arrives while the daemon is stopping gets `503` with no
+body; the client treats it as `ErrNotRunning` (added in fix 1).
 
 ### The client
 
-In `internal/worker/control`, a client used by the commands:
-`Status(ctx) (StatusAnswer, error)` and `Connect(ctx) (ConnectAnswer, error)`.
+In `internal/worker/control`, a client used by the commands (tasks 05 and
+06 call it as `control.Client`):
+
+```go
+type Client struct {
+	RuntimeDir string // the runtime folder that holds daemon.sock
+}
+
+func (c Client) Status(ctx context.Context) (StatusAnswer, error)
+func (c Client) Connect(ctx context.Context) (ConnectAnswer, error)
+```
+
 When the socket file is missing or nothing answers, they return a
 recognisable `ErrNotRunning`. `Status` allows 5 seconds for the answer and
 returns `ErrNotRunning` when none comes (a frozen daemon must not make
 `tervi status` hang). `Connect` allows up to 35 seconds for the answer.
+
+Added during task 04 review:
+- If the caller's `ctx` ends (Ctrl+C), both return `ctx.Err()`, never
+  `ErrNotRunning`, so the commands can print their cancel message.
+- If `Connect` reached the socket but its own 35 seconds pass with no answer
+  (a second `tervi connect` can wait behind the first, which holds the
+  daemon for up to 30 seconds), it returns
+  `ConnectAnswer{Result: "still_trying"}` with no last error, not
+  `ErrNotRunning`: the daemon is running and trying.
 
 ### `tervi daemon` (R30)
 
@@ -102,7 +125,9 @@ takes no flags; anything after it is wrong usage (exit `2`, as in slice 1).
 `tervi daemon` takes the lock, opens the socket, and runs the engine with its
 log going to standard output, until the context ends. Then it closes the
 socket, removes `daemon.sock`, releases the lock, and exits with `0`. An
-unexpected failure exits with `1`.
+unexpected failure prints `✗ tervi stopped unexpectedly: <reason>`, where
+`<reason>` is the error's text, on standard output like the daemon's other
+lines, and exits with `1` (decided by the user during task 04).
 
 In `cmd/tervi/main.go`, stop on `SIGTERM` as well as `os.Interrupt`
 (systemd sends `SIGTERM`), and pass what the daemon needs (state folder,
@@ -127,8 +152,11 @@ secret store) through `cli.Env` or a similar existing pattern.
 | `TestRuntimeFolderPrivate` — the folder is `0700`, the socket and the lock file `0600` | R26 |
 | `TestOtherUserRefused` — the peer check refuses a different user id and accepts the same one | R26 |
 | `TestStatusOverSocket` — each state's JSON | R3 |
+| `TestStoppingHandlerReturnsServiceUnavailable`, `TestClientTreatsServiceUnavailableAsNotRunning` — a request while the daemon is stopping gets `503`, and the client reports `ErrNotRunning` (added in fix 1) | R3 |
 | `TestConnectOverSocket` — each result's JSON | R3 |
 | `TestClientNotRunning` — missing socket, refused socket, and a daemon that does not answer `Status` within 5 s give `ErrNotRunning` | R16 support |
+| `TestClientCancelAndSlowConnect` — a cancelled caller `ctx` gives `ctx.Err()` from both methods; a `Connect` that reaches the socket but gets no answer within its own limit (shortened in the test) gives `still_trying` with no last error | R3 |
+| `TestDaemonUnexpectedFailure` — when the socket cannot be opened, `tervi daemon` prints `✗ tervi stopped unexpectedly: <reason>` with the reason, and exits `1` | R30 |
 | `TestDaemonCommandStops` — cancelling the context makes `tervi daemon` exit `0` and remove the socket | R30 |
 | `TestDaemonPrintsLogLines` — the engine's lines appear on standard output | R8, R30 |
 | `TestNoRuntimeFolder` — the message and exit `1` | R30 |
@@ -145,3 +173,11 @@ to `done`.
 ## If anything is unclear
 
 Stop and report the question. Do not guess.
+
+## Decision during building: the credential file (fix 4)
+
+The credential moved from the OS secret store to the private file
+`~/.config/tervi/credential.json` (spec R35, R36). Where this file says
+"secret store", read `credential.json`. Nothing in this task's code changes;
+task 05's section "Decision during building: the credential file and
+linger (fix 4)" has the full instruction.
