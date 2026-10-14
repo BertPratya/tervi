@@ -276,7 +276,7 @@ func TestPairStillTrying(t *testing.T) {
 			if code := Run(context.Background(), []string{"pair", "--server", pairServer}, env, &flow); code != 0 {
 				t.Errorf("Run() = %d, want 0; output=%q", code, stdout.String())
 			}
-			want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n" + tc.line + "Check with: tervi status\n"
+			want := "✓ Paired successfully.\n✓ tervi now runs in the background and starts when the computer starts.\n" + tc.line + "  Check with: tervi status\n"
 			if stdout.String() != want || stderr.Len() != 0 {
 				t.Errorf("output=(%q,%q), want %q", stdout.String(), stderr.String(), want)
 			}
@@ -326,7 +326,7 @@ func TestPairServiceFails(t *testing.T) {
 	if code := Run(context.Background(), []string{"pair", "--server", pairServer}, env, &flow); code != 1 {
 		t.Fatalf("Run() = %d, want 1; output=%q", code, stdout.String())
 	}
-	want := "✓ Paired successfully.\n✗ Can't start tervi in the background: systemd could not start\nTry again with: tervi connect\n"
+	want := "✓ Paired successfully.\n✗ Can't start tervi in the background: systemd could not start\n  Try again with: tervi connect\n"
 	if stdout.String() != want || stderr.Len() != 0 {
 		t.Errorf("output=(%q,%q), want %q", stdout.String(), stderr.String(), want)
 	}
