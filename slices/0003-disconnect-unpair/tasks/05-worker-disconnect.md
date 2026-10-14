@@ -121,6 +121,13 @@ example allows.
 
 ### The socket: `internal/worker/control`
 
+The engine interface in `control` gets `Disconnect`, and the
+`ControlClient` interface in `internal/worker/cli/cli.go` gets
+`Disconnect(ctx context.Context) (control.DisconnectAnswer, error)`.
+`test/e2e/pairing_test.go`'s `fixtureControlClient` implements that
+interface, so add a `Disconnect` method to it (only that), or the e2e tests
+stop compiling.
+
 `POST /disconnect` calls the engine's `Disconnect` and answers
 `{"result": "<result>"}`, plus `"path"` for `failed`, with the same
 encoding pattern as `ConnectAnswer`. `Client.Disconnect(ctx)` calls it with
@@ -165,8 +172,9 @@ usage line.
 
 - May create or change: `internal/worker/control/`,
   `internal/worker/daemon/`, `internal/worker/cli/` (the new file, the
-  dispatch in `cli.go`, the usage line), `cmd/tervi/` (wiring only), their
-  tests.
+  dispatch in `cli.go`, the `ControlClient` interface, the usage line),
+  `cmd/tervi/` (wiring only), their tests, and `test/e2e/pairing_test.go`
+  (only adding `Disconnect` to `fixtureControlClient`).
 - Must not change: `internal/worker/state/` (use it),
   `internal/worker/service/`, `internal/worker/pair/`, anything under
   `internal/server/`, `api/`, `design/`, `slices/` except this task's row in

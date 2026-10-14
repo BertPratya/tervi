@@ -111,7 +111,11 @@ func LingerOn(ctx context.Context, runner Runner) (bool, error)
 `Stop` runs `systemctl --user disable --now tervi` when the service file
 exists. When it does not (for example, deleted by hand while systemd still
 runs the unit), it runs `systemctl --user stop tervi` instead, where
-"not loaded" (exit status `5`) counts as stopped. `RemoveFile` removes
+"not loaded" (exit status `5`) counts as stopped. Read the exit status with
+`errors.As(err, &coded)`, where `coded` is an
+`interface{ ExitCode() int }`: `*exec.ExitError` satisfies it, and the test
+fake returns an error type of its own that does. Never match the output
+text. `RemoveFile` removes
 `~/.config/systemd/user/tervi.service`, then always runs
 `systemctl --user daemon-reload`. Any other failure of a `systemctl`
 command is a real failure (R16). `LingerOn` runs
@@ -131,8 +135,10 @@ type Unpairer interface {
     TellServer(ctx context.Context, entry credential.Entry) UnpairAnswer
     // RemoveLocal does steps 2 and 3. A nil result means everything is gone.
     RemoveLocal(ctx context.Context, env Env) *RemoveFailure
-    // LingerOn does step 4; false when it cannot tell.
-    LingerOn(ctx context.Context) bool
+    // LingerOn does step 4 with service.LingerOn(ctx, env.Runner), so
+    // tests and the e2e fake runner control the answer; false when it
+    // cannot tell.
+    LingerOn(ctx context.Context, env Env) bool
 }
 
 // UnpairAnswer is the server's answer to the unpair request.
@@ -144,8 +150,9 @@ type UnpairAnswer struct {
 
 // RemoveFailure says what could not be removed.
 type RemoveFailure struct {
-    Background bool   // step 2 failed (stopping tervi, or the lock)
-    Path       string // step 3: the file that could not be deleted
+    Background bool   // Service.Stop, the lock, or daemon-reload failed
+    Path       string // a file that could not be deleted: the service file,
+                      // credential.json, a leftover, or state.json
     Reason     string // without the credential
 }
 ```
@@ -265,7 +272,7 @@ redaction used by `tervi connect`.
 | `TestUnpairLeftovers` — a service file and `state.json` but no `credential.json`; a damaged `credential.json`; one readable by others: no request, the leftovers question and success line, everything removed, with and without `--local-only` | R15, R16 |
 | `TestUnpairUnfinishedPairing` — a usable `credential.json` with `state.json` missing or not confirmed: the request is sent, `401` counts as done, everything removed, R11's success line | R13, R15 |
 | `TestDeleteLeftovers` — deletes `.credential-*` and `credential-check.json`, leaves other files, and a second call is a no-op | R11 |
-| `TestUnpairServiceFailure` and `TestUnpairDeleteFailure` — `systemctl` failing, a daemon that never lets go of the lock, and a file that cannot be deleted: what is left, `Finish with: tervi unpair --local-only`, exit `1`; a second run finishes | R16 |
+| `TestUnpairServiceFailure` and `TestUnpairDeleteFailure` — `systemctl` failing (also `daemon-reload`: `Can't stop tervi in the background`), a service file that cannot be deleted (`Can't delete <its path>`), and, as before, a daemon that never lets go of the lock, and a file that cannot be deleted: what is left, `Finish with: tervi unpair --local-only`, exit `1`; a second run finishes | R16 |
 | `TestUnpairRemovesSecretLeftovers` — a `.credential-x1y2` file holding the credential and a `credential-check.json` are deleted after `credential.json`, also with `--local-only`; another file in the folder, and the folder, stay | R11, R14 |
 | `TestUnpairNoSecret` — no output line contains the credential, and no file in `~/.config/tervi/` does afterwards | R11 |
 
