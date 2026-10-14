@@ -303,3 +303,58 @@ more.
   0002, and each reason keeps its own message.
   Not chosen: `"credential_rejected"` for both — `tervi status` could not
   tell them apart, so R21's message could not be shown.
+
+## Requirement coverage
+
+| Requirement | Tasks |
+| --- | --- |
+| R1 | 05, 08 |
+| R2 | 05, 08 |
+| R3 | 05 |
+| R4 | 05 |
+| R5 | 05 |
+| R6 | 05 |
+| R7 | 04, 05, 08 |
+| R8 | 05, 08 |
+| R9 | 05, 08 |
+| R10 | 06 |
+| R11 | 02, 06, 08 |
+| R12 | 02, 06 |
+| R13 | 02, 06 |
+| R14 | 06 |
+| R15 | 06 |
+| R16 | 06 |
+| R17 | 02 |
+| R18 | 01, 02, 08 |
+| R19 | 01, 02 |
+| R20 | 01, 04, 08 |
+| R21 | 04, 05, 08 |
+| R22 | 07 |
+| R23 | 03, 07 |
+| R24 | 03 |
+| R25 | 03 |
+| R26 | 03, 08 |
+| R27 | 03 |
+| R28 | 03 |
+| R29 | 03, 07 |
+| R30 | 02 |
+
+R8 and R9 need no new server code: a disconnect closes the connection with
+`1000`, and slice 2 already shows such a machine Offline and lets
+`tervi connect` connect again. Tasks 05 and 08 prove they still hold.
+
+## Tasks
+
+| # | Task | Depends on | Risk | Status |
+| --- | --- | --- | --- | --- |
+| 01 | [Server: credentials in their own table](tasks/01-server-credentials.md) | — | core | todo |
+| 02 | [Server: unpair and Revoke, and the Machines page's Revoke button](tasks/02-server-unpair-revoke.md) | 01 | core | todo |
+| 03 | [Server: recognizing a computer that pairs again, and the approval page](tasks/03-server-recognition.md) | 01 | core | todo |
+| 04 | [Worker: a revoked credential, and the state without a daemon](tasks/04-worker-revoked.md) | 01 | core | todo |
+| 05 | [Worker: `tervi disconnect`](tasks/05-worker-disconnect.md) | 04 | core | todo |
+| 06 | [Worker: `tervi unpair`](tasks/06-worker-unpair.md) | 02, 05 | core | todo |
+| 07 | [Worker: the computer's identity when pairing](tasks/07-worker-identity.md) | 03, 04 | core | todo |
+| 08 | [End-to-end test of disconnect, unpair, Revoke, and pairing again](tasks/08-end-to-end.md) | 01–07 | normal | todo |
+
+Tasks 02, 03, and 04 can be built at the same time once 01 is in; so can 06
+and 07 once their dependencies are.
