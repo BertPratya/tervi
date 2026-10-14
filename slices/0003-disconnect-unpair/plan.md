@@ -21,3 +21,21 @@ are recorded here as they are made.
   whenever tervi's files are, which is the case recognition is most needed
   for; the raw `/etc/machine-id` — systemd treats it as confidential, and
   sending it lets other software link the computer across services.
+- Only the program holding `$XDG_RUNTIME_DIR/tervi/daemon.lock` writes
+  `connect` and `stop_reason` in `state.json`. A running daemon holds it, so
+  `tervi disconnect` first tries to take the lock: if it gets it, no daemon
+  is running and none can start, so it writes `connect: false` itself and
+  lets go; if it cannot, it asks the running daemon (R1, R3) — there is
+  still one writer at a time, and R3 forbids starting the daemon just to
+  write. This replaces slice 0002's "only the daemon writes".
+  Not chosen: starting the daemon to write it, then stopping it — breaks
+  R3; a separate marker file such as `~/.config/tervi/disconnected` — two
+  files would answer "should I connect?" and could disagree.
+- `connect: false` with no `stop_reason` means the user disconnected; no
+  new value is added. A computer paired in slice 0001 that never ran
+  `tervi connect` is in the same state and also shows `○ Disconnected.`
+  (R7) — that message is true for it too, and one state is less to keep
+  correct.
+  Not chosen: a new `stop_reason: "disconnected"` — keeps slice 0002's
+  `○ Not connecting.` for that rare leftover case, at the cost of a third
+  state.

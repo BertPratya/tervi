@@ -117,7 +117,8 @@ page). It also lets the server recognize a computer that pairs again.
   `This computer isn't paired. Pair it with: tervi pair --server <url>`,
   change nothing, and exit with `1`.
 - R7. While the user has disconnected, `tervi status` shall show
-  `○ Disconnected.` then `  Connect with: tervi connect`, and exit with `1`.
+  `○ Disconnected.` then `  Connect with: tervi connect`, and exit with `1`,
+  also when tervi is not running in the background.
 - R8. While the user has disconnected, the Machines page shall show the
   computer as `Offline · last seen <time ago>`, as for any computer that is
   not connected.
