@@ -73,3 +73,9 @@ are recorded here as they are made.
   user's browser, but the user chose to keep this route as simple as
   possible until sign-in; a token the page sends back — more code for the
   same protection as the `Origin` check.
+- When a connected machine is revoked, the server closes its connection
+  with a new close code, `4002` ("revoked") — the worker learns at once
+  that it must stop, instead of reconnecting once only to be refused.
+  Not chosen: an existing code such as `1001` — it would say something
+  untrue ("the server is stopping"), and the worker would try once more
+  before stopping.
