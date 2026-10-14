@@ -524,3 +524,21 @@ the service folder.
 
 `go vet ./...` and `go test ./...` pass, and `go.mod` no longer lists
 `github.com/zalando/go-keyring`.
+
+## Decision while trying the slice: indented hint lines (fix 6)
+
+The user decided, while trying the slice, that every second line telling
+the user what to run next is indented by two spaces, as `tervi status`
+already does (`  Pair again with: …`, `  Start it with: …`). In
+`tervi connect` and in the result `tervi pair` prints after handing over,
+these lines change from no indent to two spaces:
+
+- `Pair again with: tervi pair --server <server>`
+- `Try again with: tervi connect`
+- `Check with: tervi status`
+
+The tables above that show them after "then" mean the indented line. The
+first lines, the one-line messages (such as
+`This computer isn't paired. Pair it with: tervi pair --server <url>`),
+the daemon's log lines, and `tervi status` stay as they are. Tests that
+check these outputs are updated to the indented lines.
