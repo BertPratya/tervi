@@ -17,6 +17,8 @@ and 03.
 - R18. When the user confirms, the server shall mark the machine revoked,
   refuse its credential from then on, close its connection if it is
   connected, and stop listing it. The page shall stop showing it at once.
+  If the request fails, the row shall stay and the page shall show
+  `Couldn't revoke <name>. Try again.`
   *This task: the `revoked` status, refusing a revoked credential on the
   connection route, and closing a machine's connection with `4002`. The
   route that does the revoking is task 02.*

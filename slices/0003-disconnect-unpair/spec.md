@@ -130,8 +130,9 @@ page). It also lets the server recognize a computer that pairs again.
   shall print
   `This removes this computer's pairing with <server>.` then
   `tervi will stop running in the background. Continue? [y/N]` and wait.
-  Only `y` or `yes` continues; anything else prints `Nothing was changed.`
-  and exits with `1`. `--yes` skips the question.
+  Only `y` or `yes` continues, after removing spaces around the answer and
+  ignoring case; anything else prints `Nothing was changed.` and exits with
+  `1`. `--yes` skips the question.
 - R11. When the user confirms, the worker shall first tell the server, which
   shall mark the machine unpaired and refuse its credential from then on.
   Then the worker shall stop tervi in the background, stop it from starting
@@ -146,6 +147,10 @@ page). It also lets the server recognize a computer that pairs again.
   `✗ No answer from <server>.` then
   `  The server may or may not have unpaired this computer. Nothing was removed here.`
   then `  Run tervi unpair again to finish, or revoke this computer on the Machines page.`,
+  and exit with `1`. If the server answers with an error instead, then
+  `tervi unpair` shall remove nothing on the computer, print
+  `✗ <server> couldn't unpair this computer (HTTP <code>). Nothing was removed here.`
+  then `  Run tervi unpair again to finish, or revoke this computer on the Machines page.`,
   and exit with `1`. Running `tervi unpair` again shall finish the unpairing,
   whether or not the server received the first request.
 - R13. If the server already refuses this computer's credential (rejected or
@@ -154,12 +159,15 @@ page). It also lets the server recognize a computer that pairs again.
 - R14. When the user runs `tervi unpair --local-only`, the worker shall print
   `This removes this computer's pairing without telling <server>.` then
   `If that server still exists, it will keep listing this computer until you revoke it on its Machines page. Continue? [y/N]`,
-  and on confirmation remove the pairing on the computer as in R11, without
+  and on confirmation (answered as in R10) remove the pairing on the
+  computer as in R11, without
   contacting the server, print `✓ Unpaired on this computer only.`, and exit
   with `0`. `--yes` skips the question.
 - R15. When `tervi unpair` runs on a computer that is not paired, the worker
   shall print `This computer isn't paired. Nothing was changed.` and exit
-  with `1`.
+  with `1`. When some of tervi's files are left but `credential.json` is
+  gone (after an earlier failure), `tervi unpair` shall remove what is left
+  as `--local-only` does, after `--local-only`'s question.
 - R16. If removing something on the computer fails after the server was told
   (for example, `credential.json` cannot be deleted), then the worker shall
   say what could not be removed and print `Finish with: tervi unpair --local-only`,
@@ -174,6 +182,8 @@ page). It also lets the server recognize a computer that pairs again.
 - R18. When the user confirms, the server shall mark the machine revoked,
   refuse its credential from then on, close its connection if it is
   connected, and stop listing it. The page shall stop showing it at once.
+  If the request fails, the row shall stay and the page shall show
+  `Couldn't revoke <name>. Try again.`
 - R19. Unpaired and revoked machines shall not appear on the Machines page.
   The server shall keep their records.
 
@@ -202,7 +212,8 @@ page). It also lets the server recognize a computer that pairs again.
   then `  Without it, the server won't recognize this computer if you pair it`,
   `  again later: it will come back as a new computer, without its history.`,
   `  To fix this, create a machine ID first: sudo systemd-machine-id-setup`,
-  then `Pair without it? [y/N]` and wait. Only `y` or `yes` continues, and
+  then `Pair without it? [y/N]` and wait. Only `y` or `yes` continues (as in
+  R10), and
   the pairing then sends no identity, so the server never matches this
   machine (R28); anything else prints `Nothing was changed.` and exits with
   `1`. `--yes` skips the question.

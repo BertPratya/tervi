@@ -24,7 +24,8 @@ as slice 2 does after a rejection.
   then `  Without it, the server won't recognize this computer if you pair it`,
   `  again later: it will come back as a new computer, without its history.`,
   `  To fix this, create a machine ID first: sudo systemd-machine-id-setup`,
-  then `Pair without it? [y/N]` and wait. Only `y` or `yes` continues, and
+  then `Pair without it? [y/N]` and wait. Only `y` or `yes` continues (as in
+  R10), and
   the pairing then sends no identity, so the server never matches this
   machine (R28); anything else prints `Nothing was changed.` and exits with
   `1`. `--yes` skips the question.

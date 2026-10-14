@@ -17,8 +17,9 @@ running the command again is always safe.
   shall print
   `This removes this computer's pairing with <server>.` then
   `tervi will stop running in the background. Continue? [y/N]` and wait.
-  Only `y` or `yes` continues; anything else prints `Nothing was changed.`
-  and exits with `1`. `--yes` skips the question.
+  Only `y` or `yes` continues, after removing spaces around the answer and
+  ignoring case; anything else prints `Nothing was changed.` and exits with
+  `1`. `--yes` skips the question.
 - R11. When the user confirms, the worker shall first tell the server, which
   shall mark the machine unpaired and refuse its credential from then on.
   Then the worker shall stop tervi in the background, stop it from starting
@@ -33,6 +34,10 @@ running the command again is always safe.
   `✗ No answer from <server>.` then
   `  The server may or may not have unpaired this computer. Nothing was removed here.`
   then `  Run tervi unpair again to finish, or revoke this computer on the Machines page.`,
+  and exit with `1`. If the server answers with an error instead, then
+  `tervi unpair` shall remove nothing on the computer, print
+  `✗ <server> couldn't unpair this computer (HTTP <code>). Nothing was removed here.`
+  then `  Run tervi unpair again to finish, or revoke this computer on the Machines page.`,
   and exit with `1`. Running `tervi unpair` again shall finish the unpairing,
   whether or not the server received the first request.
 - R13. If the server already refuses this computer's credential (rejected or
@@ -41,12 +46,15 @@ running the command again is always safe.
 - R14. When the user runs `tervi unpair --local-only`, the worker shall print
   `This removes this computer's pairing without telling <server>.` then
   `If that server still exists, it will keep listing this computer until you revoke it on its Machines page. Continue? [y/N]`,
-  and on confirmation remove the pairing on the computer as in R11, without
+  and on confirmation (answered as in R10) remove the pairing on the
+  computer as in R11, without
   contacting the server, print `✓ Unpaired on this computer only.`, and exit
   with `0`. `--yes` skips the question.
 - R15. When `tervi unpair` runs on a computer that is not paired, the worker
   shall print `This computer isn't paired. Nothing was changed.` and exit
-  with `1`.
+  with `1`. When some of tervi's files are left but `credential.json` is
+  gone (after an earlier failure), `tervi unpair` shall remove what is left
+  as `--local-only` does, after `--local-only`'s question.
 - R16. If removing something on the computer fails after the server was told
   (for example, `credential.json` cannot be deleted), then the worker shall
   say what could not be removed and print `Finish with: tervi unpair --local-only`,
@@ -122,9 +130,7 @@ Every step treats something already gone as done, so running
 - Anything in between (left by an earlier failure, for example a service
   file and `state.json` but no `credential.json`): there is no credential
   to send, so both forms remove what is left as `--local-only` does, after
-  the `--local-only` question. (This case is not in the spec yet; the
-  architect has asked the user. If the user decides otherwise, this file is
-  updated before the task starts.)
+  the `--local-only` question (R15).
 - A `credential.json` that is not private or is damaged: reported as
   `tervi connect` reports it in slice 2, and nothing is removed.
 
@@ -133,8 +139,9 @@ Every step treats something already gone as done, so running
 `tervi unpair [--yes] [--local-only]`, flags in any order; anything else
 prints the usage line and exits `2`. Add it to the usage line.
 
-The question (R10, R14) is answered on standard input: `y` or `yes`,
-ignoring case and surrounding spaces, continues; anything else, including
+The question (R10, R14) is answered on standard input: spaces around the
+answer are removed first, then `y` or `yes` in any case continues
+(`Y`, `Yes`, `YES`); anything else, including `n`, `no`,
 an empty line or the end of input, prints `Nothing was changed.` and exits
 `1`. `--yes` skips it.
 
@@ -144,7 +151,7 @@ an empty line or the end of input, prints `Nothing was changed.` and exits
 | Done, `--local-only` | `✓ Unpaired on this computer only.` | `0` |
 | … and linger is on (both) | then `  Linger is still on. Turn it off with: loginctl disable-linger` | `0` |
 | No answer from the server | `✗ No answer from <server>.` / `  The server may or may not have unpaired this computer. Nothing was removed here.` / `  Run tervi unpair again to finish, or revoke this computer on the Machines page.` | `1` |
-| Another answer (for example `500`) | `✗ <server> couldn't unpair this computer (HTTP <code>). Nothing was removed here.` / `  Run tervi unpair again to finish, or revoke this computer on the Machines page.` (asked the user, as above) | `1` |
+| Another answer (for example `500`) | `✗ <server> couldn't unpair this computer (HTTP <code>). Nothing was removed here.` / `  Run tervi unpair again to finish, or revoke this computer on the Machines page.` (R12) | `1` |
 | Not paired | `This computer isn't paired. Nothing was changed.` | `1` |
 | Step 2 failed | `✗ Can't stop tervi in the background: <reason>` / `  Finish with: tervi unpair --local-only` | `1` |
 | Step 3 failed | `✗ Can't delete <path>: <reason>` / `  Finish with: tervi unpair --local-only` | `1` |

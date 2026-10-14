@@ -40,6 +40,8 @@ appears anywhere.
 - R18. When the user confirms, the server shall mark the machine revoked,
   refuse its credential from then on, close its connection if it is
   connected, and stop listing it. The page shall stop showing it at once.
+  If the request fails, the row shall stay and the page shall show
+  `Couldn't revoke <name>. Try again.`
 - R20. When the server refuses this computer's credential because it was
   revoked, the daemon shall stop trying, as in slice 2's R18, and write the
   log line

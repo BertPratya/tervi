@@ -29,6 +29,10 @@ The Machines page gets a Revoke button on each row, with its question.
   `✗ No answer from <server>.` then
   `  The server may or may not have unpaired this computer. Nothing was removed here.`
   then `  Run tervi unpair again to finish, or revoke this computer on the Machines page.`,
+  and exit with `1`. If the server answers with an error instead, then
+  `tervi unpair` shall remove nothing on the computer, print
+  `✗ <server> couldn't unpair this computer (HTTP <code>). Nothing was removed here.`
+  then `  Run tervi unpair again to finish, or revoke this computer on the Machines page.`,
   and exit with `1`. Running `tervi unpair` again shall finish the unpairing,
   whether or not the server received the first request.
   *This task: repeating the unpair request after a lost answer answers
@@ -45,6 +49,8 @@ The Machines page gets a Revoke button on each row, with its question.
 - R18. When the user confirms, the server shall mark the machine revoked,
   refuse its credential from then on, close its connection if it is
   connected, and stop listing it. The page shall stop showing it at once.
+  If the request fails, the row shall stay and the page shall show
+  `Couldn't revoke <name>. Try again.`
 - R19. Unpaired and revoked machines shall not appear on the Machines page.
   The server shall keep their records.
 - R30. **Known limitation (as in slice 2's R27):** without sign-in, anyone
@@ -108,10 +114,8 @@ Revoke bert-desktop? It stops working at once and must be paired again to come b
   `404`, the row is removed from the page at once, without waiting for the
   next refresh (R18); a `404` means it is already gone.
 - On any other answer, or no answer, the row stays and the failure line
-  shows `Couldn't revoke <name>. Try again.` until the next successful
-  refresh. (This message is not in the spec yet; the architect has asked
-  the user. If the user chooses other wording, this file is updated before
-  the task starts.)
+  shows `Couldn't revoke <name>. Try again.` (R18) until the next
+  successful refresh.
 - A refresh that arrives while the dialog is open does not close it. If the
   machine has disappeared from the list meanwhile, Revoke still sends the
   request, and the answer is handled as above.
