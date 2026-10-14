@@ -197,6 +197,15 @@ page). It also lets the server recognize a computer that pairs again.
   identity of this computer that tervi derives from the operating system's
   machine ID. The machine ID itself shall never leave the computer, and the
   identity shall never be shown on any page or printed.
+  If the worker cannot read the machine ID, then `tervi pair` shall first
+  print `! tervi can't read this computer's machine ID (/etc/machine-id).`,
+  then `  Without it, the server won't recognize this computer if you pair it`,
+  `  again later: it will come back as a new computer, without its history.`,
+  `  To fix this, create a machine ID first: sudo systemd-machine-id-setup`,
+  then `Pair without it? [y/N]` and wait. Only `y` or `yes` continues, and
+  the pairing then sends no identity, so the server never matches this
+  machine (R28); anything else prints `Nothing was changed.` and exits with
+  `1`. `--yes` skips the question.
 - R24. When the identity matches an earlier machine, the approval page shall
   show `This looks like a computer that was paired before:` and
   `<earlier name>, unpaired on <date>.`, or
