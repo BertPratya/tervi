@@ -92,3 +92,10 @@ are recorded here as they are made.
   dropping `4002` too and showing slice 0002's message in every case —
   consistent and simpler, but the computer could no longer say what
   happened, and R20–R22 would change.
+- A credential that stopped working has one status, `revoked`, whether
+  `tervi unpair` or the Revoke button ended it — the result on the server
+  is the same, so one value represents it; the two differ only in what the
+  computer does, which the server does not record.
+  Not chosen: separate `unpaired` and `revoked` statuses — two values for
+  the same state, kept only to show on the approval page which way a
+  pairing ended.
