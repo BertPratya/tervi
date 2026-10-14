@@ -52,3 +52,10 @@ are recorded here as they are made.
   every later feature must follow; one table updated in place with a second
   credential column — brings back `revoked → active`, and every check must
   look at two credential columns.
+- Whether a machine is paired is not stored on `machines`: a machine is
+  paired exactly while it has an `active` credential, and at most one
+  credential per machine can be `active` — the fact lives in one place, so
+  the two tables can never disagree.
+  Not chosen: a `status` column on `machines` as well — every unpair,
+  revoke, and pairing again would have to update both tables, and a missed
+  update could list a computer whose credential no longer works.
