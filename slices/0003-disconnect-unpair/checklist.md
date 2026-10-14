@@ -58,6 +58,7 @@ Do the rows in order: each one can depend on the state the row before left.
 | 16 | R14 | `tervi unpair --local-only`, answer `y` | `This removes this computer's pairing without telling http://localhost:8080.` / `If that server still exists, it will keep listing this computer until you revoke it on its Machines page. Continue? [y/N]`, then `✓ Unpaired on this computer only.`; the page still lists the computer (Offline) | ⬜ |
 | 17 | R6, R18 | `tervi disconnect`; then Revoke the computer on the page | `This computer isn't paired. Pair it with: tervi pair --server <url>`; the row disappears | ⬜ |
 | 18 | — | Pair again to leave the computer paired: `tervi pair --server http://localhost:8080`, Accept, type the code | The page shows it `Online`, recognized as before | ⬜ |
+| 19 | R18 | On the Machines page, **Revoke** the old slice-1 machine (`Offline · never connected`) | The row disappears. Its credential, still in GNOME Keyring from before slice 2's fix 4, no longer works anywhere | ⬜ |
 
 ## Proved by tests
 
@@ -71,7 +72,7 @@ Do the rows in order: each one can depend on the state the row before left.
 | R11 | The order of removal, the credential sent, the linger line, the server's side | `TestUnpairRemovesInOrder`, `TestUnpairLingerLine`, `TestUnpairRevokes`, `TestUnpairClosesConnection`, `TestUnpairEndToEnd` | ⬜ |
 | R12 | No answer and other answers remove nothing; repeating finishes | `TestUnpairNoAnswer`, `TestUnpairOtherAnswer`, `TestUnpairRepeat` | ⬜ |
 | R13 | A credential the server already refuses | `TestUnpairServerAlreadyRefuses`, `TestUnpairUnknown` | ⬜ |
-| R14, R15 | `--local-only` sends nothing; not paired; leftovers | `TestUnpairLocalOnly`, `TestUnpairNotPaired`, `TestUnpairLeftovers` | ⬜ |
+| R14, R15 | `--local-only` sends nothing; not paired; leftovers; no copy of the secret is left, including a crash's temporary file | `TestUnpairLocalOnly`, `TestUnpairNotPaired`, `TestUnpairLeftovers`, `TestUnpairRemovesSecretLeftovers` | ⬜ |
 | R16 | Each failure says what is left, and a second run finishes | `TestUnpairServiceFailure`, `TestUnpairDeleteFailure` | ⬜ |
 | R17 | The question text and the dialog | `machines-view.test.js`, `TestMachinesPageHasRevokeDialog` | ⬜ |
 | R18 | Revoking, closing with `4002`, repeats, unknown IDs | `TestRevokeMachine`, `TestRevokeClosesConnection`, `TestRevokeRepeatAndUnknown`, `TestCloseRevoked`, `TestRevokeConnectedEndToEnd` | ⬜ |

@@ -102,7 +102,12 @@ defines, and `cmd/tervi` wires it.
    `WithLock`, trying every 200 ms for up to 10 seconds, so no daemon is
    left (also one started by hand with `tervi daemon`). Holding the lock,
    do step 3.
-3. **The files**: delete `credential.json`, then `state.json`.
+3. **The files**: delete `credential.json`; then every leftover
+   temporary file whose name starts with `.credential-` and
+   `credential-check.json` in the same folder (user's decision: after
+   unpairing, no copy of the secret may remain); then `state.json`. Delete
+   only those names; leave any other file in the folder, and the folder
+   itself.
 4. **Linger**: `LingerOn`; if it says `yes`, the command prints R11's linger
    line. If it fails, print nothing about linger.
 
@@ -175,7 +180,8 @@ redaction used by `tervi connect`.
 | `TestUnpairNotPaired` — no files: its line, exit `1` | R15 |
 | `TestUnpairLeftovers` — a service file and `state.json` but no `credential.json`: removed as `--local-only` | R15, R16 |
 | `TestUnpairServiceFailure` and `TestUnpairDeleteFailure` — `systemctl` failing, a daemon that never lets go of the lock, and a file that cannot be deleted: what is left, `Finish with: tervi unpair --local-only`, exit `1`; a second run finishes | R16 |
-| `TestUnpairNoSecret` — no output line contains the credential | R11 |
+| `TestUnpairRemovesSecretLeftovers` — a `.credential-x1y2` file holding the credential and a `credential-check.json` are deleted after `credential.json`, also with `--local-only`; another file in the folder, and the folder, stay | R11, R14 |
+| `TestUnpairNoSecret` — no output line contains the credential, and no file in `~/.config/tervi/` does afterwards | R11 |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md`
 changes to `done`.

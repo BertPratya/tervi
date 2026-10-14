@@ -3,7 +3,7 @@
 Status: draft
 Spec: [spec.md](spec.md)
 
-This slice has 12 design decisions, more than the 10 that `AGENTS.md`
+This slice has 13 design decisions, more than the 10 that `AGENTS.md`
 allows; the user chose to keep it whole (2026-10-14), because the two
 decisions for recognizing a computer are too few for a slice of their own.
 
@@ -147,7 +147,9 @@ Covers R10–R16. `tervi unpair`:
    then takes `daemon.lock`, waiting up to 10 seconds, so no daemon is left
    running, also one started by hand.
 4. Removes the service file and runs `systemctl --user daemon-reload`,
-   deletes `credential.json`, then `state.json`, and lets go of the lock.
+   deletes `credential.json`, then any leftover `.credential-*` temporary
+   files and `credential-check.json`, then `state.json`, and lets go of the
+   lock.
 5. Checks linger with `loginctl show-user` and prints R11's line if it is
    on.
 
@@ -303,6 +305,13 @@ more.
   0002, and each reason keeps its own message.
   Not chosen: `"credential_rejected"` for both — `tervi status` could not
   tell them apart, so R21's message could not be shown.
+- `tervi unpair` (also `--local-only`) deletes, after `credential.json`,
+  every leftover `.credential-*` temporary file and `credential-check.json`
+  in `~/.config/tervi/` — a crash while saving can leave a temporary file
+  holding the credential, and after unpairing no copy of the secret should
+  remain on the computer.
+  Not chosen: leaving them — they are `0600`, but a copy of the secret
+  would stay behind without the user knowing.
 
 ## Requirement coverage
 

@@ -228,7 +228,8 @@ nothing secret, and a crash at that moment can leave it behind harmlessly.
 A crash in the middle of writing `credential.json` can leave its temporary
 file (`.credential-` and a random suffix) in the same folder; it holds the
 credential but has mode `0600` too; tervi never reads it, and it can be
-deleted.
+deleted. `tervi unpair` deletes `credential.json`, then these leftovers and
+`credential-check.json`, so no copy of the secret remains (slice 0003).
 Its content is JSON:
 
 ```json
