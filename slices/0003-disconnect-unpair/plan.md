@@ -120,3 +120,10 @@ are recorded here as they are made.
   Not chosen: looking the match up again when the code arrives — nothing
   new to store, but the page could show one machine while Accept attaches
   the computer to another.
+- `state.json`'s `stop_reason` gains the value `"credential_revoked"`,
+  written by the daemon when the server closes with `4002` or answers
+  `401 credential_revoked`; `"credential_rejected"` stays for
+  `unknown_credential` (R20, R21) — the same field and pattern as slice
+  0002, and each reason keeps its own message.
+  Not chosen: `"credential_rejected"` for both — `tervi status` could not
+  tell them apart, so R21's message could not be shown.
