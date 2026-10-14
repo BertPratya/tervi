@@ -36,11 +36,12 @@ info:
     | `1009` | A message larger than 4 KB (sent by the WebSocket library) |
     | `4000` | Replaced by a newer connection for the same machine |
     | `4001` | Timeout: nothing received from the worker |
+    | `4002` | This machine's credential was revoked: by `tervi unpair`, by Revoke on the Machines page, or because the same computer was paired again. The worker stops trying, as after `401 credential_revoked` (slice 0003) |
 
-    The worker closes with `1000` when it stops on purpose, or `4001` on a
-    timeout.
+    The worker closes with `1000` when it stops on purpose (including
+    `tervi disconnect`), or `4001` on a timeout.
 
-    Added by slice 0002 (connection).
+    Added by slice 0002 (connection). Slice 0003 adds `4002`.
 
 channels:
   connection:
