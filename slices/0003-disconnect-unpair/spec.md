@@ -1,6 +1,6 @@
 # 0003 Disconnect and unpair — slice 3
 
-Status: draft
+Status: approved
 
 ## What the user does
 
@@ -285,9 +285,9 @@ None.
 - `tervi unpair` asks before removing anything (R10) — it can only be undone
   by pairing again, which needs the browser and the code; `--yes` serves
   scripts.
-- `tervi unpair` changes nothing when the server cannot be reached (R12) —
-  the credential is the computer's only proof of who it is; deleting it
-  would make "try again later" impossible.
+- `tervi unpair` removes nothing on the computer when no answer comes from
+  the server (R12) — the credential is the computer's only proof of who it
+  is; deleting it would make running `tervi unpair` again impossible.
 - `tervi unpair --local-only` exists for a server that is gone for good (R14)
   — otherwise such a computer could never be cleaned up except by hand.
 - A revoked computer is told plainly that it was unpaired on the server
