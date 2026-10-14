@@ -104,9 +104,12 @@ func (service *Service) Remove(ctx context.Context) error
 func LingerOn(ctx context.Context, runner Runner) (bool, error)
 ```
 
-`Remove` runs `systemctl --user disable --now tervi`, removes
-`~/.config/systemd/user/tervi.service`, then runs
-`systemctl --user daemon-reload`. `LingerOn` runs
+`Remove` runs `systemctl --user disable --now tervi` only when the service
+file exists (when it is gone, `systemctl` would fail; the lock in step 2
+still catches a daemon started by hand), removes
+`~/.config/systemd/user/tervi.service`, then always runs
+`systemctl --user daemon-reload`. A failure of either `systemctl` command
+is a real failure (R16). `LingerOn` runs
 `loginctl show-user --property=Linger --value` and reads `yes` or `no`.
 
 ### Unpairing: `internal/worker/unpair/unpair.go` (new package)
@@ -126,7 +129,9 @@ field does not break it.
    lock in step 2 cannot be taken.
 1. **The server** (not with `--local-only`): one
    `POST <server>/api/v1/machines/current/unpair`, at most 10 seconds,
-   never retried, never following a redirect.
+   never retried, never following a redirect. The 10 seconds come from an
+   option of the `unpair` package (default 10 seconds), like
+   `pair.Options.RequestTimeout`, so tests can use a short one.
    - `204`, or `401` with any body: the server part is done (R11, R13).
    - No answer (cannot connect, timeout): stop; nothing is removed (R12).
    - Any other answer: stop; nothing is removed (below).
@@ -153,11 +158,14 @@ Every step treats something already gone as done, so running
 | No usable `credential.json` (missing, damaged, or readable by others), but something else of tervi's: `state.json`, the service file, the damaged or exposed `credential.json`, or a leftover from `credential.DeleteLeftovers`'s list | Leftovers, with or without `--local-only`: the leftovers question, no request to the server, steps 2–4 |
 | None of these | Not paired (R15) |
 
-A damaged or exposed `credential.json` is deleted without being read. A
-`credential.json` that exists but cannot be read at all (for example mode
-`0000`, or a folder of that name; `credential.ErrStoreUnreadable`) is none of
-these: it is reported as slice 2 reports a store that cannot be read (the
-path, and nothing removed), exit `1`.
+Read `credential.json` with `Store.Get` (not `credential.Paired`, which
+skips the file when `state.json` is not confirmed). `ErrDamaged` and
+`ErrUnprotected` mean leftovers, and the file is deleted without being
+read. Any other `Store.Get` error (for example mode `0000`, or a folder of
+that name) is none of these: it is reported as slice 2 reports a store that
+cannot be read (the path, and nothing removed), exit `1`. `state.json` is
+only checked for existence and then deleted; it is never parsed, so a
+damaged `state.json` changes nothing here.
 
 ### The command: `internal/worker/cli/unpair.go` (new)
 
@@ -218,6 +226,8 @@ redaction used by `tervi connect`.
 | `TestUnpairLocalOnly` — no request at all; the two question lines; removes everything; its success line | R14 |
 | `TestUnpairNotPaired` — no files: its line, exit `1` | R15 |
 | `TestUnpairUnreadableCredential` — a `credential.json` with mode `0000`: the read failure with its path, exit `1`, nothing removed, no request | R15 |
+| `TestUnpairDamagedState` — a usable `credential.json` next to a damaged `state.json`: unpaired as usual, both files removed | R11 |
+| `TestRemoveServiceAlreadyGone` — with no service file, `disable --now` is not run, `daemon-reload` is, and `Remove` succeeds | R11, R16 |
 | `TestUnpairNoRuntimeFolder` — without `XDG_RUNTIME_DIR`: the runtime folder line, exit `1`, no request, nothing removed | R11 |
 | `TestUnpairLeftovers` — a service file and `state.json` but no `credential.json`; a damaged `credential.json`; one readable by others: no request, the leftovers question and success line, everything removed, with and without `--local-only` | R15, R16 |
 | `TestUnpairUnfinishedPairing` — a usable `credential.json` with `state.json` missing or not confirmed: the request is sent, `401` counts as done, everything removed, R11's success line | R13, R15 |

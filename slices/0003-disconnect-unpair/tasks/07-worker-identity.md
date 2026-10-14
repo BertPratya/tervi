@@ -124,7 +124,8 @@ credential, and a revoked one; and on those paths before anything is
 deleted. It is never asked when the computer is already paired, when an
 unfinished pairing is resumed (`FinishEarlier`, which sends no identity),
 or when `tervi pair` refuses because another server's pairing is
-unfinished.
+unfinished. The one exception is a resumed pairing that turns into a new
+one (next part): it is asked there, before the old pairing is deleted.
 
 ### After a revocation (R22)
 
@@ -132,13 +133,26 @@ In step zero, a confirmed pairing with `stop_reason: "credential_revoked"`
 is handled like the rejected case, with the line
 `This computer was unpaired on the server. Starting a new pairing.`
 
-The acknowledgment and save-failure routes now also answer
-`401 credential_revoked` (task 01). Today `pair/confirm.go` treats any `401`
-other than `unknown_credential` as "✗ Unexpected answer from the server."
-Case: a pairing whose acknowledgment answer was lost, whose machine was
-then revoked on the page; every `tervi pair` would repeat that message.
-Treat `credential_revoked` from either route like R22: print R22's line,
-remove the old pairing, and start a new one.
+The acknowledgment route now also answers `401 credential_revoked`
+(task 01). Today `pair/confirm.go` treats any `401` other than
+`unknown_credential` as "✗ Unexpected answer from the server." Case: a
+pairing whose acknowledgment answer was lost, whose machine was then
+revoked on the page; every `tervi pair` would repeat that message. This
+can only happen when `tervi pair` resumes that pairing
+(`Flow.FinishEarlier`).
+
+- In `pair`, an acknowledgment answered `401 credential_revoked` makes
+  `FinishEarlier` return the new exported constant `cli.StartNewPairing`
+  (a negative number, never used as an exit code), without printing or
+  deleting anything.
+- In `cli`, that value is handled like the revoked case of step zero:
+  ask the machine ID question if needed (a "no" changes nothing), print
+  R22's line, delete the old pairing (`deletePairing`), and call
+  `checkAndStart`, so the handover after the new pairing uses the new
+  credential.
+- The save-failure report's answer stays ignored, as in slice 1
+  (`reportSaveFailure` discards it): the credential it reports is always
+  the one just issued, still `pending`, which nothing revokes.
 
 ## Boundaries
 
@@ -164,7 +178,7 @@ remove the old pairing, and start a new one.
 | `TestNoMachineIDQuestion` — the five lines; `y` continues without an identity; `n`, empty, end of input: `Nothing was changed.`, exit `1`, and step zero has removed nothing | R23 |
 | `TestNoMachineIDYes` — `--yes` (both flag orders) asks nothing and continues | R23 |
 | `TestPairAfterRevoked` — a revoked pairing prints R22's line, removes the old pairing, and starts a new one | R22 |
-| `TestConfirmRevoked` — `401 credential_revoked` from the acknowledgment or the save-failure report: R22's line, the old pairing removed, a new one started | R22 |
+| `TestConfirmRevoked` — resuming a pairing whose acknowledgment answers `401 credential_revoked`: `FinishEarlier` returns `cli.StartNewPairing`; then R22's line, the old pairing removed, a new pairing started, and the handover uses the new credential; with no machine ID and `n`, nothing is removed | R22, R23 |
 | `TestQuestionOnlyWhenStarting` — with no machine ID: already paired, resuming an unfinished pairing, and another server's unfinished pairing ask nothing; no pairing yet, leftovers, rejected, and revoked ask | R23 |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md`

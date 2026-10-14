@@ -159,7 +159,9 @@ already refused.
   `credential_id`, from the row `credential.Find` returned); if it is no
   longer `active`, it closes the connection with `4002` and removes it, as
   `CloseRevoked` does. Tests reach the moment between the check and the add
-  through a hook in `connection.Deps` that is nil in production.
+  through a new field `AfterCheck func(machineID string)` in
+  `connection.Deps`, called after the check and before the add, and nil in
+  production.
 
 ### Queries that change
 
@@ -191,8 +193,9 @@ uses today, written for the new table.
 
 `api/openapi.yaml` already describes `credential_revoked`
 (`RefusedCredential`) and `4002` is in `api/asyncapi.yaml`. The contract
-test calls `openConnection` with a revoked credential (set its row to
-`revoked` in the test) and checks `401 credential_revoked`.
+test calls `openConnection`, `acknowledgeMachine`, and `reportSaveFailure`
+with a revoked credential (set its row to `revoked` in the test) and checks
+`401 credential_revoked`.
 
 ## Boundaries
 
@@ -215,6 +218,7 @@ test calls `openConnection` with a revoked credential (set its row to
 | --- | --- |
 | `TestMigrationMovesCredentials` — a database at version 2 with a `pending`, an `active`, a `failed`, and an `expired` machine migrates to version 3: each has one `credentials` row with the same hash, status, request, creation time, and expiry; `machines` has no credential columns; the new columns are null | R19 |
 | `TestMigrationOneActivePerMachine` — a second `active` credential for one machine is refused by the database; a `revoked` row without `ended_at` is refused | R18 |
+| `TestAcknowledgeRevoked` — the acknowledgment and save-failure routes answer `401 credential_revoked` for a `revoked` credential | R20, R22 |
 | `TestFindCredential` — finds `active`, `revoked`, `failed`, and `expired` rows by proof; a `pending` row past its expiry reads as `expired`; an unknown proof is not found | R18, R20 |
 | `TestRevokeCredential` — an `active` credential becomes `revoked` with `ended_at` set; a machine with none changes nothing and reports so | R18 |
 | `TestRevokedWhileOpening` — a credential revoked between the route's check and adding the connection (through the test hook) is closed with `4002` right after it is added, and the machine is Offline | R18, R20 |
@@ -223,7 +227,7 @@ test calls `openConnection` with a revoked credential (set its row to
 | `TestCloseRevoked` — a connected machine's connection closes with `4002` and the machine is Offline at once; a machine with no connection is a no-op; a server stopping meanwhile still waits for the close | R18 |
 | `TestListOnlyMachinesWithActiveCredential` — a machine whose credential is `revoked`, `pending`, `failed`, or `expired` is not listed; its row is still in `machines` | R19 |
 | Existing pairing, cleanup, connection, and machines tests pass unchanged in meaning | R18, R19 |
-| Contract test — `openConnection` with a revoked credential answers `401 credential_revoked` | contract |
+| Contract test — `openConnection`, `acknowledgeMachine`, and `reportSaveFailure` with a revoked credential answer `401 credential_revoked` | contract |
 
 `go vet ./...` and `go test ./...` pass, and
 `go run ./cmd/server migrate` brings a slice-2 database to version 3. This

@@ -153,6 +153,7 @@ exits with `2`). Steps:
 | Rejected (either way) | `Not connecting: the server doesn't accept this computer's credential.` / `  Pair again with: tervi pair --server <server>` | `0` |
 | Revoked (either way) | `✗ This computer was unpaired on the server.` / `  Pair it again with: tervi pair --server <server>` | `0` |
 | `failed` or a write failure | `✗ Can't write <path>.`, as `tervi connect` prints it in slice 2 | `1` |
+| `WithLock` failed for another reason (opening `daemon.lock`, creating the runtime folder) | `✗ Can't reach tervi in the background: <reason>`; nothing written | `1` |
 | The daemon answered `not_paired` | `This computer isn't paired. Pair it with: tervi pair --server <url>` (R6) | `1` |
 | The socket failed after the lock was busy | as `tervi status` reports a socket failure | `1` |
 
@@ -188,7 +189,8 @@ usage line.
 | `TestDisconnectWriteFailure` — a `state.json` that cannot be written prints the path and exits `1`, both ways | R1, R3 |
 | `TestDisconnectDuringConnect` — a `tervi disconnect` sent while a `POST /connect` waits for an unreachable server answers `disconnected` once the connect ends, and no try follows | R1 |
 | `TestDisconnectLogLine` — the daemon writes `○ Disconnected.` once, and it stays the last log line: no "Connection lost" or "Reconnecting" follows | R1 |
-| `TestDisconnectDuringAttempt` — with a server that holds the opening request until after the disconnect, the attempt is cancelled or closed with `1000` at once; the machine never shows Online and no "Connected" is logged | R1, R2 |
+| `TestDisconnectDuringAttempt` — with a fake server that holds the opening request until after the disconnect: either the request is cancelled, or the fake server receives a close with `1000` right after the connection opens and no message; no "Connected" line is logged and the status is `not_connecting` | R1, R2 |
+| `TestDisconnectLockFailure` — `daemon.lock` cannot be opened: the line above, exit `1`, `state.json` unchanged | R3 |
 | `TestDisconnectNoRuntimeFolder` — without `XDG_RUNTIME_DIR`: the runtime folder line, exit `1`, `state.json` unchanged | R3 |
 
 `go vet ./...` and `go test ./...` pass. This task's row in `plan.md`
