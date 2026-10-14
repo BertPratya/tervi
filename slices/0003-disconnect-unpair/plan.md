@@ -79,3 +79,16 @@ are recorded here as they are made.
   Not chosen: an existing code such as `1001` — it would say something
   untrue ("the server is stopping"), and the worker would try once more
   before stopping.
+- The server alone decides why a credential is refused, from that
+  credential's one row (found by its unique hash): `revoked` answers
+  `401 {"error": "credential_revoked"}`; no row, or any other status that
+  is not `active`, answers `401 {"error": "unknown_credential"}` as in
+  slice 0002. `credential_revoked` and the close code `4002` mean the same,
+  so a computer that was offline when it was revoked learns the same reason
+  on its next try as one that was connected (R20, R21).
+  Not chosen: one answer, `unknown_credential`, for every refused
+  credential — a revoked computer that was offline would show slice 0002's
+  message while a connected one, closed with `4002`, would show R20's;
+  dropping `4002` too and showing slice 0002's message in every case —
+  consistent and simpler, but the computer could no longer say what
+  happened, and R20–R22 would change.
