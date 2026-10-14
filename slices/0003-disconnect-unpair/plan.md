@@ -47,11 +47,11 @@ are recorded here as they are made.
   one row per computer (name, operating system, `last_seen_at`, identity),
   and a new table holds one row per pairing that issued a credential (its
   hash, status, expiry, and when it ended). Pairing again adds a new
-  credential row; no credential goes back to `active` — while "Accept as the
-  same computer" is finishing, one computer has its old `active` credential
+  credential row; no credential goes back to `active` — while a recognized
+  computer's pairing is finishing, one computer has its old `active` credential
   and its new `pending` one at the same time (R26), which one row cannot
   hold, and later slices' workspaces can point at the computer alone.
-  Not chosen: one table, where "same computer" creates a new row pointing to
+  Not chosen: one table, where pairing again creates a new row pointing to
   the old one — the computer's history is spread over a chain of rows that
   every later feature must follow; one table updated in place with a second
   credential column — brings back `revoked → active`, and every check must

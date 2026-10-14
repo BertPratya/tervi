@@ -66,12 +66,11 @@ Status: draft
    This looks like a computer that was paired before:
    bert-desktop, unpaired on 13 October.
 
-   [ Accept as the same computer ]   brings back bert-desktop, with its history
-   [ Accept as a new computer ]      adds it next to the old one, starting empty
-   [ Reject ]                        doesn't pair it
+   [ Accept ]   brings back bert-desktop, with its history
+   [ Reject ]   doesn't pair it
    ```
 
-   The user clicks **Accept as the same computer**, types the code, and the
+   The user clicks **Accept**, types the code, and the
    Machines page shows the earlier bert-desktop Online again, not a second
    entry.
 
@@ -202,21 +201,20 @@ page). It also lets the server recognize a computer that pairs again.
   show `This looks like a computer that was paired before:` and
   `<earlier name>, unpaired on <date>.`, or
   `<earlier name>, still paired.` for a machine that is still paired. It
-  shall offer three buttons, each with its result next to it:
-  **Accept as the same computer** (`brings back <earlier name>, with its history`),
-  **Accept as a new computer** (`adds it next to the old one, starting empty`),
-  and **Reject** (`doesn't pair it`).
+  shall offer two buttons, each with its result next to it:
+  **Accept** (`brings back <earlier name>, with its history`) and
+  **Reject** (`doesn't pair it`).
 - R25. A match shall be found by the identity alone, also when the computer's
   name changed. When several earlier machines match, the page shall offer the
   most recently paired one.
-- R26. When the user clicks **Accept as the same computer** and the pairing
+- R26. When the user clicks **Accept** on such a page and the pairing
   completes, the server shall continue the earlier machine instead of
   creating a new one: the same entry, keeping its history, now with the
   computer's current name. If the earlier machine's credential still worked,
   it shall stop working.
-- R27. When the user clicks **Accept as a new computer**, pairing shall
-  continue as in slice 1, creating a new machine. The earlier one stays as it
-  was.
+- R27. When the identity matches an earlier machine, the computer shall not
+  be paired as a new machine: it comes back as the earlier one (R26), or the
+  user rejects it.
 - R28. When the identity matches no earlier machine, the approval page shall
   be exactly as in slice 1.
 - R29. **Known limitation:** the identity is the computer's claim, which the
@@ -224,7 +222,9 @@ page). It also lets the server recognize a computer that pairs again.
   to be it. This is why the server only offers the match and the user
   decides. After the operating system is reinstalled the computer is not
   recognized, and virtual machines copied from one image may look like the
-  same computer.
+  same computer; to pair such a copy as a computer of its own, give it a new
+  machine ID first (delete `/etc/machine-id`, then run
+  `systemd-machine-id-setup`).
 
 **Known limitation**
 
@@ -296,6 +296,8 @@ None.
   history, and later its workspaces, are not stranded.
 - The server only offers a match; the user decides (R24, R29) — the identity
   is a claim the server cannot verify.
-- The approval page asks with three buttons that each name their result
-  (R24) — one click decides; there is no separate "same or new" choice that
-  could be left on the wrong option before Accept.
+- A recognized computer can only come back as the earlier machine, never be
+  added as a new one (R24, R27) — a user pairing the same computer again
+  almost always wants its history back, and one entry per computer keeps
+  later slices' workspaces on a single machine; the rare copied virtual
+  machine gets a new machine ID instead (R29).
