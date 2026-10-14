@@ -3,9 +3,185 @@
 Status: draft
 Spec: [spec.md](spec.md)
 
-The rest of this plan is written with the user after slice 0002 is built,
-because it depends on 0002's code. Design decisions that do not depend on it
-are recorded here as they are made.
+This slice has 12 design decisions, more than the 10 that `AGENTS.md`
+allows; the user chose to keep it whole (2026-10-14), because the two
+decisions for recognizing a computer are too few for a slice of their own.
+
+## Overview
+
+| Part | Location | Notes |
+| --- | --- | --- |
+| Database | `internal/server/db/migrations/0003_credentials.sql` (new) | Creates `credentials`, moves each machine's credential into it, adds `identity_hash` to `machines` and to `pairing_requests`, and `matched_machine_id` to `pairing_requests` |
+| Credential check | `internal/server/credential/credential.go` (new) | One lookup by hash, shared by every route that takes a credential: finds the credential's row and says `active`, `revoked`, or unknown; the status names |
+| Ending a credential | `internal/server/credential/revoke.go` (new) | Sets an `active` credential to `revoked` with its end time, inside the caller's transaction; used by unpair, Revoke, and pairing again |
+| Unpair route | `internal/server/machines/unpair.go` (new) | `POST /api/v1/machines/current/unpair` (R11, R12) |
+| Revoke route | `internal/server/machines/revoke.go` (new) | `POST /api/v1/machines/{machine_id}/revoke` (R18) |
+| Machines list | `internal/server/machines` | Lists machines with an `active` credential (R19) |
+| Closing a revoked machine | `internal/server/connection` | Closes a machine's connection with `4002` on request; the connection route uses the credential check and answers `credential_revoked` (R18, R20) |
+| Recognizing a computer | `internal/server/pairing/match.go` (new) | Finds the earlier machine for an identity, when the pairing starts (R24, R25) |
+| Pairing | `internal/server/pairing` | Start stores the identity and the match; the approval answer shows the match; the correct code attaches the new credential to the matched machine; the acknowledgment ends the earlier credential and updates the name (R23–R28); every machine query uses `credentials` |
+| Pages | `internal/server/web` | The Machines page gets Revoke and its question (R17, R18); the approval page shows the match with Accept and Reject (R24) |
+| Close codes | `internal/protocol` | Adds `4002` |
+| Computer identity | `internal/worker/pair/identity.go` (new) | Reads `/etc/machine-id` and computes the identity with tervi's app ID (R23) |
+| Pairing on the worker | `internal/worker/pair` | Sends the identity; without a machine ID, asks first (R23); after `credential_revoked`, starts a new pairing (R22) |
+| `tervi disconnect` | `internal/worker/cli/disconnect.go` (new) | Asks the daemon, or writes `state.json` under the lock when no daemon runs (R1–R6) |
+| `tervi unpair` | `internal/worker/cli/unpair.go` (new) | The question, `--yes`, `--local-only`, and the messages (R10–R16) |
+| Unpairing | `internal/worker/unpair/unpair.go` (new) | Tells the server, then removes the pairing on the computer in order (R11–R16) |
+| Talking to the daemon | `internal/worker/control` | Adds `POST /disconnect`, and taking the lock when no daemon runs (R1, R3) |
+| Taking the lock without a daemon | `internal/worker/control/lock.go` (new) | Takes `daemon.lock`, runs one change, and lets go; the lock code moves here from `daemon.go` |
+| Daemon | `internal/worker/daemon` | Disconnects on request; stops on `4002` or `credential_revoked` and records it (R1, R20) |
+| Removing the service | `internal/worker/service/remove.go` (new) | Stops and disables the service, removes its file, and says whether linger is on (R11) |
+| Worker command line | `internal/worker/cli` | `tervi status` and `tervi connect` show `Disconnected` and the unpaired message, also without a daemon (R7, R21); the usage line |
+| Worker local record | `internal/worker/state` | Adds the stop reason `credential_revoked` |
+| End-to-end test | `test/e2e` | Adds disconnect, unpair, Revoke, and pairing the same computer again |
+| API contract | `api` | `openapi.yaml` gets the unpair and Revoke routes, the identity, the match, and `credential_revoked`; `asyncapi.yaml` gets `4002` |
+
+`internal/server/credential` is a new package because the connection route,
+the machines routes, and pairing all check credentials, and the connection
+package cannot import the machines package (machines already imports
+connection).
+
+## Data
+
+This slice moves each machine's credential into a new table,
+`credentials`, so that a machine keeps one row while each pairing adds a
+credential row; it adds `identity_hash` to `machines`, and `identity_hash`
+and `matched_machine_id` to `pairing_requests` (migration `0003`); and it
+adds the stop reason `credential_revoked` to `state.json`. All of it is
+described in [`design/data-model.md`](../../design/data-model.md). Whether a
+machine is paired is not stored: it is paired while it has an `active`
+credential.
+
+## Interfaces
+
+### Server routes
+
+Added to or changed in [`api/openapi.yaml`](../../api/openapi.yaml):
+
+| Operation | Called by | Proof | Purpose | Requirements |
+| --- | --- | --- | --- | --- |
+| `POST /api/v1/machines/current/unpair` (new) | `tervi unpair` | Credential | Ends the credential and closes the machine's connection; `204`, also when already ended; `401 unknown_credential` when unknown | R11–R13 |
+| `POST /api/v1/machines/{machine_id}/revoke` (new) | The Machines page | None (R30) | Ends the machine's `active` credential and closes its connection; `204`, also when already ended; `404 unknown_machine` for a machine that does not exist | R18 |
+| `GET /api/v1/machines/current/connection` | The daemon | Credential | As in slice 2; a `revoked` credential gets `401 credential_revoked` | R20 |
+| `POST /api/v1/machines/current/acknowledgment` and `…/save-failure` | `tervi pair` | Credential | As in slice 1; the acknowledgment of a pairing that matched an earlier machine also ends that machine's earlier credential; a `revoked` credential gets `401 credential_revoked` | R26 |
+| `POST /api/v1/pairings` | `tervi pair` | None | Takes an optional `identity_hash` | R23 |
+| `GET /api/v1/approvals/current` | The approval page | Approval key | Adds `earlier_machine` (its name, and when it was unpaired or that it is still paired) when the pairing matched one | R24, R28 |
+| `GET /api/v1/machines` | The Machines page | None | Only machines with an `active` credential | R19 |
+
+### Connection messages
+
+[`api/asyncapi.yaml`](../../api/asyncapi.yaml) gets one close code the
+server sends: `4002`, "this machine's credential was revoked", when the
+machine is unpaired, revoked, or paired again while connected (R18, R26).
+
+### Talking to the daemon
+
+As in slice 2, HTTP over `$XDG_RUNTIME_DIR/tervi/daemon.sock`:
+
+| Operation | Called by | Answer |
+| --- | --- | --- |
+| `POST /disconnect` (new) | `tervi disconnect` | Sets `connect` to false and closes the connection with `1000`: `disconnected`, `already_disconnected`, `rejected` or `revoked` (nothing changes, R5, R21), `not_paired`, or `failed` (`state.json` could not be written, with its path) |
+| `GET /status` | `tervi status` | As in slice 2; `not_connecting` carries the stop reason `credential_revoked` too |
+| `POST /connect` | `tervi connect`, `tervi pair` | As in slice 2, plus `revoked` |
+
+### Worker commands
+
+| Command | Does | Exit code |
+| --- | --- | --- |
+| `tervi disconnect` | Calls `POST /disconnect`; when no daemon runs, writes `connect: false` itself under the lock (R1–R6) | `0`, or `1` when not paired or on a failure |
+| `tervi unpair [--yes] [--local-only]` | Asks, unless `--yes`; tells the server (not with `--local-only`), then removes the pairing on the computer (R10–R16) | `0` unpaired, `1` otherwise, `2` wrong usage |
+| `tervi pair --server <url> [--yes]` | As in slice 2; sends the identity; `--yes` answers the machine ID question (R23); after `credential_revoked`, starts a new pairing (R22) | As in slice 2 |
+| `tervi status` | As in slice 2; reads `state.json` when no daemon runs, so a disconnected or unpaired computer shows it (R7, R21) | As in slice 2 |
+| `tervi connect` | As in slice 2; on a computer unpaired on the server, prints R21's message | As in slice 2 |
+
+## Mechanisms
+
+### One writer for `connect` and `stop_reason`
+
+Applies to every change of `connect` and `stop_reason` in `state.json`.
+Covers R1–R3, R9. Only the program holding `daemon.lock` writes them. A
+running daemon holds it for its whole life. `tervi disconnect` first tries
+to take the lock without waiting: if it gets it, no daemon is running and
+none can start until it lets go, so it writes `connect: false` (keeping
+every other field) and lets go; if it cannot, it calls `POST /disconnect`.
+A daemon that starts afterwards reads `connect: false` and stays idle, also
+after a reboot (R2).
+
+### Reading the state without a daemon
+
+Covers R7, R21. When `tervi status` or `tervi connect` finds no daemon, it
+reads `state.json` before saying tervi is not running: `connect: false` with
+no stop reason prints `○ Disconnected.`, and `credential_revoked` or
+`credential_rejected` prints that reason's message. Only `connect: true`
+with no daemon prints slice 2's "isn't running in the background".
+
+### Checking a credential
+
+Covers R11, R13, R18, R20. Every route that takes a credential hashes it
+and reads that one row of `credentials` by its unique hash. `active` is
+accepted; `revoked` is refused with `credential_revoked` (the unpair route
+answers `204` instead, R12); no row, or `pending`, `failed`, or `expired`
+on a route that needs `active`, is refused with `unknown_credential`. The
+acknowledgment and save-failure routes keep slice 1's handling of
+`pending`, `failed`, and `expired`.
+
+### Ending a credential
+
+Covers R11, R18, R26. Unpair, Revoke, and the acknowledgment of a pairing
+again all end a credential the same way: in one transaction, the
+`active` credential becomes `revoked` with `ended_at = now()`; after the
+transaction commits, the server closes that machine's connection, if it has
+one, with `4002`. Closing after the commit means a worker that reconnects at
+once is already refused.
+
+### Unpairing on the computer
+
+Covers R10–R16. `tervi unpair`:
+
+1. Checks the computer is paired (R15) and asks (R10).
+2. Unless `--local-only`, sends `POST /api/v1/machines/current/unpair` once,
+   waiting at most 10 seconds. `204` or `401` (any error code) means the
+   server part is done (R11, R13). No answer, or any other answer, removes
+   nothing and prints R12's message.
+3. Stops and disables the service (`systemctl --user disable --now tervi`),
+   then takes `daemon.lock`, waiting up to 10 seconds, so no daemon is left
+   running, also one started by hand.
+4. Removes the service file and runs `systemctl --user daemon-reload`,
+   deletes `credential.json`, then `state.json`, and lets go of the lock.
+5. Checks linger with `loginctl show-user` and prints R11's line if it is
+   on.
+
+A failure in steps 3–4 stops there and prints what could not be removed and
+`Finish with: tervi unpair --local-only` (R16). Running the command again
+after any failure is safe: the server answers `204` again, and every removal
+treats an already missing file as done.
+
+### Recognizing a computer that pairs again
+
+Covers R23–R28. When pairing starts, the worker sends `identity_hash`
+(HMAC-SHA256 keyed with `/etc/machine-id`, over tervi's app ID, as 64 hex
+characters), or none if it has no machine ID and the user agreed (R23). The
+server stores it on the pairing request and, if it is set, looks for
+machines with the same `identity_hash` that have had an `active` or
+`revoked` credential, taking the one whose latest credential was created
+last (R25); it stores that machine as `matched_machine_id`. The approval
+answer shows that machine: `still paired` while it has an `active`
+credential, otherwise the `ended_at` of its latest credential (R24). On the
+correct code, the new `pending` credential is attached to the matched
+machine instead of a new one. On the acknowledgment, in one transaction,
+the new credential becomes `active`, the machine's earlier `active`
+credential (if any) is ended as above, and the machine's hostname, OS, and
+display name are updated from the pairing request (R26). A pairing with no
+match is as in slice 1 (R28).
+
+### Moving existing machines
+
+Applies once, in migration `0003`. Each existing machine gets one
+`credentials` row with its credential hash, status, pairing request,
+creation time, and expiry; then those columns are removed from `machines`.
+Existing machines get no identity (`null`), so they are never matched; a
+computer paired before this slice is recognized only after it pairs once
+more.
 
 ## Technical decisions
 
