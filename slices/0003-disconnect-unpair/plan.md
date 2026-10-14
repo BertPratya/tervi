@@ -39,3 +39,16 @@ are recorded here as they are made.
   Not chosen: a new `stop_reason: "disconnected"` — keeps slice 0002's
   `○ Not connecting.` for that rare leftover case, at the cost of a third
   state.
+- The server keeps the computer and its credentials apart: `machines` holds
+  one row per computer (name, operating system, `last_seen_at`, identity),
+  and a new table holds one row per pairing that issued a credential (its
+  hash, status, expiry, and when it ended). Pairing again adds a new
+  credential row; no credential goes back to `active` — while "Accept as the
+  same computer" is finishing, one computer has its old `active` credential
+  and its new `pending` one at the same time (R26), which one row cannot
+  hold, and later slices' workspaces can point at the computer alone.
+  Not chosen: one table, where "same computer" creates a new row pointing to
+  the old one — the computer's history is spread over a chain of rows that
+  every later feature must follow; one table updated in place with a second
+  credential column — brings back `revoked → active`, and every check must
+  look at two credential columns.
