@@ -142,11 +142,13 @@ page). It also lets the server recognize a computer that pairs again.
   with `0`. The `tervi` program shall stay installed. Linger shall stay as
   it is; if it is on, the worker shall then print
   `  Linger is still on. Turn it off with: loginctl disable-linger`.
-- R12. If the server cannot be reached, then `tervi unpair` shall change
-  nothing, print
-  `✗ Can't reach <server>. Nothing was changed.` then
-  `Try again later, or revoke this computer on the Machines page.`, and exit
-  with `1`.
+- R12. If no answer comes from the server, then `tervi unpair` shall remove
+  nothing on the computer, print
+  `✗ No answer from <server>.` then
+  `  The server may or may not have unpaired this computer. Nothing was removed here.`
+  then `  Run tervi unpair again to finish, or revoke this computer on the Machines page.`,
+  and exit with `1`. Running `tervi unpair` again shall finish the unpairing,
+  whether or not the server received the first request.
 - R13. If the server already refuses this computer's credential (rejected or
   revoked), then `tervi unpair` shall treat the server part as done and
   remove the pairing on the computer as in R11.

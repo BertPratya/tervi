@@ -99,3 +99,16 @@ are recorded here as they are made.
   Not chosen: separate `unpaired` and `revoked` statuses — two values for
   the same state, kept only to show on the approval page which way a
   pairing ended.
+- `tervi unpair` tells the server with
+  `POST /api/v1/machines/current/unpair` and
+  `Authorization: Bearer <credential>`, tried once. An `active` credential
+  becomes `revoked`, the machine's connection is closed if open, and the
+  answer is `204`; an already `revoked` credential answers `204` again, so
+  running the command again after a lost answer finishes it (R12) — it
+  works whether or not the computer is connected, and uses the proof and
+  the `/api/v1/machines/current/…` routes of slice 0002.
+  Not chosen: an `unpair` message over the WebSocket — after
+  `tervi disconnect` there is no connection, and R3 forbids opening one;
+  no server step at all — that is `--local-only` (R14); answering a repeat
+  with `401 credential_revoked` — it also finishes (R13), but a normal
+  retry would go through the path for refusals.
