@@ -1,5 +1,5 @@
-// Package protocol defines the messages and close codes shared by the server
-// and worker connection.
+// Package protocol defines the connection messages, close codes, and credential
+// error codes shared by the server and the worker.
 package protocol
 
 import (
