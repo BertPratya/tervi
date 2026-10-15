@@ -66,6 +66,37 @@ func TestFileBackendMissingIsNotFound(t *testing.T) {
 	}
 }
 
+func TestDeleteLeftovers(t *testing.T) {
+	dir := t.TempDir()
+	for name, value := range map[string]string{
+		".credential-x1y2":      "secret copy",
+		".credential-other":     "another secret copy",
+		"credential-check.json": "check data",
+		"notes.txt":             "leave me",
+		"credential.json":       "primary credential",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := DeleteLeftovers(dir); err != nil {
+		t.Fatalf("DeleteLeftovers() error = %v", err)
+	}
+	for _, name := range []string{".credential-x1y2", ".credential-other", "credential-check.json"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("leftover %s remains: %v", name, err)
+		}
+	}
+	for _, name := range []string{"notes.txt", "credential.json"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("unrelated file %s was removed: %v", name, err)
+		}
+	}
+	if err := DeleteLeftovers(dir); err != nil {
+		t.Errorf("second DeleteLeftovers() error = %v, want nil", err)
+	}
+}
+
 func TestFileBackendRefusesOpenPermissions(t *testing.T) {
 	for _, mode := range []os.FileMode{0640, 0604, 0660, 0644} {
 		t.Run(mode.String(), func(t *testing.T) {

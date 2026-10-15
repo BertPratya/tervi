@@ -56,18 +56,11 @@ func newFlow(opts Options) *pairingFlow {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.DisableKeepAlives = true
 	f := &pairingFlow{
 		requestTimeout: opts.RequestTimeout,
 		pollInterval:   opts.PollInterval,
 		now:            opts.Now,
-		client: &http.Client{
-			Transport: transport,
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
+		client:         NewHTTPClient(),
 	}
 	f.codePhase = f.runCodePhase
 	return f
