@@ -92,6 +92,8 @@ Spec: [spec.md](spec.md)
 
 ## Overview
 | Part | Location | Notes |
+Location names the file for each new file, and the package for changes to
+existing files.
 
 ## Data
 What this slice adds or changes in design/data-model.md (changed in the same

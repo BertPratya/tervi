@@ -32,8 +32,10 @@ info:
       task that builds it removes the mark; a finished slice has none.
 
     Added by slice 0001 (pairing). Slice 0002 (connection) adds the
-    connection route, the machines list, and the Machines page. The messages
-    sent over the connection are in `asyncapi.yaml`.
+    connection route, the machines list, and the Machines page. Slice 0003
+    (disconnect and unpair) adds unpairing and revoking, the computer's
+    identity, and the approval page's match. The messages sent over the
+    connection are in `asyncapi.yaml`.
 servers:
   - url: http://localhost:8080
     description: Local server (slice 0001 listens on loopback only)
@@ -89,7 +91,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/StartResponse"
         "400":
-          description: "`invalid_input`: not a JSON object, over 4 KB, a non-string field, a value over its limit, or a NUL character"
+          description: "`invalid_input`: not a JSON object, over 4 KB, a non-string field, a value over its limit, a NUL character, or an `identity_hash` that is not 64 lowercase hex characters"
           content:
             application/json:
               schema:
@@ -165,13 +167,18 @@ paths:
       tags: [worker]
       summary: Confirm the credential was saved (step 7b)
       operationId: acknowledgeMachine
-      description: No body. Safe to repeat.
+      description: |
+        No body. Safe to repeat. When the pairing matched an earlier machine,
+        the same change also revokes that machine's earlier `active`
+        credential, closes its connection with `4002`, and updates the
+        machine's hostname, OS, and display name from this pairing (slice
+        0003, R26).
       security:
         - credential: []
       responses:
         "200":
           description: |
-            | Machine | `result` |
+            | Credential | `result` |
             | --- | --- |
             | `pending`, not expired | `ok` (now `active`) |
             | `active` | `ok`, nothing changes |
@@ -188,7 +195,7 @@ paths:
                     type: string
                     enum: [ok, failed, expired]
         "401":
-          $ref: "#/components/responses/UnknownCredential"
+          $ref: "#/components/responses/RefusedCredential"
         "403":
           $ref: "#/components/responses/UnknownHost"
         "500":
@@ -205,7 +212,7 @@ paths:
       responses:
         "200":
           description: |
-            | Machine | `result` |
+            | Credential | `result` |
             | --- | --- |
             | `pending`, not expired | `ok` (now `failed`) |
             | `active` | `active`, nothing changes |
@@ -222,7 +229,7 @@ paths:
                     type: string
                     enum: [ok, active, failed, expired]
         "401":
-          $ref: "#/components/responses/UnknownCredential"
+          $ref: "#/components/responses/RefusedCredential"
         "403":
           $ref: "#/components/responses/UnknownHost"
         "500":
@@ -234,10 +241,11 @@ paths:
       summary: Open the machine's connection (WebSocket)
       operationId: openConnection
       description: |
-        A WebSocket opening request. The credential is checked first; an
-        unknown credential, or one whose machine is not `active`, gets `401`
-        and no WebSocket opens. That `401` is the only answer that means the
-        worker must stop trying (spec R18, R19). After `101`, the messages
+        A WebSocket opening request. The credential is checked first; a
+        credential that is not `active` gets `401` and no WebSocket opens:
+        `credential_revoked` for a revoked one (slice 0003, R20),
+        `unknown_credential` for any other. That `401` is the only answer
+        that means the worker must stop trying (spec R18, R19). After `101`, the messages
         are described in `asyncapi.yaml`. A new connection for a machine
         that already has one replaces it (spec R15). A request with a known
         credential that is not a WebSocket opening request (no
@@ -261,7 +269,7 @@ paths:
                 $ref: "#/components/schemas/Error"
               example: { error: invalid_input }
         "401":
-          $ref: "#/components/responses/UnknownCredential"
+          $ref: "#/components/responses/RefusedCredential"
         "403":
           description: |
             `unknown_host`: the `Host` header names a host that is not
@@ -279,14 +287,70 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/machines/current/unpair:
+    post:
+      tags: [worker]
+      summary: Unpair this machine (`tervi unpair`)
+      operationId: unpairMachine
+      x-planned: true
+      description: |
+        No body. Revokes the credential, then closes the machine's
+        connection, if it has one, with `4002` (slice 0003, R11). Safe to
+        repeat: an already revoked credential answers `204` again, so
+        running `tervi unpair` again after a lost answer finishes it (R12).
+      security:
+        - credential: []
+      responses:
+        "204":
+          description: The credential is revoked (now, or earlier)
+        "401":
+          $ref: "#/components/responses/UnknownCredential"
+        "403":
+          $ref: "#/components/responses/UnknownHost"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/machines/{machine_id}/revoke:
+    post:
+      tags: [browser]
+      summary: The Revoke button on the Machines page
+      operationId: revokeMachine
+      x-planned: true
+      description: |
+        No body. Revokes the machine's `active` credential, then closes its
+        connection, if it has one, with `4002` (slice 0003, R18). Safe to
+        repeat: a machine with no `active` credential answers `204`. No
+        proof yet: the server has no sign-in (slice 0003, R30).
+      security: []
+      parameters:
+        - name: machine_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The machine has no `active` credential now
+        "403":
+          $ref: "#/components/responses/UnknownHost"
+        "404":
+          description: "`unknown_machine`: no machine has this ID, or the ID is not a UUID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: unknown_machine }
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/machines:
     get:
       tags: [browser]
       summary: Every paired machine, for the Machines page
       operationId: listMachines
       description: |
-        Only `active` machines, sorted by `display_name`. No proof yet: the
-        server has no sign-in (spec R27).
+        Only machines with an `active` credential, sorted by
+        `display_name`. No proof yet: the server has no sign-in (spec R27).
       security: []
       responses:
         "200":
@@ -435,7 +499,7 @@ components:
         error:
           type: string
           enum:
-            [invalid_input, unknown_key, unknown_credential, invalid_link, unknown_host, forbidden_origin, internal_error]
+            [invalid_input, unknown_key, unknown_credential, credential_revoked, unknown_machine, invalid_link, unknown_host, forbidden_origin, internal_error]
 
     PairingStatus:
       type: string
@@ -458,10 +522,19 @@ components:
         os_version:
           type: string
           maxLength: 32
+        identity_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: |
+            The computer's identity: HMAC-SHA256 keyed with `/etc/machine-id`
+            over tervi's app ID, as 64 lowercase hex characters. Left out
+            when the computer has no machine ID. Any other value gets
+            `invalid_input`. Never shown or logged. Added by slice 0003 (R23).
       example:
         hostname: bert-desktop
         os_name: Ubuntu
         os_version: "24.04"
+        identity_hash: 3f1c9a0e5b7d24c68e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f
 
     StartResponse:
       type: object
@@ -579,6 +652,35 @@ components:
         display_name:
           type: string
           description: Only when `paired`.
+        earlier_machine:
+          $ref: "#/components/schemas/EarlierMachine"
+
+    EarlierMachine:
+      type: object
+      additionalProperties: false
+      description: |
+        Only when the pairing matched an earlier machine (slice 0003, R24);
+        Accept then brings that machine back (R26). Left out when nothing
+        matched (R28).
+      required: [display_name, still_paired, unpaired_at]
+      properties:
+        display_name:
+          type: string
+        still_paired:
+          type: boolean
+          description: True while the machine has an `active` credential.
+        unpaired_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            The `ended_at` of its most recently ended (revoked) credential;
+            `null` while `still_paired`. The page shows only the day and
+            month, in the browser's time zone.
+      example:
+        display_name: bert-desktop
+        still_paired: false
+        unpaired_at: "2026-10-13T09:12:44Z"
 
     MachineList:
       type: object
@@ -645,6 +747,20 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
           example: { error: unknown_credential }
+    RefusedCredential:
+      description: |
+        `credential_revoked`: the credential was revoked (slice 0003).
+        `unknown_credential`: it is missing, unknown, or otherwise not
+        accepted here.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            credential_revoked:
+              value: { error: credential_revoked }
+            unknown_credential:
+              value: { error: unknown_credential }
     InvalidLink:
       description: "`invalid_link`: the approval key is missing or unknown"
       content:
