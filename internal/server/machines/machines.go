@@ -1,17 +1,19 @@
-// Package machines provides the paired machines list API.
+// Package machines provides machine credential and listing routes.
 package machines
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
 	"github.com/bertpratya/tervi/internal/server/connection"
+	"github.com/bertpratya/tervi/internal/server/credential"
 	"github.com/bertpratya/tervi/internal/server/httpapi"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Deps contains the services used by the machines list.
+// Deps contains the services used by the machine routes.
 type Deps struct {
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
@@ -27,9 +29,30 @@ type listedMachine struct {
 	LastSeenSecondsAgo *int64 `json:"last_seen_seconds_ago"`
 }
 
-// Register adds the machines list API route to mux.
+// Register adds the machine routes to mux.
 func Register(mux *http.ServeMux, deps Deps) {
 	mux.Handle("GET /api/v1/machines", listHandler{deps: deps})
+	mux.Handle("POST /api/v1/machines/current/unpair", unpairHandler{deps: deps})
+	mux.Handle("POST /api/v1/machines/{machine_id}/revoke", revokeHandler{deps: deps})
+}
+
+func revokeMachineCredential(ctx context.Context, deps Deps, machineID string) error {
+	tx, err := deps.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	if _, err := credential.Revoke(ctx, tx, machineID); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if deps.List != nil {
+		deps.List.CloseRevoked(machineID)
+	}
+	return nil
 }
 
 type listHandler struct {

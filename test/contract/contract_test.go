@@ -134,6 +134,35 @@ func TestServerMatchesContract(t *testing.T) {
 	response = client.call(t, http.MethodGet, "/machines", "", nil, callOptions{})
 	expectStatus(t, response, http.StatusOK)
 
+	const unpairCredential = "contract-unpair-credential"
+	dbtest.InsertMachineCredential(t, pool, dbtest.MachineCredential{
+		DisplayName: "contract unpair machine",
+		OSName:      "Linux",
+		OSVersion:   "1",
+		Hash:        secret.Hash(secret.FromString(unpairCredential)),
+		Status:      "active",
+	})
+	for attempt := 1; attempt <= 2; attempt++ {
+		response = client.call(t, http.MethodPost, "/api/v1/machines/current/unpair", "", bearerHeaders(unpairCredential), callOptions{})
+		expectStatus(t, response, http.StatusNoContent)
+	}
+	response = client.call(t, http.MethodPost, "/api/v1/machines/current/unpair", "", bearerHeaders("unknown-contract-unpair"), callOptions{})
+	expectStatus(t, response, http.StatusUnauthorized)
+	expectJSONField(t, response, "error", "unknown_credential")
+
+	var revokeMachineID string
+	if err := pool.QueryRow(context.Background(), `SELECT machine_id::text FROM credentials WHERE credential_hash = $1`,
+		secret.Hash(secret.FromString(credentialA))).Scan(&revokeMachineID); err != nil {
+		t.Fatalf("read contract revoke machine ID: %v", err)
+	}
+	for attempt := 1; attempt <= 2; attempt++ {
+		response = client.call(t, http.MethodPost, "/api/v1/machines/"+revokeMachineID+"/revoke", "", nil, callOptions{})
+		expectStatus(t, response, http.StatusNoContent)
+	}
+	response = client.call(t, http.MethodPost, "/api/v1/machines/not-a-uuid/revoke", "", nil, callOptions{})
+	expectStatus(t, response, http.StatusNotFound)
+	expectJSONField(t, response, "error", "unknown_machine")
+
 	startB := client.startPairing(t, "worker-b")
 	approvalHeadersB := bearerHeaders(approvalKey(t, startB.ApprovalURL))
 	response = client.call(t, http.MethodPost, "/api/v1/approvals/current/accept", "", approvalHeadersB, callOptions{})
@@ -204,10 +233,6 @@ func TestServerMatchesContract(t *testing.T) {
 	expectStatus(t, response, http.StatusNotFound)
 	expectJSONField(t, response, "error", "invalid_link")
 
-	if _, err := pool.Exec(context.Background(), `UPDATE credentials
-		SET status = 'revoked', ended_at = now() WHERE credential_hash = $1`, secret.Hash(secret.FromString(credentialA))); err != nil {
-		t.Fatalf("revoke contract credential: %v", err)
-	}
 	client.openConnectionRefused(t, credentialA, "credential_revoked")
 	for _, route := range []struct {
 		operation string
@@ -235,6 +260,8 @@ func TestServerMatchesContract(t *testing.T) {
 		{operation: "submitCode", method: http.MethodPost, path: "/api/v1/pairings/current/code", body: jsonBody(map[string]string{"code": "1234-5678"}), headers: jsonHeaders()},
 		{operation: "acknowledgeMachine", method: http.MethodPost, path: "/api/v1/machines/current/acknowledgment"},
 		{operation: "reportSaveFailure", method: http.MethodPost, path: "/api/v1/machines/current/save-failure"},
+		{operation: "unpairMachine", method: http.MethodPost, path: "/api/v1/machines/current/unpair", headers: bearerHeaders(unpairCredential)},
+		{operation: "revokeMachine", method: http.MethodPost, path: "/api/v1/machines/00000000-0000-4000-8000-000000000001/revoke"},
 		{operation: "openConnection", method: http.MethodGet, path: "/api/v1/machines/current/connection", headers: bearerHeaders(credentialA)},
 		{operation: "listMachines", method: http.MethodGet, path: "/api/v1/machines"},
 		{operation: "machinesPage", method: http.MethodGet, path: "/machines"},

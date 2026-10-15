@@ -292,7 +292,6 @@ paths:
       tags: [worker]
       summary: Unpair this machine (`tervi unpair`)
       operationId: unpairMachine
-      x-planned: true
       description: |
         No body. Revokes the credential, then closes the machine's
         connection, if it has one, with `4002` (slice 0003, R11). Safe to
@@ -315,7 +314,6 @@ paths:
       tags: [browser]
       summary: The Revoke button on the Machines page
       operationId: revokeMachine
-      x-planned: true
       description: |
         No body. Revokes the machine's `active` credential, then closes its
         connection, if it has one, with `4002` (slice 0003, R18). Safe to
