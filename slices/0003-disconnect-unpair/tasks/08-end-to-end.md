@@ -16,7 +16,7 @@ appears anywhere.
   connected or reconnecting, the worker shall close the connection, stop
   trying to connect, keep the pairing, and print
   `✓ Disconnected. tervi stays in the background but won't connect.` then
-  `Connect again with: tervi connect`, and exit with `0`. The daemon shall
+  `  Connect again with: tervi connect`, and exit with `0`. The daemon shall
   keep running, and write the log line `○ Disconnected.`
 - R2. While the user has disconnected, the daemon shall not connect, also
   after the computer restarts, until the user runs `tervi connect`.
@@ -48,7 +48,7 @@ appears anywhere.
   `✗ This computer was unpaired on the server. Pair it again with: tervi pair --server <server>`.
 - R21. On such a computer, `tervi status`, `tervi connect`, and
   `tervi disconnect` shall print `✗ This computer was unpaired on the server.`
-  then `Pair it again with: tervi pair --server <server>`. `tervi status` and
+  then `  Pair it again with: tervi pair --server <server>`. `tervi status` and
   `tervi connect` shall exit with `1`; `tervi disconnect` with `0`, as in R5.
 - R26. When the user clicks **Accept** on such a page and the pairing
   completes, the server shall continue the earlier machine instead of

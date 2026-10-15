@@ -24,7 +24,7 @@ no daemon is running.
   `✗ This computer was unpaired on the server. Pair it again with: tervi pair --server <server>`.
 - R21. On such a computer, `tervi status`, `tervi connect`, and
   `tervi disconnect` shall print `✗ This computer was unpaired on the server.`
-  then `Pair it again with: tervi pair --server <server>`. `tervi status` and
+  then `  Pair it again with: tervi pair --server <server>`. `tervi status` and
   `tervi connect` shall exit with `1`; `tervi disconnect` with `0`, as in R5.
   *This task: `tervi status` and `tervi connect`. `tervi disconnect` is
   task 05.*

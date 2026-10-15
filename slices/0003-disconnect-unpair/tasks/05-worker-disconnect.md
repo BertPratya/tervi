@@ -17,14 +17,14 @@ until `tervi connect`.
   connected or reconnecting, the worker shall close the connection, stop
   trying to connect, keep the pairing, and print
   `✓ Disconnected. tervi stays in the background but won't connect.` then
-  `Connect again with: tervi connect`, and exit with `0`. The daemon shall
+  `  Connect again with: tervi connect`, and exit with `0`. The daemon shall
   keep running, and write the log line `○ Disconnected.`
 - R2. While the user has disconnected, the daemon shall not connect, also
   after the computer restarts, until the user runs `tervi connect`.
 - R3. When `tervi disconnect` runs and tervi is not running in the
   background, the worker shall still record that it must not connect, print
   `✓ Disconnected. tervi won't connect, including after the computer restarts.`
-  then `Connect again with: tervi connect`, and exit with `0`. It shall not
+  then `  Connect again with: tervi connect`, and exit with `0`. It shall not
   start tervi in the background.
 - R4. When `tervi disconnect` runs on a computer the user already
   disconnected, the worker shall print `Already disconnected.`, change
@@ -51,7 +51,7 @@ until `tervi connect`.
   R4.
 - R21. On such a computer, `tervi status`, `tervi connect`, and
   `tervi disconnect` shall print `✗ This computer was unpaired on the server.`
-  then `Pair it again with: tervi pair --server <server>`. `tervi status` and
+  then `  Pair it again with: tervi pair --server <server>`. `tervi status` and
   `tervi connect` shall exit with `1`; `tervi disconnect` with `0`, as in R5.
   *This task: `tervi disconnect` on such a computer.*
 
