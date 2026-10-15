@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/bertpratya/tervi/internal/protocol"
 	"github.com/bertpratya/tervi/internal/secret"
 	"github.com/bertpratya/tervi/internal/worker/cli"
 	"github.com/bertpratya/tervi/internal/worker/credential"
@@ -116,14 +117,14 @@ func (f *pairingFlow) confirm(ctx context.Context, env cli.Env, entry credential
 				Error string `json:"error"`
 			}
 			if result.err == nil && json.Unmarshal(result.body, &answer) == nil {
-				if answer.Error == "unknown_credential" {
+				if answer.Error == protocol.ErrorUnknownCredential {
 					message := "✗ The server doesn't recognize this pairing. Run the same command again to start a new one."
 					if earlier {
 						message = "✗ The server doesn't recognize the earlier pairing. Run the same command again to start a new one."
 					}
 					return f.cleanupAndReport(ctx, env, entry, message)
 				}
-				if earlier && answer.Error == "credential_revoked" {
+				if earlier && answer.Error == protocol.ErrorCredentialRevoked {
 					return cli.StartNewPairing
 				}
 			}

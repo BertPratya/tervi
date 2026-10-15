@@ -84,3 +84,12 @@ func TestProtocolConstants(t *testing.T) {
 		}
 	}
 }
+
+func TestCredentialErrorCodes(t *testing.T) {
+	if ErrorUnknownCredential != "unknown_credential" {
+		t.Errorf("unknown credential code = %q, want unknown_credential", ErrorUnknownCredential)
+	}
+	if ErrorCredentialRevoked != "credential_revoked" {
+		t.Errorf("credential revoked code = %q, want credential_revoked", ErrorCredentialRevoked)
+	}
+}

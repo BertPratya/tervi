@@ -18,9 +18,7 @@ import (
 )
 
 const (
-	connectWaitLimit       = 30 * time.Second
-	credentialErrorUnknown = "unknown_credential"
-	credentialErrorRevoked = "credential_revoked"
+	connectWaitLimit = 30 * time.Second
 )
 
 type waitResult uint8

@@ -22,6 +22,9 @@ const (
 	CloseReplaced       = 4000
 	CloseTimeout        = 4001
 	CloseRevoked        = 4002
+
+	ErrorUnknownCredential = "unknown_credential"
+	ErrorCredentialRevoked = "credential_revoked"
 )
 
 const DefaultHelloTimeout = 30 * time.Second

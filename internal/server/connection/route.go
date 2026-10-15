@@ -32,12 +32,12 @@ func (handler connectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	}
 	proof, ok := httpapi.BearerProof(r)
 	if !ok {
-		httpapi.WriteError(w, http.StatusUnauthorized, credential.ErrorUnknownCredential)
+		httpapi.WriteError(w, http.StatusUnauthorized, protocol.ErrorUnknownCredential)
 		return
 	}
 	row, found, err := credential.Find(r.Context(), handler.deps.Pool, secret.FromString(proof))
 	if !found && err == nil {
-		httpapi.WriteError(w, http.StatusUnauthorized, credential.ErrorUnknownCredential)
+		httpapi.WriteError(w, http.StatusUnauthorized, protocol.ErrorUnknownCredential)
 		return
 	}
 	if err != nil {
@@ -45,11 +45,11 @@ func (handler connectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if row.Status == credential.StatusRevoked {
-		httpapi.WriteError(w, http.StatusUnauthorized, credential.ErrorCredentialRevoked)
+		httpapi.WriteError(w, http.StatusUnauthorized, protocol.ErrorCredentialRevoked)
 		return
 	}
 	if row.Status != credential.StatusActive {
-		httpapi.WriteError(w, http.StatusUnauthorized, credential.ErrorUnknownCredential)
+		httpapi.WriteError(w, http.StatusUnauthorized, protocol.ErrorUnknownCredential)
 		return
 	}
 	machineID := row.MachineID
