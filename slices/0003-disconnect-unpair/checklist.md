@@ -102,7 +102,7 @@ Do the rows in order: each one can depend on the state the row before left.
 | R4, R5, R6 | Each case, both with and without a daemon | `TestDisconnectAlready`, `TestDisconnectRejectedOrRevoked`, `TestDisconnectNotPaired` | ⬜ |
 | R7 | `○ Disconnected.` from the daemon and from `state.json` | `TestStatusDisconnected`, `TestStatusNoDaemonConnectTrue`, `TestDisconnectThenStatus` | ⬜ |
 | R10 | Every answer to the question | `TestUnpairAsks`, `TestUnpairYesSkipsQuestion` | ⬜ |
-| R11 | The order of removal, the credential sent, the linger line, the server's side | `TestUnpairRemovesInOrder`, `TestUnpairLingerLine`, `TestUnpairRevokes`, `TestUnpairClosesConnection`, `TestUnpairEndToEnd` | ⬜ |
+| R11 | The order of removal, the credential sent, the linger line, the server's side | `TestUnpairRemovesInOrder`, `TestUnpairLingerLine`, `TestUnpairRevokes`, `TestUnpairClosesConnection`, `TestRevokeCredentialDoesNotRevokeReplacement`, `TestUnpairEndToEnd` | ⬜ |
 | R12 | No answer and other answers remove nothing; repeating finishes | `TestUnpairNoAnswer`, `TestUnpairOtherAnswer`, `TestUnpairRepeat` | ⬜ |
 | R13 | A credential the server already refuses | `TestUnpairServerAlreadyRefuses`, `TestUnpairUnknown` | ⬜ |
 | R14, R15 | `--local-only` sends nothing; not paired; leftovers, also with a damaged or exposed `credential.json`, which cannot be caused safely by hand; an unfinished pairing; no copy of the secret is left, including a crash's temporary file | `TestUnpairLocalOnly`, `TestUnpairNotPaired`, `TestUnpairLeftovers`, `TestUnpairUnfinishedPairing`, `TestUnpairRemovesSecretLeftovers`, `TestDeleteLeftovers` | ⬜ |

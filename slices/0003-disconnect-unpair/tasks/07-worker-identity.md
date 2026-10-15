@@ -145,7 +145,8 @@ The acknowledgment route now also answers `401 credential_revoked`
 pairing whose acknowledgment answer was lost, whose machine was then
 revoked on the page; every `tervi pair` would repeat that message. This
 can only happen when `tervi pair` resumes that pairing
-(`Flow.FinishEarlier`).
+(`Flow.FinishEarlier`). `pair/confirm.go` compares against the error-code
+constants in `internal/protocol` (fix 2).
 
 - In `pair`, an acknowledgment answered `401 credential_revoked` makes
   `FinishEarlier` return the new exported constant `cli.StartNewPairing`

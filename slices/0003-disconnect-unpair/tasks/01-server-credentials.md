@@ -142,11 +142,16 @@ Also in `internal/server/credential` (fix 1): the one SQL condition for
 "this machine has an `active` credential", built by a function that takes
 the caller's machine ID column (for example
 `credential.HasActiveSQL("m.machine_id")`), used by the machines list and
-the approval answer's `still_paired`; and the two error codes as constants
-(`unknown_credential`, `credential_revoked`), used by every server route
-that answers them.
+the approval answer's `still_paired`. `Revoke` and `RevokeCredential` share
+one `UPDATE` statement, which differs only in the column it matches (fix 2).
 
-Tasks 02 and 03 call it. The caller closes the machine's connection after
+The two error codes `unknown_credential` and `credential_revoked` are
+constants in `internal/protocol`, next to the close codes, so the server and
+the worker use the same ones (fix 2; fix 1 had put them in
+`internal/server/credential`). Every server route that answers them uses
+them.
+
+Tasks 02 and 03 call `Revoke`. The caller closes the machine's connection after
 its transaction commits (next part), so a worker that reconnects at once is
 already refused.
 

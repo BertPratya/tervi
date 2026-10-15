@@ -43,6 +43,8 @@ no daemon is running.
   `401 {"error": "unknown_credential"}` as a rejection
   (`isUnknownCredentialBody`). On it, `reject` writes `connect: false` and
   `stop_reason: "credential_rejected"`, sets the status, and logs one line.
+  The daemon compares against the error-code constants in
+  `internal/protocol` (fix 2).
 - `waitForConnect` answers `rejected` when the status stops with
   `credential_rejected`.
 - `tervi status` prints `✗ tervi isn't running in the background.` and
