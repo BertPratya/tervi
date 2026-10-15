@@ -302,6 +302,7 @@ func TestDisconnectOverSocket(t *testing.T) {
 		{"revoked", daemon.DisconnectResult{Result: daemon.ResultRevoked}, `{"result":"revoked"}`},
 		{"not paired", daemon.DisconnectResult{Result: daemon.ResultNotPaired}, `{"result":"not_paired"}`},
 		{"failed", daemon.DisconnectResult{Result: daemon.ResultFailed, Path: "/state/state.json"}, `{"result":"failed","path":"/state/state.json"}`},
+		{"unreadable", daemon.DisconnectResult{Result: "unreadable", Path: "/state/credential.json"}, `{"result":"unreadable","path":"/state/credential.json"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

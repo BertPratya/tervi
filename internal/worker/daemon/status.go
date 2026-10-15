@@ -20,6 +20,7 @@ const (
 	ResultFailed              = "failed"
 	ResultDisconnected        = "disconnected"
 	ResultAlreadyDisconnected = "already_disconnected"
+	ResultUnreadable          = "unreadable"
 )
 
 // Status describes the daemon's connection state.
@@ -80,19 +81,6 @@ func (d *Daemon) setTrying(try int, server string, now time.Time) {
 	defer d.mu.Unlock()
 	server = d.knownServerLocked(server)
 	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: try, NextTry: now, LastError: d.status.LastError})
-}
-
-func (d *Daemon) setRetry(try int, server, lastError string, next time.Time) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	server = d.knownServerLocked(server)
-	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: try, NextTry: next, LastError: lastError})
-}
-
-func (d *Daemon) setConnected(server string, since time.Time) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.setStatusLocked(Status{State: StateConnected, Server: server, ConnectedSince: since})
 }
 
 func (d *Daemon) currentServer() string {

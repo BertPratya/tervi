@@ -76,7 +76,3 @@ func (d *Daemon) waitForConnect(ctx context.Context) ConnectResult {
 		}
 	}
 }
-
-func (d *Daemon) reject(_ string) {
-	d.stopTrying(state.StopReasonCredentialRejected)
-}

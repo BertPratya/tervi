@@ -245,6 +245,23 @@ func TestDisconnectWriteFailure(t *testing.T) {
 	}
 }
 
+func TestDisconnectUnreadableAnswer(t *testing.T) {
+	env, _, stdout, stderr := commandEnv(t, &commandRunner{}, &commandControl{}, true)
+	path := state.StatePath(env.StateDir)
+	client := &disconnectControl{answer: control.DisconnectAnswer{Result: "unreadable", Path: path}}
+	env.ControlClient = client
+	if err := state.WriteState(env.StateDir, state.State{MachineID: "machine-123", CredentialSaved: true, Confirmed: true, Connect: true}); err != nil {
+		t.Fatal(err)
+	}
+	if code := runDisconnectWhileLockBusy(t, env); code != 1 {
+		t.Fatalf("Run(disconnect) = %d, want 1", code)
+	}
+	want := fmt.Sprintf("✗ Can't read %s.\n", path)
+	if stdout.String() != want || stderr.Len() != 0 {
+		t.Errorf("stdout=%q stderr=%q, want %q", stdout.String(), stderr.String(), want)
+	}
+}
+
 func makeLongStateDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

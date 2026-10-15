@@ -195,7 +195,7 @@ func (answer *ConnectAnswer) UnmarshalJSON(data []byte) error {
 
 func disconnectAnswer(result daemon.DisconnectResult) DisconnectAnswer {
 	answer := DisconnectAnswer{Result: result.Result}
-	if result.Result == daemon.ResultFailed {
+	if result.Result == daemon.ResultFailed || result.Result == daemon.ResultUnreadable {
 		answer.Path = result.Path
 	}
 	return answer
@@ -203,7 +203,7 @@ func disconnectAnswer(result daemon.DisconnectResult) DisconnectAnswer {
 
 func (answer DisconnectAnswer) MarshalJSON() ([]byte, error) {
 	wire := disconnectAnswerJSON{Result: answer.Result}
-	if answer.Result == daemon.ResultFailed {
+	if answer.Result == daemon.ResultFailed || answer.Result == daemon.ResultUnreadable {
 		wire.Path = &answer.Path
 	}
 	return json.Marshal(wire)

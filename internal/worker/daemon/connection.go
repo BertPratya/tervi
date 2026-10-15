@@ -63,7 +63,6 @@ func (d *Daemon) tryConnection(parent context.Context, try int) attemptResult {
 		return d.failedAttempt("", credential.ErrNotFound, nil, "")
 	}
 	server := entry.Server
-	d.setTrying(try, server, d.opts.Now())
 
 	connectionURL, urlErr := connectionAddress(server)
 	if urlErr != nil {

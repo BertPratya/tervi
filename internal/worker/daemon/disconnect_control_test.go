@@ -59,7 +59,7 @@ func TestDisconnectDuringConnect(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	connectCtx, cancelConnect := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	connectCtx, cancelConnect := context.WithCancel(context.Background())
 	t.Cleanup(cancelConnect)
 	connectDone := make(chan error, 1)
 	go func() {
@@ -87,14 +87,19 @@ func TestDisconnectDuringConnect(t *testing.T) {
 		}{answer, err}
 	}()
 	select {
-	case err := <-connectDone:
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("POST /connect error = %v, want its waiting context to expire", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("POST /connect did not finish after its context expired")
+	case result := <-disconnectDone:
+		t.Fatalf("POST /disconnect returned before POST /connect ended: %+v, %v", result.answer, result.err)
+	case <-time.After(50 * time.Millisecond):
 	}
 	cancelConnect()
+	select {
+	case err := <-connectDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("POST /connect error = %v, want its waiting context to be cancelled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("POST /connect did not finish after its context was cancelled")
+	}
 	select {
 	case result := <-disconnectDone:
 		if result.err != nil || result.answer.Result != daemon.ResultDisconnected {

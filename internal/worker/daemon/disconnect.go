@@ -19,43 +19,11 @@ func (d *Daemon) Disconnect(_ context.Context) DisconnectResult {
 	d.connectMu.Lock()
 	defer d.connectMu.Unlock()
 
-	_, _, paired, err := credential.Paired(d.opts.StateDir, d.opts.Store)
-	if err != nil {
-		return DisconnectResult{Result: ResultFailed, Path: state.StatePath(d.opts.StateDir)}
-	}
-	if !paired {
-		return DisconnectResult{Result: ResultNotPaired}
-	}
 	d.mu.Lock()
-	record, exists, err := state.ReadState(d.opts.StateDir)
-	if err != nil {
+	result := DisconnectState(d.opts.StateDir, d.opts.Store)
+	if result.Result != ResultDisconnected {
 		d.mu.Unlock()
-		return DisconnectResult{Result: ResultFailed, Path: state.StatePath(d.opts.StateDir)}
-	}
-	if !exists || !record.Confirmed {
-		d.mu.Unlock()
-		return DisconnectResult{Result: ResultNotPaired}
-	}
-	if record.StopReason != nil {
-		switch *record.StopReason {
-		case state.StopReasonCredentialRejected:
-			d.mu.Unlock()
-			return DisconnectResult{Result: ResultRejected}
-		case state.StopReasonCredentialRevoked:
-			d.mu.Unlock()
-			return DisconnectResult{Result: ResultRevoked}
-		}
-	}
-	if !record.Connect {
-		d.mu.Unlock()
-		return DisconnectResult{Result: ResultAlreadyDisconnected}
-	}
-
-	record.Connect = false
-	record.StopReason = nil
-	if err := state.WriteState(d.opts.StateDir, record); err != nil {
-		d.mu.Unlock()
-		return DisconnectResult{Result: ResultFailed, Path: state.StatePath(d.opts.StateDir)}
+		return result
 	}
 	d.disconnectSeq++
 	d.enabled = false
@@ -71,6 +39,40 @@ func (d *Daemon) Disconnect(_ context.Context) DisconnectResult {
 	d.signal()
 	if conn != nil {
 		_ = conn.Close(websocket.StatusCode(protocol.CloseNormal), "daemon disconnected")
+	}
+	return result
+}
+
+// DisconnectState classifies the current pairing and connection state, and
+// writes connect: false when a paired computer is connecting.
+func DisconnectState(stateDir string, store *credential.Store) DisconnectResult {
+	_, record, paired, err := credential.Paired(stateDir, store)
+	if err != nil {
+		path := credential.Path(stateDir)
+		if errors.Is(err, credential.ErrStateUnreadable) {
+			path = state.StatePath(stateDir)
+		}
+		return DisconnectResult{Result: ResultUnreadable, Path: path}
+	}
+	if !paired || !record.Confirmed {
+		return DisconnectResult{Result: ResultNotPaired}
+	}
+	if record.StopReason != nil {
+		switch *record.StopReason {
+		case state.StopReasonCredentialRejected:
+			return DisconnectResult{Result: ResultRejected}
+		case state.StopReasonCredentialRevoked:
+			return DisconnectResult{Result: ResultRevoked}
+		}
+	}
+	if !record.Connect {
+		return DisconnectResult{Result: ResultAlreadyDisconnected}
+	}
+
+	record.Connect = false
+	record.StopReason = nil
+	if err := state.WriteState(stateDir, record); err != nil {
+		return DisconnectResult{Result: ResultFailed, Path: state.StatePath(stateDir)}
 	}
 	return DisconnectResult{Result: ResultDisconnected}
 }

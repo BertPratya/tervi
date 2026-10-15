@@ -157,6 +157,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 				return nil
 			}
 			if d.disconnectedAfterServing(sequence) {
+				if !lost.closeStarted {
+					_ = result.conn.CloseNow()
+				}
 				try, announce = 1, false
 				continue
 			}
@@ -253,14 +256,6 @@ func (d *Daemon) refreshState() {
 	d.enabled = true
 	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: 1, NextTry: d.opts.Now(), LastError: lastError})
 	d.mu.Unlock()
-}
-
-func (d *Daemon) stopTrying(reason string) {
-	d.mu.Lock()
-	sequence := d.disconnectSeq
-	server := d.knownServerLocked("")
-	d.mu.Unlock()
-	d.stopForSequence(sequence, server, reason)
 }
 
 func (d *Daemon) isEnabled() bool {

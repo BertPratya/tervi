@@ -9,20 +9,6 @@ import (
 	"github.com/bertpratya/tervi/internal/worker/control"
 	"github.com/bertpratya/tervi/internal/worker/credential"
 	"github.com/bertpratya/tervi/internal/worker/daemon"
-	"github.com/bertpratya/tervi/internal/worker/state"
-)
-
-type localDisconnectResult uint8
-
-const (
-	localDisconnectUnknown localDisconnectResult = iota
-	localDisconnectChanged
-	localDisconnectAlready
-	localDisconnectRejected
-	localDisconnectRevoked
-	localDisconnectNotPaired
-	localDisconnectWriteFailed
-	localDisconnectReadFailed
 )
 
 func runDisconnect(ctx context.Context, args []string, env Env) int {
@@ -49,38 +35,9 @@ func runDisconnect(ctx context.Context, args []string, env Env) int {
 	if err != nil {
 		return 1
 	}
-	result := localDisconnectUnknown
+	var result daemon.DisconnectResult
 	err = control.WithLock(runtimeDir, func() error {
-		record, exists, readErr := state.ReadState(env.StateDir)
-		if readErr != nil {
-			result = localDisconnectReadFailed
-			return nil
-		}
-		if !exists || !record.Confirmed {
-			result = localDisconnectNotPaired
-			return nil
-		}
-		if record.StopReason != nil {
-			switch *record.StopReason {
-			case state.StopReasonCredentialRejected:
-				result = localDisconnectRejected
-				return nil
-			case state.StopReasonCredentialRevoked:
-				result = localDisconnectRevoked
-				return nil
-			}
-		}
-		if !record.Connect {
-			result = localDisconnectAlready
-			return nil
-		}
-		record.Connect = false
-		record.StopReason = nil
-		if writeErr := state.WriteState(env.StateDir, record); writeErr != nil {
-			result = localDisconnectWriteFailed
-			return nil
-		}
-		result = localDisconnectChanged
+		result = daemon.DisconnectState(env.StateDir, env.Store)
 		return nil
 	})
 	if errors.Is(err, control.ErrAlreadyRunning) {
@@ -94,27 +51,27 @@ func runDisconnect(ctx context.Context, args []string, env Env) int {
 		printStatusControlFailure(env.Stdout, err, entry)
 		return 1
 	}
-	switch result {
-	case localDisconnectChanged:
+	switch result.Result {
+	case daemon.ResultDisconnected:
 		printDisconnectedWithoutDaemon(env.Stdout)
 		return 0
-	case localDisconnectAlready:
+	case daemon.ResultAlreadyDisconnected:
 		fmt.Fprintln(env.Stdout, "Already disconnected.")
 		return 0
-	case localDisconnectRejected:
+	case daemon.ResultRejected:
 		printRejectedStatus(env.Stdout, entry.Server)
 		return 0
-	case localDisconnectRevoked:
+	case daemon.ResultRevoked:
 		printUnpaired(env.Stdout, entry.Server)
 		return 0
-	case localDisconnectNotPaired:
+	case daemon.ResultNotPaired:
 		printConnectNotPaired(env.Stdout)
 		return 1
-	case localDisconnectWriteFailed:
-		printConnectWriteFailure(env.Stdout, state.StatePath(env.StateDir), entry)
+	case daemon.ResultFailed:
+		printConnectWriteFailure(env.Stdout, result.Path, entry)
 		return 1
-	case localDisconnectReadFailed:
-		printStateReadFailure(env.Stdout, env.StateDir)
+	case daemon.ResultUnreadable:
+		printDisconnectReadFailure(env.Stdout, result.Path)
 		return 1
 	default:
 		printStatusControlFailure(env.Stdout, errors.New("unexpected lock result"), entry)
@@ -150,6 +107,9 @@ func handleDisconnectAnswer(ctx context.Context, output io.Writer, answer contro
 	case daemon.ResultFailed:
 		printConnectWriteFailure(output, answer.Path, entry)
 		return 1
+	case daemon.ResultUnreadable:
+		printDisconnectReadFailure(output, answer.Path)
+		return 1
 	default:
 		printStatusControlFailure(output, errors.New("unexpected daemon response"), entry)
 		return 1
@@ -159,4 +119,8 @@ func handleDisconnectAnswer(ctx context.Context, output io.Writer, answer contro
 func printDisconnectedWithoutDaemon(output io.Writer) {
 	fmt.Fprintln(output, "✓ Disconnected. tervi won't connect, including after the computer restarts.")
 	fmt.Fprintln(output, "  Connect again with: tervi connect")
+}
+
+func printDisconnectReadFailure(output io.Writer, path string) {
+	fmt.Fprintf(output, "✗ Can't read %s.\n", path)
 }

@@ -3,8 +3,6 @@ package daemon
 import (
 	"io"
 	"net/http"
-
-	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
 func credentialRefusal(response *http.Response) string {
@@ -23,8 +21,4 @@ func credentialRefusal(response *http.Response) string {
 		return credentialErrorRevoked
 	}
 	return ""
-}
-
-func (d *Daemon) revoke(_ string) {
-	d.stopTrying(state.StopReasonCredentialRevoked)
 }

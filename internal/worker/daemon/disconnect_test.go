@@ -5,7 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -72,7 +75,7 @@ func TestDisconnectReconnecting(t *testing.T) {
 	d := f.newDaemon(t, Options{Dial: func(context.Context, string, *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
 		tries.Add(1)
 		return nil, nil, errors.New("server unavailable")
-	}})
+	}, Rand: func() float64 { return 0 }})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- d.Run(ctx) }()
@@ -80,7 +83,7 @@ func TestDisconnectReconnecting(t *testing.T) {
 	if result := d.Disconnect(context.Background()); result.Result != "disconnected" {
 		t.Fatalf("Disconnect() = %+v, want disconnected", result)
 	}
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(1700 * time.Millisecond)
 	if got := tries.Load(); got != 1 {
 		t.Errorf("connection attempts after disconnect = %d, want 1", got)
 	}
@@ -95,19 +98,24 @@ func TestDisconnectReconnecting(t *testing.T) {
 
 func TestDisconnectedAfterRestart(t *testing.T) {
 	f := newDaemonFixture(t, true, 30, 60, nil)
-	d := f.newDaemon(t, Options{})
-	if err := state.WriteState(f.dir, state.State{MachineID: "machine-id", CredentialSaved: true, Confirmed: true}); err != nil {
-		t.Fatal(err)
-	}
+	var tries atomic.Int32
+	d := f.newDaemon(t, Options{Dial: func(context.Context, string, *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+		tries.Add(1)
+		return nil, nil, errors.New("server unavailable")
+	}})
 	ctx, cancel := context.WithCancel(context.Background())
 	firstDone := make(chan error, 1)
 	go func() { firstDone <- d.Run(ctx) }()
-	if result := d.Disconnect(context.Background()); result.Result != "already_disconnected" {
-		t.Fatalf("Disconnect() = %+v, want already_disconnected", result)
+	waitFor(t, time.Second, func() bool { return tries.Load() == 1 }, "first daemon attempt")
+	if result := d.Disconnect(context.Background()); result.Result != ResultDisconnected {
+		t.Fatalf("Disconnect() = %+v, want disconnected", result)
 	}
 	cancel()
 	if err := <-firstDone; err != nil {
 		t.Fatal(err)
+	}
+	if got := tries.Load(); got != 1 {
+		t.Fatalf("first daemon attempts = %d, want 1", got)
 	}
 	second := f.newDaemon(t, Options{})
 	secondCtx, stopSecond := context.WithCancel(context.Background())
@@ -119,11 +127,207 @@ func TestDisconnectedAfterRestart(t *testing.T) {
 		t.Fatal("restarted daemon connected while connect is false")
 	case <-time.After(100 * time.Millisecond):
 	}
+	if got := tries.Load(); got != 1 {
+		t.Errorf("connection attempts after restart = %d, want 1", got)
+	}
 	stopSecond()
 	if err := <-secondDone; err != nil {
 		t.Fatal(err)
 	}
 }
+
+func TestDaemonDisconnectOutcomesLeaveStateUnchanged(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		state      state.State
+		result     string
+		writeFails bool
+	}{
+		{name: "already disconnected", state: state.State{MachineID: "machine-id", CredentialSaved: true, Confirmed: true}, result: ResultAlreadyDisconnected},
+		{name: "rejected", state: state.State{MachineID: "machine-id", CredentialSaved: true, Confirmed: true, StopReason: stringPointer(state.StopReasonCredentialRejected)}, result: ResultRejected},
+		{name: "revoked", state: state.State{MachineID: "machine-id", CredentialSaved: true, Confirmed: true, StopReason: stringPointer(state.StopReasonCredentialRevoked)}, result: ResultRevoked},
+		{name: "not paired", state: state.State{MachineID: "machine-id", CredentialSaved: true}, result: ResultNotPaired},
+		{name: "write failure", state: state.State{MachineID: "machine-id", CredentialSaved: true, Confirmed: true, Connect: true}, result: ResultFailed, writeFails: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.writeFails {
+				dir = makeLongStateDirForWriteFailure(t)
+			}
+			if tc.writeFails {
+				data := []byte(`{"machine_id":"machine-id","credential_saved":true,"confirmed":true,"connect":true,"stop_reason":null}`)
+				if err := os.WriteFile(state.StatePath(dir), data, 0600); err != nil {
+					t.Fatalf("write original state: %v", err)
+				}
+			} else if err := state.WriteState(dir, tc.state); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(state.StatePath(dir))
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := credential.NewStore(credential.NewMemoryBackend())
+			if err := store.Save(credential.Entry{Server: "http://localhost:8080", Credential: secret.FromString("credential")}); err != nil {
+				t.Fatal(err)
+			}
+			d := New(Options{StateDir: dir, Store: store})
+			got := d.Disconnect(context.Background())
+			if got.Result != tc.result {
+				t.Errorf("Disconnect() = %+v, want result %q", got, tc.result)
+			}
+			if tc.writeFails && got.Path != state.StatePath(dir) {
+				t.Errorf("Disconnect().Path = %q, want %q", got.Path, state.StatePath(dir))
+			}
+			after, err := os.ReadFile(state.StatePath(dir))
+			if err != nil || string(after) != string(before) {
+				t.Errorf("state changed: err=%v before=%q after=%q", err, before, after)
+			}
+		})
+	}
+}
+
+func TestDaemonDisconnectUnreadable(t *testing.T) {
+	t.Run("state", func(t *testing.T) {
+		dir := t.TempDir()
+		path := state.StatePath(dir)
+		if err := os.WriteFile(path, []byte("not-json"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f := newDaemonFixture(t, false, 30, 60, nil)
+		d := New(Options{StateDir: dir, Store: f.store})
+		got := d.Disconnect(context.Background())
+		if got.Result != "unreadable" || got.Path != path {
+			t.Errorf("Disconnect() = %+v, want unreadable path %q", got, path)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil || string(after) != string(before) {
+			t.Errorf("state changed: err=%v before=%q after=%q", err, before, after)
+		}
+	})
+	t.Run("credential", func(t *testing.T) {
+		f := newDaemonFixture(t, true, 30, 60, nil)
+		before, err := os.ReadFile(state.StatePath(f.dir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		store := credential.NewStore(disconnectReadFailureBackend{})
+		d := New(Options{StateDir: f.dir, Store: store})
+		got := d.Disconnect(context.Background())
+		if got.Result != "unreadable" || got.Path != credential.Path(f.dir) {
+			t.Errorf("Disconnect() = %+v, want unreadable path %q", got, credential.Path(f.dir))
+		}
+		after, err := os.ReadFile(state.StatePath(f.dir))
+		if err != nil || string(after) != string(before) {
+			t.Errorf("state changed: err=%v before=%q after=%q", err, before, after)
+		}
+	})
+}
+
+func TestDisconnectDoesNotRestoreTryingStatusAfterDisconnect(t *testing.T) {
+	dir := t.TempDir()
+	if err := state.WriteState(dir, state.State{MachineID: "machine-id", CredentialSaved: true, Confirmed: true, Connect: true}); err != nil {
+		t.Fatal(err)
+	}
+	backend := credential.NewMemoryBackend()
+	store := credential.NewStore(backend)
+	if err := store.Save(credential.Entry{Server: "http://localhost:8080", Credential: secret.FromString("credential")}); err != nil {
+		t.Fatal(err)
+	}
+	blocked := &disconnectCredentialBackend{
+		base: backend, firstReadStarted: make(chan struct{}), releaseFirstRead: make(chan struct{}),
+	}
+	dialStatus := make(chan Status, 1)
+	var d *Daemon
+	d = New(Options{
+		StateDir: dir,
+		Store:    credential.NewStore(blocked),
+		Dial: func(ctx context.Context, _ string, _ *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+			dialStatus <- d.Status()
+			return nil, nil, ctx.Err()
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	select {
+	case <-blocked.firstReadStarted:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("connection attempt did not start reading credentials")
+	}
+	if got := d.Disconnect(context.Background()); got.Result != ResultDisconnected {
+		cancel()
+		t.Fatalf("Disconnect() = %+v, want disconnected", got)
+	}
+	close(blocked.releaseFirstRead)
+	select {
+	case got := <-dialStatus:
+		if got.State != StateNotConnecting {
+			t.Errorf("status immediately before dial = %+v, want not connecting", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled connection attempt did not reach dial")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+}
+
+type disconnectCredentialBackend struct {
+	base             *credential.MemoryBackend
+	mu               sync.Mutex
+	reads            int
+	firstReadStarted chan struct{}
+	releaseFirstRead chan struct{}
+}
+
+func (b *disconnectCredentialBackend) Get(user string) (string, error) {
+	b.mu.Lock()
+	b.reads++
+	read := b.reads
+	b.mu.Unlock()
+	if read == 1 {
+		close(b.firstReadStarted)
+		<-b.releaseFirstRead
+	}
+	return b.base.Get(user)
+}
+
+func (b *disconnectCredentialBackend) Set(user, value string) error { return b.base.Set(user, value) }
+func (b *disconnectCredentialBackend) Delete(user string) error     { return b.base.Delete(user) }
+
+type disconnectReadFailureBackend struct{}
+
+func (disconnectReadFailureBackend) Get(string) (string, error) { return "", errors.New("read failed") }
+func (disconnectReadFailureBackend) Set(string, string) error   { return nil }
+func (disconnectReadFailureBackend) Delete(string) error        { return nil }
+
+func makeLongStateDirForWriteFailure(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for len(dir) < 4080 {
+		remaining := 4080 - len(dir) - 1
+		componentLength := remaining
+		if componentLength > 200 {
+			componentLength = 200
+		}
+		if componentLength < 1 {
+			t.Fatalf("cannot create long state directory from path of length %d", len(dir))
+		}
+		dir = filepath.Join(dir, strings.Repeat("d", componentLength))
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatalf("create long state directory (length %d): %v", len(dir), err)
+		}
+	}
+	return dir
+}
+
+func stringPointer(value string) *string { return &value }
 
 func TestDaemonDisconnectDuringConnect(t *testing.T) {
 	f := newDaemonFixture(t, false, 30, 60, nil)
