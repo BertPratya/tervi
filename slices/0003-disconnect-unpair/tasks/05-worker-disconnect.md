@@ -31,8 +31,8 @@ until `tervi connect`.
   nothing, and exit with `0`.
 - R5. When `tervi disconnect` runs on a computer whose credential was
   rejected (slice 2's R18), the worker shall change nothing, print
-  `Not connecting: the server doesn't accept this computer's credential.`
-  then `Pair again with: tervi pair --server <server>`, and exit with `0`.
+  `✗ Not connecting: the server doesn't accept this computer's credential.`
+  then `  Pair again with: tervi pair --server <server>`, and exit with `0`.
 - R6. When `tervi disconnect` runs on a computer that is not paired, the
   worker shall print
   `This computer isn't paired. Pair it with: tervi pair --server <url>`,
@@ -157,7 +157,7 @@ exits with `2`). Steps:
 | Daemon answered `disconnected` | `✓ Disconnected. tervi stays in the background but won't connect.` / `  Connect again with: tervi connect` | `0` |
 | Wrote it with no daemon | `✓ Disconnected. tervi won't connect, including after the computer restarts.` / `  Connect again with: tervi connect` | `0` |
 | Already disconnected (either way) | `Already disconnected.` | `0` |
-| Rejected (either way) | `Not connecting: the server doesn't accept this computer's credential.` / `  Pair again with: tervi pair --server <server>` | `0` |
+| Rejected (either way) | `✗ Not connecting: the server doesn't accept this computer's credential.` / `  Pair again with: tervi pair --server <server>` | `0` |
 | Revoked (either way) | `✗ This computer was unpaired on the server.` / `  Pair it again with: tervi pair --server <server>` | `0` |
 | `failed` or a write failure | `✗ Can't write <path>.`, as `tervi connect` prints it in slice 2 | `1` |
 | `WithLock` failed for another reason (opening `daemon.lock`, creating the runtime folder) | `✗ Can't reach tervi in the background: <reason>`; nothing written | `1` |

@@ -109,8 +109,8 @@ page). It also lets the server recognize a computer that pairs again.
   nothing, and exit with `0`.
 - R5. When `tervi disconnect` runs on a computer whose credential was
   rejected (slice 2's R18), the worker shall change nothing, print
-  `Not connecting: the server doesn't accept this computer's credential.`
-  then `Pair again with: tervi pair --server <server>`, and exit with `0`.
+  `✗ Not connecting: the server doesn't accept this computer's credential.`
+  then `  Pair again with: tervi pair --server <server>`, and exit with `0`.
 - R6. When `tervi disconnect` runs on a computer that is not paired, the
   worker shall print
   `This computer isn't paired. Pair it with: tervi pair --server <url>`,
