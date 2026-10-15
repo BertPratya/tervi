@@ -2,10 +2,21 @@ package e2e
 
 import (
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func writeTestMachineID(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "machine-id")
+	if err := os.WriteFile(path, []byte("1023456789abcdef0123456789abcdef\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
 
 type workerRun struct {
 	input  *io.PipeWriter

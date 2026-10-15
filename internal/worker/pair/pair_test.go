@@ -58,7 +58,7 @@ func TestStartScreen(t *testing.T) {
 	defer server.Close()
 
 	var stdout bytes.Buffer
-	code := newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond, Now: func() time.Time { return now }}).
+	code := newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond, Now: func() time.Time { return now }, MachineIDPath: filepath.Join(t.TempDir(), "missing-machine-id")}).
 		StartNew(context.Background(), testEnv(t, &stdout), server.URL)
 	if code != 1 {
 		t.Fatalf("StartNew() = %d, want 1", code)
@@ -84,7 +84,7 @@ func TestUnknownAndTruncatedDetails(t *testing.T) {
 		})
 		defer server.Close()
 		var stdout bytes.Buffer
-		code := newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
+		code := newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond, MachineIDPath: filepath.Join(t.TempDir(), "missing-machine-id")}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
 		if code != 1 {
 			t.Fatalf("StartNew() = %d, want 1", code)
 		}
@@ -114,7 +114,7 @@ func TestUnknownAndTruncatedDetails(t *testing.T) {
 		})
 		defer server.Close()
 		var stdout bytes.Buffer
-		code := newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
+		code := newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond, MachineIDPath: filepath.Join(t.TempDir(), "missing-machine-id")}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
 		if code != 1 {
 			t.Fatalf("StartNew() = %d, want 1", code)
 		}
@@ -139,7 +139,7 @@ func TestCannotReach(t *testing.T) {
 	env := testEnv(t, &stdout)
 	backend := credential.NewMemoryBackend()
 	env.Store = credential.NewStore(backend)
-	if code := newFlow(Options{RequestTimeout: 100 * time.Millisecond}).StartNew(context.Background(), env, server); code != 1 {
+	if code := newFlow(Options{RequestTimeout: 100 * time.Millisecond, MachineIDPath: filepath.Join(t.TempDir(), "missing-machine-id")}).StartNew(context.Background(), env, server); code != 1 {
 		t.Fatalf("StartNew() = %d, want 1", code)
 	}
 	want := fmt.Sprintf("✗ Can't reach %s. Check that the server is running, then run the command again.\n", server)
@@ -170,7 +170,7 @@ func TestStartNoAnswerNotRetried(t *testing.T) {
 	defer server.Close()
 
 	var stdout bytes.Buffer
-	code := newFlow(Options{RequestTimeout: 30 * time.Millisecond}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
+	code := newFlow(Options{RequestTimeout: 30 * time.Millisecond, MachineIDPath: filepath.Join(t.TempDir(), "missing-machine-id")}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
 	if code != 1 {
 		t.Fatalf("StartNew() = %d, want 1", code)
 	}
@@ -208,7 +208,7 @@ func TestRejected(t *testing.T) {
 	var stdout bytes.Buffer
 	done := make(chan int, 1)
 	go func() {
-		done <- newFlow(Options{RequestTimeout: time.Second, PollInterval: pollInterval}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
+		done <- newFlow(Options{RequestTimeout: time.Second, PollInterval: pollInterval, MachineIDPath: filepath.Join(t.TempDir(), "missing-machine-id")}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
 	}()
 	select {
 	case <-firstWaiting:
@@ -273,7 +273,7 @@ func TestConnectionLostAndRestored(t *testing.T) {
 	defer server.Close()
 
 	var stdout bytes.Buffer
-	code := newFlow(Options{RequestTimeout: 100 * time.Millisecond, PollInterval: time.Millisecond}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
+	code := newFlow(Options{RequestTimeout: 100 * time.Millisecond, PollInterval: time.Millisecond, MachineIDPath: filepath.Join(t.TempDir(), "missing-machine-id")}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
 	if code != 1 {
 		t.Fatalf("StartNew() = %d, want 1", code)
 	}
@@ -313,7 +313,7 @@ func TestDeadlineDuringOutage(t *testing.T) {
 	defer server.Close()
 
 	var stdout bytes.Buffer
-	code := newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond, Now: now}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
+	code := newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond, Now: now, MachineIDPath: filepath.Join(t.TempDir(), "missing-machine-id")}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
 	if code != 1 {
 		t.Fatalf("StartNew() = %d, want 1", code)
 	}
@@ -352,7 +352,7 @@ func TestPollTimeoutCappedAtDeadline(t *testing.T) {
 	defer server.Close()
 
 	var stdout bytes.Buffer
-	code := newFlow(Options{RequestTimeout: 2 * time.Second, PollInterval: time.Millisecond, Now: now}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
+	code := newFlow(Options{RequestTimeout: 2 * time.Second, PollInterval: time.Millisecond, Now: now, MachineIDPath: filepath.Join(t.TempDir(), "missing-machine-id")}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
 	if code != 1 {
 		t.Fatalf("StartNew() = %d, want 1", code)
 	}
@@ -403,7 +403,7 @@ func TestPollsNeverOverlap(t *testing.T) {
 	defer server.Close()
 
 	var stdout bytes.Buffer
-	code := newFlow(Options{RequestTimeout: time.Second, PollInterval: interval}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
+	code := newFlow(Options{RequestTimeout: time.Second, PollInterval: interval, MachineIDPath: filepath.Join(t.TempDir(), "missing-machine-id")}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
 	if code != 1 {
 		t.Fatalf("StartNew() = %d, want 1", code)
 	}
@@ -447,7 +447,7 @@ func TestUnexpectedAnswers(t *testing.T) {
 			}))
 			defer server.Close()
 			var stdout bytes.Buffer
-			code := newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
+			code := newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond, MachineIDPath: filepath.Join(t.TempDir(), "missing-machine-id")}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
 			if code != 1 {
 				t.Fatalf("StartNew() = %d, want 1", code)
 			}
@@ -475,7 +475,7 @@ func TestApprovedHandsOver(t *testing.T) {
 	defer server.Close()
 
 	var stdout bytes.Buffer
-	f := newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond, Now: func() time.Time { return base }})
+	f := newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond, Now: func() time.Time { return base }, MachineIDPath: filepath.Join(t.TempDir(), "missing-machine-id")})
 	var received struct {
 		server      string
 		key         secret.Value
@@ -555,7 +555,7 @@ func TestPollingKeyNotPrinted(t *testing.T) {
 	server := startThenRejectServer(t, nil)
 	defer server.Close()
 	var stdout bytes.Buffer
-	newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
+	newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond, MachineIDPath: filepath.Join(t.TempDir(), "missing-machine-id")}).StartNew(context.Background(), testEnv(t, &stdout), server.URL)
 	got := stdout.String()
 	if strings.Contains(got, testPollingKey) {
 		t.Error("polling key appeared in output")
@@ -578,7 +578,7 @@ func runCancelledFlow(t *testing.T, server *httptest.Server, requested <-chan st
 	env.Store = credential.NewStore(backend)
 	done := make(chan int, 1)
 	go func() {
-		done <- newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond}).StartNew(ctx, env, server.URL)
+		done <- newFlow(Options{RequestTimeout: time.Second, PollInterval: time.Millisecond, MachineIDPath: filepath.Join(t.TempDir(), "missing-machine-id")}).StartNew(ctx, env, server.URL)
 	}()
 	wantRequests := 1
 	if !starting {

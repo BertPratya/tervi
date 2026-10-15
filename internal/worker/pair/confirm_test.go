@@ -77,7 +77,7 @@ func TestCodeReplyMayArriveAfterDeadline(t *testing.T) {
 	env := finishEnv(t, &out, &delayedReader{reader: bytes.NewReader([]byte(testCode + "\n")), delay: 650 * time.Millisecond})
 	var savedEntry credential.Entry
 	env.OnPairingSuccess = func(entry credential.Entry) { savedEntry = entry }
-	flow := newFlow(Options{RequestTimeout: 800 * time.Millisecond, PollInterval: time.Millisecond})
+	flow := newFlow(Options{RequestTimeout: 800 * time.Millisecond, PollInterval: time.Millisecond, MachineIDPath: "/dev/null/tervi-missing-machine-id"})
 	got := flow.StartNew(context.Background(), env, server.URL)
 	record, exists, err := state.ReadState(env.StateDir)
 	if got != 0 || !strings.Contains(out.String(), "✓ Paired successfully.\n") || err != nil || !exists || !record.Confirmed {
@@ -845,7 +845,7 @@ func TestFinishEarlierDoesNotUseRequestedServer(t *testing.T) {
 }
 
 func finishFlow(now time.Time, requestTimeout, pollInterval time.Duration) *pairingFlow {
-	return newFlow(Options{RequestTimeout: requestTimeout, PollInterval: pollInterval, Now: func() time.Time { return now }})
+	return newFlow(Options{RequestTimeout: requestTimeout, PollInterval: pollInterval, Now: func() time.Time { return now }, MachineIDPath: "/dev/null/tervi-missing-machine-id"})
 }
 
 func finishEnv(t *testing.T, out io.Writer, stdin io.Reader) cli.Env {

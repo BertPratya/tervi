@@ -6,9 +6,15 @@ import (
 	"io"
 
 	"github.com/bertpratya/tervi/internal/worker/credential"
+	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
 const backgroundStartedMessage = "✓ tervi now runs in the background and starts when the computer starts."
+
+// StartNewPairing is returned by FinishEarlier when the server revoked the
+// earlier credential while its acknowledgment was in flight. It is a flow
+// instruction, never a process exit code.
+const StartNewPairing = -1
 
 func runPairStart(ctx context.Context, env Env, flow Flow, server string) int {
 	var entry credential.Entry
@@ -20,8 +26,11 @@ func runPairStart(ctx context.Context, env Env, flow Flow, server string) int {
 	return handOver(ctx, env, entry)
 }
 
-func runPairFinish(ctx context.Context, env Env, flow Flow, entry credential.Entry) int {
+func runPairFinish(ctx context.Context, env Env, flow Flow, entry credential.Entry, server string, yes bool) int {
 	if code := flow.FinishEarlier(ctx, env, entry); code != 0 {
+		if code == StartNewPairing {
+			return runRevokedRePair(ctx, env, flow, server, yes)
+		}
 		return code
 	}
 	return handOver(ctx, env, entry)
@@ -56,8 +65,30 @@ func printPairHandoverCancelled(output io.Writer) int {
 	return 130
 }
 
-func runRejectedRePair(ctx context.Context, env Env, flow Flow, server string) int {
-	fmt.Fprintln(env.Stdout, "The server no longer accepts this computer's credential. Starting a new pairing.")
+func runRejectedRePair(ctx context.Context, env Env, flow Flow, server string, yes bool) int {
+	return runRePair(ctx, env, flow, server, yes, "The server no longer accepts this computer's credential. Starting a new pairing.")
+}
+
+func runStoppedRePair(ctx context.Context, env Env, flow Flow, server string, yes bool, reason string) (int, bool) {
+	switch reason {
+	case state.StopReasonCredentialRejected:
+		return runRejectedRePair(ctx, env, flow, server, yes), true
+	case state.StopReasonCredentialRevoked:
+		return runRevokedRePair(ctx, env, flow, server, yes), true
+	default:
+		return 0, false
+	}
+}
+
+func runRevokedRePair(ctx context.Context, env Env, flow Flow, server string, yes bool) int {
+	return runRePair(ctx, env, flow, server, yes, "This computer was unpaired on the server. Starting a new pairing.")
+}
+
+func runRePair(ctx context.Context, env Env, flow Flow, server string, yes bool, message string) int {
+	if !confirmMachineID(env, flow, yes) {
+		return 1
+	}
+	fmt.Fprintln(env.Stdout, message)
 	if code, ok := deletePairing(ctx, env, true, true); !ok {
 		return code
 	}

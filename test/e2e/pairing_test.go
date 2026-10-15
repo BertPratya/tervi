@@ -202,12 +202,13 @@ func (p *testProxy) recordSecrets(path string, body []byte) {
 }
 
 type fixture struct {
-	serverURL  string
-	store      *credential.Store
-	stateDir   string
-	serviceDir string
-	proxy      *testProxy
-	logs       *safeBuffer
+	serverURL     string
+	store         *credential.Store
+	stateDir      string
+	machineIDPath string
+	serviceDir    string
+	proxy         *testProxy
+	logs          *safeBuffer
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -222,11 +223,12 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(origin.Close)
 	proxy.setTarget(origin.URL)
 	f := &fixture{
-		serverURL:  proxyServer.URL,
-		stateDir:   filepath.Join(t.TempDir(), "state"),
-		serviceDir: t.TempDir(),
-		proxy:      proxy,
-		logs:       logs,
+		serverURL:     proxyServer.URL,
+		stateDir:      filepath.Join(t.TempDir(), "state"),
+		machineIDPath: writeTestMachineID(t),
+		serviceDir:    t.TempDir(),
+		proxy:         proxy,
+		logs:          logs,
 	}
 	f.store = credential.NewStore(credential.NewFileBackend(f.stateDir))
 	return f
@@ -240,7 +242,7 @@ func (f *fixture) startWorker(parent context.Context) *workerRun {
 		run.done <- cli.Run(parent, []string{"pair", "--server", f.serverURL}, cli.Env{
 			Stdin: stdin, Stdout: stdout, Stderr: stderr, Store: f.store, StateDir: f.stateDir,
 			ProgramPath: "/usr/bin/true", Runner: fixtureServiceRunner{}, ServiceDir: f.serviceDir, ControlClient: fixtureControlClient{stateDir: f.stateDir},
-		}, pair.New(pair.Options{RequestTimeout: 300 * time.Millisecond, PollInterval: 10 * time.Millisecond}))
+		}, pair.New(pair.Options{RequestTimeout: 300 * time.Millisecond, PollInterval: 10 * time.Millisecond, MachineIDPath: f.machineIDPath}))
 		_ = stdin.Close()
 	}()
 	return run

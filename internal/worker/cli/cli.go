@@ -14,7 +14,7 @@ import (
 	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
-const usageLine = "Usage: tervi pair --server <url>\n       tervi connect\n       tervi disconnect\n       tervi unpair [--yes] [--local-only]\n       tervi status\n       tervi logs [-f]\n       tervi daemon"
+const usageLine = "Usage: tervi pair [--yes] --server <url>\n       tervi connect\n       tervi disconnect\n       tervi unpair [--yes] [--local-only]\n       tervi status\n       tervi logs [-f]\n       tervi daemon"
 
 // Env supplies the worker's local inputs, outputs, and state locations.
 type Env struct {
@@ -44,11 +44,15 @@ func printUnpaired(output io.Writer, server string) {
 
 // Flow runs the network portion of a new or resumed pairing.
 type Flow interface {
+	HasMachineID() bool
 	StartNew(ctx context.Context, env Env, server string) int
 	FinishEarlier(ctx context.Context, env Env, entry credential.Entry) int
 }
 
-type command struct{ server string }
+type command struct {
+	server string
+	yes    bool
+}
 
 func parseCommand(args []string) (command, string, bool) {
 	for _, arg := range args {
@@ -63,10 +67,18 @@ func parseCommand(args []string) (command, string, bool) {
 		return command{}, "Unknown command: " + args[0], false
 	}
 	seenServer := false
+	seenYes := false
 	server := ""
+	yes := false
 	for i := 1; i < len(args); i++ {
 		arg := args[i]
-		if arg == "--server" {
+		if arg == "--yes" {
+			if seenYes {
+				return command{}, "", true
+			}
+			seenYes = true
+			yes = true
+		} else if arg == "--server" {
 			if seenServer {
 				return command{}, "", true
 			}
@@ -87,19 +99,21 @@ func parseCommand(args []string) (command, string, bool) {
 		} else {
 			return command{}, "Unknown argument: " + arg, false
 		}
-		if server == "" {
-			return command{}, "", true
+		if seenServer {
+			if server == "" {
+				return command{}, "", true
+			}
+			standard, err := state.StandardAddress(server)
+			if err != nil {
+				return command{}, "Invalid server address: " + server, false
+			}
+			server = standard
 		}
-		standard, err := state.StandardAddress(server)
-		if err != nil {
-			return command{}, "Invalid server address: " + server, false
-		}
-		server = standard
 	}
 	if !seenServer {
 		return command{}, "", true
 	}
-	return command{server: server}, "", false
+	return command{server: server, yes: yes}, "", false
 }
 
 // Run parses the command, resolves step zero, and delegates network work to flow.
@@ -180,24 +194,29 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		return 1
 	}
 	if errors.Is(entryErr, credential.ErrDamaged) {
-		return runLeftover(ctx, env, true, stateExists, fmt.Sprintf("Found a damaged %s.", credential.Path(env.StateDir)), true, cmd.server, flow)
+		return runLeftover(ctx, env, true, stateExists, fmt.Sprintf("Found a damaged %s.", credential.Path(env.StateDir)), true, cmd.server, flow, cmd.yes)
 	}
 	if entryErr != nil {
 		printStoreReadFailure(env.Stdout, credential.Path(env.StateDir))
 		return 1
 	}
-	if stateExists && record.Confirmed && entryExists && record.StopReason != nil && *record.StopReason == state.StopReasonCredentialRejected {
-		return runRejectedRePair(ctx, env, flow, cmd.server)
+	if stateExists && record.Confirmed && entryExists && record.StopReason != nil {
+		if code, handled := runStoppedRePair(ctx, env, flow, cmd.server, cmd.yes, *record.StopReason); handled {
+			return code
+		}
 	}
 
 	if !stateExists && !entryExists {
+		if !confirmMachineID(env, flow, cmd.yes) {
+			return 1
+		}
 		return checkAndStart(ctx, env, flow, cmd.server)
 	}
 	if !stateExists && entryExists {
-		return runLeftover(ctx, env, true, false, "Found incomplete pairing data: credential.json exists, but state.json is missing.", true, cmd.server, flow)
+		return runLeftover(ctx, env, true, false, "Found incomplete pairing data: credential.json exists, but state.json is missing.", true, cmd.server, flow, cmd.yes)
 	}
 	if stateExists && !record.CredentialSaved && !entryExists {
-		return runLeftover(ctx, env, false, true, "The earlier pairing was interrupted before the credential was saved.", true, cmd.server, flow)
+		return runLeftover(ctx, env, false, true, "The earlier pairing was interrupted before the credential was saved.", true, cmd.server, flow, cmd.yes)
 	}
 	if stateExists && entryExists && !record.Confirmed {
 		if entry.Server != cmd.server {
@@ -222,10 +241,10 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 		if flow == nil {
 			return 1
 		}
-		return runPairFinish(ctx, env, flow, entry)
+		return runPairFinish(ctx, env, flow, entry, cmd.server, cmd.yes)
 	}
 	if stateExists && record.CredentialSaved && !entryExists {
-		return runLeftover(ctx, env, false, true, "Found incomplete pairing data: state.json exists, but credential.json is missing.", true, cmd.server, flow)
+		return runLeftover(ctx, env, false, true, "Found incomplete pairing data: state.json exists, but credential.json is missing.", true, cmd.server, flow, cmd.yes)
 	}
 	if stateExists && record.Confirmed && entryExists {
 		fmt.Fprintf(env.Stdout, "This computer is already paired with %s. Nothing was changed.\n", entry.Server)

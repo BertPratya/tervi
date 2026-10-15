@@ -35,7 +35,11 @@ type successfulPairFlow struct {
 	inspectStartErr  error
 }
 
+func (*successfulPairFlow) HasMachineID() bool { return true }
+
 type requestingPairFlow struct{}
+
+func (requestingPairFlow) HasMachineID() bool { return true }
 
 func (requestingPairFlow) StartNew(_ context.Context, _ Env, server string) int {
 	response, err := http.Get(server)
