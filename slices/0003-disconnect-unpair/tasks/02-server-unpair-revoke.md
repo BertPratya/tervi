@@ -137,7 +137,7 @@ the page:
 export function revokeQuestion(machine) { … }
 // The page state after a revoke answer: status is the HTTP status, or
 // null when no answer came. 204 and 404 drop the machine from
-// state.machines; anything else leaves state.machines as it is and sets
+// state.machines and clear state.revokeFailure; anything else leaves state.machines as it is and sets
 // state.revokeFailure to the machine's name, which view() shows as the
 // failure line.
 export function afterRevoke(state, machineId, status) { … }
@@ -178,7 +178,7 @@ Remove `x-planned: true` from `unpairMachine` and `revokeMachine` in
 | `TestUnpairRevokes` — an `active` credential answers `204`, becomes `revoked` with `ended_at`, and is refused on the connection route afterwards | R11 |
 | `TestUnpairRepeat` — a second unpair with the same credential answers `204` and changes nothing | R12, R13 |
 | `TestUnpairUnknown` — no proof, an unknown proof, and `pending`, `failed`, `expired` credentials answer `401 unknown_credential` | R13 |
-| `TestUnpairClosesConnection` — a connected machine's connection is closed with `4002` after the change is committed, and it shows Offline | R11, R18 |
+| `TestUnpairClosesConnection` — a connected machine's connection is closed with `4002`, its credential is `revoked` by then, and it shows Offline | R11, R18 |
 | `TestRevokeMachine` — a paired machine answers `204`, its credential is `revoked`, it disappears from `GET /api/v1/machines`, and its `machines` row is still there | R18, R19 |
 | `TestRevokeClosesConnection` — a connected machine is closed with `4002` and is refused when it reconnects | R18 |
 | `TestRevokeRepeatAndUnknown` — revoking again answers `204`; an unknown ID and a non-UUID answer `404 unknown_machine` | R18 |
