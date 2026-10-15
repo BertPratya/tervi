@@ -12,6 +12,20 @@ import (
 	"time"
 )
 
+// NewHTTPClient creates the HTTP client used by worker requests. It does not
+// reuse connections and never follows redirects, so bearer credentials are
+// sent only to the configured server.
+func NewHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DisableKeepAlives = true
+	return &http.Client{
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
 type requestResult struct {
 	statusCode       int
 	body             []byte

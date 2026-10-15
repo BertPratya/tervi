@@ -2,8 +2,6 @@ package daemon
 
 import (
 	"time"
-
-	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
 // State and result names are shared with the control socket and CLI.
@@ -13,12 +11,16 @@ const (
 	StateNotConnecting = "not_connecting"
 	StateNotPaired     = "not_paired"
 
-	ResultConnected        = "connected"
-	ResultAlreadyConnected = "already_connected"
-	ResultRejected         = "rejected"
-	ResultNotPaired        = "not_paired"
-	ResultStillTrying      = "still_trying"
-	ResultFailed           = "failed"
+	ResultConnected           = "connected"
+	ResultAlreadyConnected    = "already_connected"
+	ResultRejected            = "rejected"
+	ResultRevoked             = "revoked"
+	ResultNotPaired           = "not_paired"
+	ResultStillTrying         = "still_trying"
+	ResultFailed              = "failed"
+	ResultDisconnected        = "disconnected"
+	ResultAlreadyDisconnected = "already_disconnected"
+	ResultUnreadable          = "unreadable"
 )
 
 // Status describes the daemon's connection state.
@@ -38,6 +40,12 @@ type ConnectResult struct {
 	Result    string
 	LastError string
 	Path      string
+}
+
+// DisconnectResult is the outcome of asking the daemon to stop connecting.
+type DisconnectResult struct {
+	Result string
+	Path   string
 }
 
 // Status returns a snapshot of the daemon's current connection state.
@@ -66,34 +74,6 @@ func (d *Daemon) knownServerLocked(server string) string {
 		return server
 	}
 	return d.status.Server
-}
-
-func (d *Daemon) setTrying(try int, server string, now time.Time) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	server = d.knownServerLocked(server)
-	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: try, NextTry: now, LastError: d.status.LastError})
-}
-
-func (d *Daemon) setRetry(try int, server, lastError string, next time.Time) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	server = d.knownServerLocked(server)
-	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: try, NextTry: next, LastError: lastError})
-}
-
-func (d *Daemon) setConnected(server string, since time.Time) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.setStatusLocked(Status{State: StateConnected, Server: server, ConnectedSince: since})
-}
-
-func (d *Daemon) setRejected() {
-	reason := state.StopReasonCredentialRejected
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.enabled = false
-	d.setStatusLocked(Status{State: StateNotConnecting, StopReason: &reason})
 }
 
 func (d *Daemon) currentServer() string {

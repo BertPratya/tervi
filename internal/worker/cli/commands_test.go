@@ -63,13 +63,16 @@ type statusResult struct {
 }
 
 type commandControl struct {
-	statuses     []statusResult
-	statusCalls  int
-	statusFunc   func(context.Context) (control.StatusAnswer, error)
-	connect      control.ConnectAnswer
-	connectErr   error
-	connectCalls int
-	connectFunc  func(context.Context) (control.ConnectAnswer, error)
+	statuses        []statusResult
+	statusCalls     int
+	statusFunc      func(context.Context) (control.StatusAnswer, error)
+	connect         control.ConnectAnswer
+	connectErr      error
+	connectCalls    int
+	connectFunc     func(context.Context) (control.ConnectAnswer, error)
+	disconnect      control.DisconnectAnswer
+	disconnectErr   error
+	disconnectCalls int
 }
 
 func (c *commandControl) Status(ctx context.Context) (control.StatusAnswer, error) {
@@ -91,6 +94,11 @@ func (c *commandControl) Connect(ctx context.Context) (control.ConnectAnswer, er
 		return c.connectFunc(ctx)
 	}
 	return c.connect, c.connectErr
+}
+
+func (c *commandControl) Disconnect(context.Context) (control.DisconnectAnswer, error) {
+	c.disconnectCalls++
+	return c.disconnect, c.disconnectErr
 }
 
 func commandEnv(t *testing.T, runner *commandRunner, client *commandControl, paired bool) (Env, *credential.MemoryBackend, *bytes.Buffer, *bytes.Buffer) {
@@ -458,10 +466,10 @@ func TestStatusOutputs(t *testing.T) {
 		{name: "reconnecting in one second", paired: true, statuses: []statusResult{{answer: control.StatusAnswer{State: "reconnecting", Server: "http://localhost:8080", Try: 3, NextTryInSeconds: 1}}}, want: "○ Reconnecting to http://localhost:8080\n  Try 3, next in 1 second\n", code: 1},
 		{name: "reconnecting in two seconds", paired: true, statuses: []statusResult{{answer: control.StatusAnswer{State: "reconnecting", Server: "http://localhost:8080", Try: 3, NextTryInSeconds: 2}}}, want: "○ Reconnecting to http://localhost:8080\n  Try 3, next in 2 seconds\n", code: 1},
 		{name: "trying now without error", paired: true, statuses: []statusResult{{answer: control.StatusAnswer{State: "reconnecting", Server: "http://localhost:8080", Try: 2, NextTryInSeconds: 0}}}, want: "○ Reconnecting to http://localhost:8080\n  Try 2, trying now\n", code: 1},
-		{name: "not running", paired: true, statuses: []statusResult{{err: control.ErrNotRunning}}, want: "✗ tervi isn't running in the background.\n  Start it with: tervi connect\n", code: 1},
+		{name: "disconnected without daemon", paired: true, statuses: []statusResult{{err: control.ErrNotRunning}}, want: "○ Disconnected.\n  Connect with: tervi connect\n", code: 1},
 		{name: "not paired", want: "✗ This computer isn't paired.\n  Pair it with: tervi pair --server <url>\n", code: 1},
 		{name: "rejected", paired: true, statuses: []statusResult{{answer: control.StatusAnswer{State: "not_connecting", StopReason: ptrString("credential_rejected")}}}, want: "✗ Not connecting: the server doesn't accept this computer's credential.\n  Pair again with: tervi pair --server http://localhost:8080\n", code: 1},
-		{name: "not connecting", paired: true, statuses: []statusResult{{answer: control.StatusAnswer{State: "not_connecting"}}}, want: "○ Not connecting.\n  Connect with: tervi connect\n", code: 1},
+		{name: "not connecting", paired: true, statuses: []statusResult{{answer: control.StatusAnswer{State: "not_connecting"}}}, want: "○ Disconnected.\n  Connect with: tervi connect\n", code: 1},
 		{name: "daemon says not paired", paired: true, statuses: []statusResult{{answer: control.StatusAnswer{State: "not_paired"}}}, want: "✗ This computer isn't paired.\n  Pair it with: tervi pair --server <url>\n", code: 1},
 		{name: "broken answer", paired: true, statuses: []statusResult{{err: errors.New("invalid daemon response")}}, want: "✗ Can't reach tervi in the background: invalid daemon response\n", code: 1},
 		{name: "unknown state", paired: true, statuses: []statusResult{{answer: control.StatusAnswer{State: "sleeping"}}}, want: "✗ Can't reach tervi in the background: unexpected daemon status\n", code: 1},
@@ -529,6 +537,167 @@ func TestStatusOutputs(t *testing.T) {
 			t.Errorf("stdout=%q stderr=%q, want %q", stdout.String(), stderr.String(), want)
 		}
 	})
+}
+
+func TestStatusRevoked(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		answer   control.StatusAnswer
+		noDaemon bool
+	}{
+		{name: "daemon", answer: control.StatusAnswer{State: "not_connecting", StopReason: ptrString("credential_revoked")}},
+		{name: "no daemon", noDaemon: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &commandRunner{}
+			client := &commandControl{statuses: []statusResult{{answer: tc.answer}}}
+			if tc.noDaemon {
+				client.statuses = []statusResult{{err: control.ErrNotRunning}}
+			}
+			env, _, stdout, stderr := commandEnv(t, runner, client, true)
+			if tc.noDaemon {
+				if err := state.WriteState(env.StateDir, state.State{MachineID: "machine-123", CredentialSaved: true, Confirmed: true, StopReason: ptrString("credential_revoked")}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if code := Run(context.Background(), []string{"status"}, env, nil); code != 1 {
+				t.Errorf("Run(status) = %d, want 1", code)
+			}
+			want := "✗ This computer was unpaired on the server.\n  Pair it again with: tervi pair --server http://localhost:8080\n"
+			if stdout.String() != want || stderr.Len() != 0 {
+				t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
+			}
+		})
+	}
+}
+
+func TestStatusRejectedWithoutDaemon(t *testing.T) {
+	runner := &commandRunner{}
+	client := &commandControl{statuses: []statusResult{{err: control.ErrNotRunning}}}
+	env, _, stdout, stderr := commandEnv(t, runner, client, true)
+	if err := state.WriteState(env.StateDir, state.State{
+		MachineID: "machine-123", CredentialSaved: true, Confirmed: true,
+		StopReason: ptrString("credential_rejected"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code := Run(context.Background(), []string{"status"}, env, nil); code != 1 {
+		t.Fatalf("Run(status) = %d, want 1", code)
+	}
+	want := "✗ Not connecting: the server doesn't accept this computer's credential.\n  Pair again with: tervi pair --server http://localhost:8080\n"
+	if stdout.String() != want || stderr.Len() != 0 {
+		t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
+	}
+}
+
+func TestStatusDisconnected(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		noDaemon       bool
+		missingConnect bool
+		unknownReason  bool
+	}{
+		{name: "daemon"},
+		{name: "no daemon", noDaemon: true},
+		{name: "no daemon and missing connect", noDaemon: true, missingConnect: true},
+		{name: "daemon with unknown stop reason", unknownReason: true},
+		{name: "no daemon with unknown stop reason", noDaemon: true, unknownReason: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &commandRunner{}
+			answer := control.StatusAnswer{State: "not_connecting"}
+			if tc.unknownReason {
+				answer.StopReason = ptrString("future_stop_reason")
+			}
+			client := &commandControl{statuses: []statusResult{{answer: answer}}}
+			if tc.noDaemon {
+				client.statuses = []statusResult{{err: control.ErrNotRunning}}
+			}
+			env, _, stdout, stderr := commandEnv(t, runner, client, true)
+			if tc.missingConnect || tc.unknownReason {
+				data := []byte(`{"machine_id":"machine-123","credential_saved":true,"confirmed":true}`)
+				if tc.unknownReason {
+					reason := `,"stop_reason":"future_stop_reason"`
+					data = []byte(`{"machine_id":"machine-123","credential_saved":true,"confirmed":true` + reason + `}`)
+				}
+				if err := os.WriteFile(state.StatePath(env.StateDir), data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if code := Run(context.Background(), []string{"status"}, env, nil); code != 1 {
+				t.Errorf("Run(status) = %d, want 1", code)
+			}
+			want := "○ Disconnected.\n  Connect with: tervi connect\n"
+			if stdout.String() != want || stderr.Len() != 0 {
+				t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
+			}
+		})
+	}
+}
+
+func TestStatusNoDaemonConnectTrue(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		stopReason *string
+	}{
+		{name: "without stop reason"},
+		{name: "with revoked stop reason", stopReason: ptrString("credential_revoked")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &commandRunner{}
+			client := &commandControl{statuses: []statusResult{{err: control.ErrNotRunning}}}
+			env, _, stdout, stderr := commandEnv(t, runner, client, true)
+			if err := state.WriteState(env.StateDir, state.State{MachineID: "machine-123", CredentialSaved: true, Confirmed: true, Connect: true, StopReason: tc.stopReason}); err != nil {
+				t.Fatal(err)
+			}
+			if code := Run(context.Background(), []string{"status"}, env, nil); code != 1 {
+				t.Fatalf("Run(status) = %d, want 1", code)
+			}
+			want := "✗ tervi isn't running in the background.\n  Start it with: tervi connect\n"
+			if stdout.String() != want || stderr.Len() != 0 {
+				t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
+			}
+		})
+	}
+}
+
+func TestStatusNoDaemonUsesPairedStateRecord(t *testing.T) {
+	runner := &commandRunner{}
+	var statePath string
+	client := &commandControl{statusFunc: func(context.Context) (control.StatusAnswer, error) {
+		if err := os.Remove(statePath); err != nil {
+			return control.StatusAnswer{}, err
+		}
+		if err := os.Mkdir(statePath, 0700); err != nil {
+			return control.StatusAnswer{}, err
+		}
+		return control.StatusAnswer{}, control.ErrNotRunning
+	}}
+	env, _, stdout, stderr := commandEnv(t, runner, client, true)
+	statePath = state.StatePath(env.StateDir)
+	if code := Run(context.Background(), []string{"status"}, env, nil); code != 1 {
+		t.Fatalf("Run(status) = %d, want 1", code)
+	}
+	want := "○ Disconnected.\n  Connect with: tervi connect\n"
+	if stdout.String() != want || stderr.Len() != 0 {
+		t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
+	}
+}
+
+func TestConnectRevokedMessage(t *testing.T) {
+	runner := &commandRunner{}
+	client := &commandControl{
+		statuses: []statusResult{{answer: control.StatusAnswer{State: "reconnecting", Server: "http://localhost:8080"}}},
+		connect:  control.ConnectAnswer{Result: "revoked"},
+	}
+	env, _, stdout, stderr := commandEnv(t, runner, client, true)
+	if code := Run(context.Background(), []string{"connect"}, env, nil); code != 1 {
+		t.Fatalf("Run(connect) = %d, want 1", code)
+	}
+	want := "✗ This computer was unpaired on the server.\n  Pair it again with: tervi pair --server http://localhost:8080\n"
+	if stdout.String() != want || stderr.Len() != 0 {
+		t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
+	}
 }
 
 func TestStatusSince(t *testing.T) {

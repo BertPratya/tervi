@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { REFRESH_MS, view } from './machines-view.js';
+import { afterRefresh, afterRevoke, REFRESH_MS, revokeQuestion, view } from './machines-view.js';
 
 test('view builds the online row', () => {
   const result = view({ machines: [{
@@ -89,4 +89,108 @@ test('view keeps machine names as literal text', () => {
 
 test('view exports the five-second refresh interval', () => {
   assert.equal(REFRESH_MS, 5000);
+});
+
+test('revoke question includes the machine name as literal text', () => {
+  assert.equal(
+    revokeQuestion({ display_name: 'bert-desktop' }),
+    'Revoke bert-desktop? It stops working at once and must be paired again to come back.',
+  );
+  assert.equal(
+    revokeQuestion({ display_name: '<b>computer</b>' }),
+    'Revoke <b>computer</b>? It stops working at once and must be paired again to come back.',
+  );
+  const result = view({ machines: [{
+    display_name: '<b>computer</b>', os_name: 'Linux', os_version: '1', online: true,
+  }] });
+  assert.equal(result.rows[0], '● <b>computer</b>   Linux 1   Online');
+});
+
+test('view shows a revoke failure by machine name', () => {
+  const result = view({ machines: [], revokeFailure: 'bert-desktop' });
+
+  assert.equal(result.failureMessage, "Couldn't revoke bert-desktop. Try again.");
+});
+
+test('afterRevoke removes machines on 204 and 404 without a failure', () => {
+  const state = { machines: [
+    { machine_id: 'one', display_name: 'first' },
+    { machine_id: 'two', display_name: 'second' },
+  ], revokeFailure: null };
+
+  for (const status of [204, 404]) {
+    const result = afterRevoke(state, 'one', status);
+    assert.deepEqual(result.machines, [{ machine_id: 'two', display_name: 'second' }]);
+    assert.equal(result.revokeFailure, null);
+  }
+});
+
+test('afterRevoke keeps machines and names the failure for errors or no answer', () => {
+  const state = { machines: [
+    { machine_id: 'one', display_name: 'bert-desktop' },
+    { machine_id: 'two', display_name: 'other' },
+  ], revokeFailure: null };
+
+  for (const status of [500, null]) {
+    const result = afterRevoke(state, 'one', status);
+    assert.deepEqual(result.machines, state.machines);
+    assert.equal(result.revokeFailure, 'bert-desktop');
+    assert.equal(view(result).failureMessage, "Couldn't revoke bert-desktop. Try again.");
+  }
+
+  const afterRefresh = view({ machines: state.machines, revokeFailure: null });
+  assert.equal(afterRefresh.failureMessage, '');
+});
+
+test('afterRevoke leaves a row removed by refresh absent and names the failure', () => {
+  const machine = { machine_id: 'one', display_name: 'bert-desktop' };
+  const state = { machines: [{ machine_id: 'two', display_name: 'other' }], revokeMachine: machine };
+
+  const failed = afterRevoke(state, 'one', 500);
+  assert.deepEqual(failed.machines, state.machines);
+  assert.equal(failed.revokeFailure, 'bert-desktop');
+
+  const renamed = { machine_id: 'one', display_name: 'new server name' };
+  const failedAfterRename = afterRevoke({ ...state, machines: [renamed] }, 'one', 500);
+  assert.deepEqual(failedAfterRename.machines, [renamed]);
+  assert.equal(failedAfterRename.revokeFailure, 'bert-desktop');
+
+  const gone = afterRevoke(state, 'one', 404);
+  assert.deepEqual(gone.machines, state.machines);
+  assert.equal(gone.revokeFailure, null);
+});
+
+test('afterRefresh filters successful revokes and preserves the answer order', () => {
+  const state = {
+    machines: [{ machine_id: 'old', display_name: 'old result' }],
+    revokeFailure: 'previous failure',
+  };
+  const answerMachines = [
+    { machine_id: 'two', display_name: 'second' },
+    { machine_id: 'one', display_name: 'first' },
+    { machine_id: 'three', display_name: 'third' },
+  ];
+
+  const result = afterRefresh(state, answerMachines, ['one'], false);
+  assert.deepEqual(result.machines, [answerMachines[0], answerMachines[2]]);
+  assert.equal(result.revokeFailure, null);
+});
+
+test('afterRefresh keeps the revoke failure when one failed while refresh waited', () => {
+  const state = {
+    machines: [{ machine_id: 'one', display_name: 'bert-desktop' }],
+    revokeFailure: 'bert-desktop',
+  };
+  const result = afterRefresh(state, [], [], true);
+
+  assert.deepEqual(result.machines, []);
+  assert.equal(result.revokeFailure, 'bert-desktop');
+});
+
+test('afterRefresh keeps the current list when refresh fails', () => {
+  const machines = [{ machine_id: 'one', display_name: 'bert-desktop' }];
+  const result = afterRefresh({ machines, revokeFailure: 'bert-desktop' }, null, ['one'], false);
+
+  assert.deepEqual(result.machines, machines);
+  assert.equal(result.revokeFailure, null);
 });

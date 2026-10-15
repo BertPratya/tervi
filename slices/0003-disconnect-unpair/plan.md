@@ -1,6 +1,6 @@
 # 0003 Disconnect and unpair — plan
 
-Status: draft
+Status: approved
 Spec: [spec.md](spec.md)
 
 This slice has 13 design decisions, more than the 10 that `AGENTS.md`
@@ -21,7 +21,7 @@ decisions for recognizing a computer are too few for a slice of their own.
 | Recognizing a computer | `internal/server/pairing/match.go` (new) | Finds the earlier machine for an identity, when the pairing starts (R24, R25) |
 | Pairing | `internal/server/pairing` | Start stores the identity and the match; the approval answer shows the match; the correct code attaches the new credential to the matched machine; the acknowledgment ends the earlier credential and updates the name (R23–R28); every machine query uses `credentials` |
 | Pages | `internal/server/web` | The Machines page gets Revoke and its question (R17, R18); the approval page shows the match with Accept and Reject (R24) |
-| Close codes | `internal/protocol` | Adds `4002` |
+| Close codes and error codes | `internal/protocol` | Adds `4002`, and the error codes `unknown_credential` and `credential_revoked` that the server and the worker share (fix 2) |
 | Computer identity | `internal/worker/pair/identity.go` (new) | Reads `/etc/machine-id` and computes the identity with tervi's app ID (R23) |
 | Pairing on the worker | `internal/worker/pair` | Sends the identity; without a machine ID, asks first (R23); after `credential_revoked`, starts a new pairing (R22) |
 | `tervi disconnect` | `internal/worker/cli/disconnect.go` (new) | Asks the daemon, or writes `state.json` under the lock when no daemon runs (R1–R6) |
@@ -83,7 +83,7 @@ As in slice 2, HTTP over `$XDG_RUNTIME_DIR/tervi/daemon.sock`:
 
 | Operation | Called by | Answer |
 | --- | --- | --- |
-| `POST /disconnect` (new) | `tervi disconnect` | Sets `connect` to false and closes the connection with `1000`: `disconnected`, `already_disconnected`, `rejected` or `revoked` (nothing changes, R5, R21), `not_paired`, or `failed` (`state.json` could not be written, with its path) |
+| `POST /disconnect` (new) | `tervi disconnect` | Sets `connect` to false and closes the connection with `1000`: `disconnected`, `already_disconnected`, `rejected` or `revoked` (nothing changes, R5, R21), `not_paired`, `failed` (`state.json` could not be written, with its path), or `unreadable` (a file could not be read, with its path) |
 | `GET /status` | `tervi status` | As in slice 2; `not_connecting` carries the stop reason `credential_revoked` too |
 | `POST /connect` | `tervi connect`, `tervi pair` | As in slice 2, plus `revoked` |
 
@@ -371,14 +371,14 @@ R8 and R9 need no new server code: a disconnect closes the connection with
 
 | # | Task | Depends on | Risk | Status |
 | --- | --- | --- | --- | --- |
-| 01 | [Server: credentials in their own table](tasks/01-server-credentials.md) | — | core | todo |
-| 02 | [Server: unpair and Revoke, and the Machines page's Revoke button](tasks/02-server-unpair-revoke.md) | 01 | core | todo |
-| 03 | [Server: recognizing a computer that pairs again, and the approval page](tasks/03-server-recognition.md) | 01, 02 | core | todo |
-| 04 | [Worker: a revoked credential, and the state without a daemon](tasks/04-worker-revoked.md) | 01 | core | todo |
-| 05 | [Worker: `tervi disconnect`](tasks/05-worker-disconnect.md) | 04 | core | todo |
-| 06 | [Worker: `tervi unpair`](tasks/06-worker-unpair.md) | 02, 05 | core | todo |
-| 07 | [Worker: the computer's identity when pairing](tasks/07-worker-identity.md) | 03, 04, 06 | core | todo |
-| 08 | [End-to-end test of disconnect, unpair, Revoke, and pairing again](tasks/08-end-to-end.md) | 01–07 | normal | todo |
+| 01 | [Server: credentials in their own table](tasks/01-server-credentials.md) | — | core | done |
+| 02 | [Server: unpair and Revoke, and the Machines page's Revoke button](tasks/02-server-unpair-revoke.md) | 01 | core | done |
+| 03 | [Server: recognizing a computer that pairs again, and the approval page](tasks/03-server-recognition.md) | 01, 02 | core | done |
+| 04 | [Worker: a revoked credential, and the state without a daemon](tasks/04-worker-revoked.md) | 01 | core | done |
+| 05 | [Worker: `tervi disconnect`](tasks/05-worker-disconnect.md) | 04 | core | done |
+| 06 | [Worker: `tervi unpair`](tasks/06-worker-unpair.md) | 02, 05 | core | done |
+| 07 | [Worker: the computer's identity when pairing](tasks/07-worker-identity.md) | 03, 04, 06 | core | done |
+| 08 | [End-to-end test of disconnect, unpair, Revoke, and pairing again](tasks/08-end-to-end.md) | 01–07 | normal | done |
 
 The server tasks (01, 02, 03) and the worker tasks (04, 05, 06, 07) each run
 one after another, because the tasks on each side change some of the same

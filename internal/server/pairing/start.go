@@ -1,6 +1,7 @@
 package pairing
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,9 +13,10 @@ import (
 )
 
 type startInput struct {
-	Hostname  string
-	OSName    string
-	OSVersion string
+	Hostname     string
+	OSName       string
+	OSVersion    string
+	IdentityHash []byte
 }
 
 type startResponse struct {
@@ -45,11 +47,36 @@ func (deps Deps) start(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteInternalError(w, deps.Logger, "start pairing", err)
 		return
 	}
-	_, err = deps.Pool.Exec(r.Context(), `INSERT INTO pairing_requests
-		(hostname, os_name, os_version, status, polling_key_hash, approval_key_hash, expires_at)
-		VALUES ($1, $2, $3, 'waiting_for_approval', $4, $5, now() + interval '10 minutes')`,
-		input.Hostname, input.OSName, input.OSVersion, secret.Hash(pollingKey), secret.Hash(approvalKey))
+	tx, err := deps.Pool.Begin(r.Context())
 	if err != nil {
+		httpapi.WriteInternalError(w, deps.Logger, "start pairing", err)
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	var requestID string
+	err = tx.QueryRow(r.Context(), `INSERT INTO pairing_requests
+		(hostname, os_name, os_version, identity_hash, status, polling_key_hash, approval_key_hash, expires_at)
+		VALUES ($1, $2, $3, $4, 'waiting_for_approval', $5, $6, now() + interval '10 minutes')
+		RETURNING id::text`, input.Hostname, input.OSName, input.OSVersion, input.IdentityHash,
+		secret.Hash(pollingKey), secret.Hash(approvalKey)).Scan(&requestID)
+	if err != nil {
+		httpapi.WriteInternalError(w, deps.Logger, "start pairing", err)
+		return
+	}
+	if len(input.IdentityHash) > 0 {
+		machineID, err := findMatchingMachine(r.Context(), tx, input.IdentityHash)
+		if err != nil {
+			httpapi.WriteInternalError(w, deps.Logger, "start pairing", err)
+			return
+		}
+		if machineID != "" {
+			if _, err := tx.Exec(r.Context(), `UPDATE pairing_requests SET matched_machine_id = $2 WHERE id = $1`, requestID, machineID); err != nil {
+				httpapi.WriteInternalError(w, deps.Logger, "start pairing", err)
+				return
+			}
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		httpapi.WriteInternalError(w, deps.Logger, "start pairing", err)
 		return
 	}
@@ -86,6 +113,25 @@ func decodeStartInput(w http.ResponseWriter, r *http.Request) (startInput, bool)
 		}
 		value = []byte(strings.TrimSpace(string(value)))
 		if len(value) == 0 || value[0] != '"' || json.Unmarshal(value, destination) != nil {
+			return startInput{}, false
+		}
+	}
+	if value, exists := fields["identity_hash"]; exists {
+		value = []byte(strings.TrimSpace(string(value)))
+		if len(value) == 0 || value[0] != '"' {
+			return startInput{}, false
+		}
+		var identity string
+		if err := json.Unmarshal(value, &identity); err != nil || len(identity) != 64 {
+			return startInput{}, false
+		}
+		for _, character := range identity {
+			if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+				return startInput{}, false
+			}
+		}
+		input.IdentityHash, err = hex.DecodeString(identity)
+		if err != nil {
 			return startInput{}, false
 		}
 	}

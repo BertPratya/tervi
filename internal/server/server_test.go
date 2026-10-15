@@ -19,6 +19,7 @@ import (
 	"github.com/bertpratya/tervi/internal/server/db"
 	"github.com/bertpratya/tervi/internal/server/db/dbtest"
 	"github.com/coder/websocket"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestHealth(t *testing.T) {
@@ -115,21 +116,8 @@ func TestCloseAllOnStop(t *testing.T) {
 	}
 	credentials := []string{"server-stop-credential-one", "server-stop-credential-two"}
 	machineIDs := make([]string, 0, len(credentials))
-	for i, credential := range credentials {
-		var pairingID string
-		if err := pool.QueryRow(context.Background(), `INSERT INTO pairing_requests
-			(status, polling_key_hash, approval_key_hash, expires_at)
-			VALUES ('waiting_for_approval', $1, $2, now() + interval '10 minutes') RETURNING id::text`,
-			[]byte(strings.Repeat("p", i+1)), []byte(strings.Repeat("a", i+1))).Scan(&pairingID); err != nil {
-			t.Fatalf("insert pairing request: %v", err)
-		}
-		var machineID string
-		if err := pool.QueryRow(context.Background(), `INSERT INTO machines
-			(pairing_request_id, display_name, credential_hash, status, expires_at)
-			VALUES ($1, $2, $3, 'active', now() + interval '10 minutes') RETURNING machine_id::text`, pairingID, "server-stop-machine", secret.Hash(secret.FromString(credential))).Scan(&machineID); err != nil {
-			t.Fatalf("insert machine: %v", err)
-		}
-		machineIDs = append(machineIDs, machineID)
+	for _, credential := range credentials {
+		machineIDs = append(machineIDs, insertActiveMachine(t, pool, "server-stop-machine", credential))
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -223,19 +211,7 @@ func TestRunBoundsStopWhenWorkerDoesNotAnswerClose(t *testing.T) {
 		t.Fatalf("migrate test database: %v", err)
 	}
 	credential := "server-stop-silent-worker-credential"
-	var pairingID string
-	if err := pool.QueryRow(context.Background(), `INSERT INTO pairing_requests
-		(status, polling_key_hash, approval_key_hash, expires_at)
-		VALUES ('waiting_for_approval', $1, $2, now() + interval '10 minutes') RETURNING id::text`,
-		[]byte("polling-silent-worker"), []byte("approval-silent-worker")).Scan(&pairingID); err != nil {
-		t.Fatalf("insert pairing request: %v", err)
-	}
-	if _, err := pool.Exec(context.Background(), `INSERT INTO machines
-		(pairing_request_id, display_name, credential_hash, status, expires_at)
-		VALUES ($1, 'silent worker', $2, 'active', now() + interval '10 minutes')`,
-		pairingID, secret.Hash(secret.FromString(credential))); err != nil {
-		t.Fatalf("insert machine: %v", err)
-	}
+	insertActiveMachine(t, pool, "silent worker", credential)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve server address: %v", err)
@@ -292,4 +268,14 @@ func TestRunBoundsStopWhenWorkerDoesNotAnswerClose(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 6*time.Second {
 		t.Fatalf("Run() stop took %s, want about five seconds", elapsed)
 	}
+}
+
+func insertActiveMachine(t *testing.T, pool *pgxpool.Pool, displayName, proof string) string {
+	t.Helper()
+	machineID, _ := dbtest.InsertMachineCredential(t, pool, dbtest.MachineCredential{
+		DisplayName: displayName,
+		Hash:        secret.Hash(secret.FromString(proof)),
+		Status:      "active",
+	})
+	return machineID
 }

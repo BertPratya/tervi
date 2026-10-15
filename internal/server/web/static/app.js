@@ -36,6 +36,10 @@ function render(nextView) {
     details.append(textElement('p', '', `Computer: ${nextView.name}`));
     details.append(textElement('p', '', nextView.os));
     app.append(details);
+    if (nextView.matchHeading) {
+      app.append(textElement('p', 'match-heading', nextView.matchHeading));
+      app.append(textElement('p', 'match-description', nextView.matchDescription));
+    }
   } else if (nextView.message.startsWith('✓ ')) {
     app.append(textElement('p', 'details', `${nextView.os}.`));
   }
@@ -50,13 +54,19 @@ function render(nextView) {
   if (nextView.buttons.length > 0) {
     const actions = document.createElement('div');
     actions.className = 'actions';
-    for (const label of nextView.buttons) {
+    for (const [index, label] of nextView.buttons.entries()) {
+      const action = document.createElement('div');
+      action.className = 'action';
       const button = document.createElement('button');
       button.type = 'button';
       button.textContent = label;
       button.disabled = actionRunning;
       button.addEventListener('click', () => performAction(label.toLowerCase()));
-      actions.append(button);
+      action.append(button);
+      if (nextView.buttonResults[index]) {
+        action.append(textElement('span', 'action-result', nextView.buttonResults[index]));
+      }
+      actions.append(action);
     }
     app.append(actions);
   }

@@ -14,48 +14,66 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/bertpratya/tervi/internal/secret"
+	"github.com/bertpratya/tervi/internal/server/connection"
 	"github.com/bertpratya/tervi/internal/server/db/dbtest"
+	"github.com/bertpratya/tervi/internal/server/machines"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const testPublicURL = "https://pair.example:9443/base"
 
 type response struct {
-	Error            string `json:"error"`
-	Result           string `json:"result"`
-	Credential       string `json:"credential"`
-	MachineID        string `json:"machine_id"`
-	PollingKey       string `json:"polling_key"`
-	ApprovalURL      string `json:"approval_url"`
-	ExpiresInSeconds int    `json:"expires_in_seconds"`
-	Status           string `json:"status"`
-	Hostname         string `json:"hostname"`
-	OSName           string `json:"os_name"`
-	OSVersion        string `json:"os_version"`
-	AlreadyDecided   bool   `json:"already_decided"`
-	PairingCode      string `json:"pairing_code"`
-	TriesLeft        *int   `json:"tries_left"`
-	FailureReason    string `json:"failure_reason"`
-	DisplayName      string `json:"display_name"`
+	Error            string                  `json:"error"`
+	Result           string                  `json:"result"`
+	Credential       string                  `json:"credential"`
+	MachineID        string                  `json:"machine_id"`
+	PollingKey       string                  `json:"polling_key"`
+	ApprovalURL      string                  `json:"approval_url"`
+	ExpiresInSeconds int                     `json:"expires_in_seconds"`
+	Status           string                  `json:"status"`
+	Hostname         string                  `json:"hostname"`
+	OSName           string                  `json:"os_name"`
+	OSVersion        string                  `json:"os_version"`
+	AlreadyDecided   bool                    `json:"already_decided"`
+	PairingCode      string                  `json:"pairing_code"`
+	TriesLeft        *int                    `json:"tries_left"`
+	FailureReason    string                  `json:"failure_reason"`
+	DisplayName      string                  `json:"display_name"`
+	EarlierMachine   *earlierMachineResponse `json:"earlier_machine"`
+}
+
+type earlierMachineResponse struct {
+	DisplayName string     `json:"display_name"`
+	StillPaired bool       `json:"still_paired"`
+	UnpairedAt  *time.Time `json:"unpaired_at"`
 }
 
 type testAPI struct {
-	pool    *pgxpool.Pool
-	handler http.Handler
+	pool      *pgxpool.Pool
+	handler   http.Handler
+	list      *connection.List
+	logOutput *bytes.Buffer
 }
 
 func newTestAPI(t *testing.T) *testAPI {
 	t.Helper()
 	pool := dbtest.New(t)
 	mux := http.NewServeMux()
+	list := connection.NewList()
+	logOutput := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logOutput, nil))
 	Register(mux, Deps{
 		Pool:      pool,
 		PublicURL: testPublicURL,
-		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:    logger,
+		List:      list,
 	})
-	return &testAPI{pool: pool, handler: mux}
+	connection.Register(mux, connection.Deps{Pool: pool, Logger: logger, List: list})
+	machines.Register(mux, machines.Deps{Pool: pool, Logger: logger, List: list})
+	return &testAPI{pool: pool, handler: mux, list: list, logOutput: logOutput}
 }
 
 func (api *testAPI) request(t *testing.T, method, path, body, proof string) *httptest.ResponseRecorder {

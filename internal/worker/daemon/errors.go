@@ -15,16 +15,7 @@ import (
 	"github.com/bertpratya/tervi/internal/worker/credential"
 )
 
-func unknownCredential(response *http.Response) bool {
-	if response == nil || response.StatusCode != http.StatusUnauthorized || response.Body == nil {
-		return false
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(response.Body)
-	return err == nil && isUnknownCredentialBody(body)
-}
-
-func isUnknownCredentialBody(body []byte) bool {
+func isCredentialErrorBody(body []byte, expected string) bool {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	opening, err := decoder.Token()
 	if err != nil || opening != json.Delim('{') || !decoder.More() {
@@ -35,7 +26,7 @@ func isUnknownCredentialBody(body []byte) bool {
 		return false
 	}
 	var code string
-	if decoder.Decode(&code) != nil || code != "unknown_credential" || decoder.More() {
+	if decoder.Decode(&code) != nil || code != expected || decoder.More() {
 		return false
 	}
 	closing, err := decoder.Token()

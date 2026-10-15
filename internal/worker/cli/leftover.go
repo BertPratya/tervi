@@ -29,7 +29,10 @@ func checkAndStart(ctx context.Context, env Env, flow Flow, server string) int {
 	return runPairStart(ctx, env, flow, server)
 }
 
-func runLeftover(ctx context.Context, env Env, entryExists, stateExists bool, message string, start bool, server string, flow Flow) int {
+func runLeftover(ctx context.Context, env Env, entryExists, stateExists bool, message string, start bool, server string, flow Flow, yes bool) int {
+	if start && !confirmMachineID(env, flow, yes) {
+		return 1
+	}
 	if code, ok := deletePairing(ctx, env, entryExists, stateExists); !ok {
 		return code
 	}

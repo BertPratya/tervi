@@ -76,10 +76,20 @@ func TestProtocolConstants(t *testing.T) {
 		1009: CloseTooLarge,
 		4000: CloseReplaced,
 		4001: CloseTimeout,
+		4002: CloseRevoked,
 	}
 	for code, got := range want {
 		if got != int(code) {
 			t.Errorf("close code = %d, want %d", got, code)
 		}
+	}
+}
+
+func TestCredentialErrorCodes(t *testing.T) {
+	if ErrorUnknownCredential != "unknown_credential" {
+		t.Errorf("unknown credential code = %q, want unknown_credential", ErrorUnknownCredential)
+	}
+	if ErrorCredentialRevoked != "credential_revoked" {
+		t.Errorf("credential revoked code = %q, want credential_revoked", ErrorCredentialRevoked)
 	}
 }

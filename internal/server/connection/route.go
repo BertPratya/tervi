@@ -4,19 +4,19 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/bertpratya/tervi/internal/protocol"
 	"github.com/bertpratya/tervi/internal/secret"
+	"github.com/bertpratya/tervi/internal/server/credential"
 	"github.com/bertpratya/tervi/internal/server/httpapi"
 	"github.com/coder/websocket"
-	"github.com/jackc/pgx/v5"
 )
 
 const updateLastSeenQuery = `UPDATE machines SET last_seen_at = now() WHERE machine_id = $1`
+const credentialStatusQuery = `SELECT status FROM credentials WHERE credential_id = $1`
 
 type connectionHandler struct {
 	deps Deps
@@ -32,20 +32,27 @@ func (handler connectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	}
 	proof, ok := httpapi.BearerProof(r)
 	if !ok {
-		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_credential")
+		httpapi.WriteError(w, http.StatusUnauthorized, protocol.ErrorUnknownCredential)
 		return
 	}
-	var machineID string
-	err := handler.deps.Pool.QueryRow(r.Context(), `SELECT machine_id::text FROM machines
-		WHERE credential_hash = $1 AND status = 'active'`, secret.Hash(secret.FromString(proof))).Scan(&machineID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_credential")
+	row, found, err := credential.Find(r.Context(), handler.deps.Pool, secret.FromString(proof))
+	if !found && err == nil {
+		httpapi.WriteError(w, http.StatusUnauthorized, protocol.ErrorUnknownCredential)
 		return
 	}
 	if err != nil {
 		httpapi.WriteInternalError(w, handler.deps.Logger, "look up machine", err)
 		return
 	}
+	if row.Status == credential.StatusRevoked {
+		httpapi.WriteError(w, http.StatusUnauthorized, protocol.ErrorCredentialRevoked)
+		return
+	}
+	if row.Status != credential.StatusActive {
+		httpapi.WriteError(w, http.StatusUnauthorized, protocol.ErrorUnknownCredential)
+		return
+	}
+	machineID := row.MachineID
 	if !isOpeningRequest(r) {
 		httpapi.WriteError(w, http.StatusBadRequest, "invalid_input")
 		return
@@ -57,6 +64,9 @@ func (handler connectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	}
 	setHandlerConnection(conn)
 	conn.SetReadLimit(protocol.MaxMessageSize)
+	if handler.deps.AfterCheck != nil {
+		handler.deps.AfterCheck(machineID)
+	}
 	openedAt := time.Now()
 	lastMessageReceived := openedAt
 	lastSeenWrittenAt := time.Time{}
@@ -75,6 +85,18 @@ func (handler connectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	defer handler.deps.List.remove(machineID, conn)
 
 	stored := handler.deps.List.add(machineID, conn)
+	if stored {
+		var status string
+		if err := handler.deps.Pool.QueryRow(r.Context(), credentialStatusQuery, row.CredentialID).Scan(&status); err != nil {
+			httpapi.LogInternalError(handler.deps.Logger, "check credential status", err)
+			_ = conn.CloseNow()
+			return
+		}
+		if status != credential.StatusActive {
+			handler.deps.List.closeRevokedConn(machineID, conn)
+			return
+		}
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	_, err = handler.deps.Pool.Exec(ctx, updateLastSeenQuery, machineID)
 	cancel()

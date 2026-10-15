@@ -236,15 +236,24 @@ because none can be read. Hint lines are indented two spaces
 (slice 2, fix 6). No output may contain the credential; reuse the
 redaction used by `tervi connect`.
 
+**The questions.** Each question's last line ends with `[y/N] ` (one
+space) and no newline, so the answer is typed on the same line, as the
+spec's "What the user does" shows (fix 1). The answer is read by the
+shared reader in `internal/worker/cli/answer.go` (task 07).
+
 ## Boundaries
 
 - May create or change: `internal/worker/unpair/`,
-  `internal/worker/service/remove.go`, `internal/worker/cli/` (the new
+  `internal/worker/service/remove.go`, `internal/worker/service/service.go`
+  (only so it uses the command-error helper and the service file path that
+  `remove.go` needs, written once), `internal/worker/cli/` (the new
   file, the dispatch, the usage line, the interface, the `Env` field),
   `cmd/tervi/` (wiring only), `internal/worker/pair/client.go` and
   `pair.go` (only moving the client into `NewHTTPClient`),
-  `internal/worker/credential/file.go` (only adding `DeleteLeftovers`),
-  their tests.
+  `internal/worker/credential/file.go` (only adding `DeleteLeftovers`, the
+  check whether any leftover exists, and their error type; both use one
+  helper that lists the leftover files, and the temporary-file name is
+  written once), their tests.
 - Must not change: `internal/worker/control/` and
   `internal/worker/daemon/` (use them), the rest of
   `internal/worker/pair/` and `internal/worker/credential/`,

@@ -18,6 +18,13 @@
       <h1>Machines</h1>
       <p class="warning" aria-live="polite"></p>
       <div id="app"></div>
+      <dialog id="revoke-dialog" aria-labelledby="revoke-question">
+        <p id="revoke-question"></p>
+        <div>
+          <button id="confirm-revoke" type="button">Revoke</button>
+          <button id="cancel-revoke" type="button">Cancel</button>
+        </div>
+      </dialog>
     </main>
     <script type="module" src="/static/machines.js"></script>
   </body>

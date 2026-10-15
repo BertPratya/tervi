@@ -202,12 +202,13 @@ func (p *testProxy) recordSecrets(path string, body []byte) {
 }
 
 type fixture struct {
-	serverURL  string
-	store      *credential.Store
-	stateDir   string
-	serviceDir string
-	proxy      *testProxy
-	logs       *safeBuffer
+	serverURL     string
+	store         *credential.Store
+	stateDir      string
+	machineIDPath string
+	serviceDir    string
+	proxy         *testProxy
+	logs          *safeBuffer
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -222,11 +223,12 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(origin.Close)
 	proxy.setTarget(origin.URL)
 	f := &fixture{
-		serverURL:  proxyServer.URL,
-		stateDir:   filepath.Join(t.TempDir(), "state"),
-		serviceDir: t.TempDir(),
-		proxy:      proxy,
-		logs:       logs,
+		serverURL:     proxyServer.URL,
+		stateDir:      filepath.Join(t.TempDir(), "state"),
+		machineIDPath: writeTestMachineID(t),
+		serviceDir:    t.TempDir(),
+		proxy:         proxy,
+		logs:          logs,
 	}
 	f.store = credential.NewStore(credential.NewFileBackend(f.stateDir))
 	return f
@@ -240,7 +242,7 @@ func (f *fixture) startWorker(parent context.Context) *workerRun {
 		run.done <- cli.Run(parent, []string{"pair", "--server", f.serverURL}, cli.Env{
 			Stdin: stdin, Stdout: stdout, Stderr: stderr, Store: f.store, StateDir: f.stateDir,
 			ProgramPath: "/usr/bin/true", Runner: fixtureServiceRunner{}, ServiceDir: f.serviceDir, ControlClient: fixtureControlClient{stateDir: f.stateDir},
-		}, pair.New(pair.Options{RequestTimeout: 300 * time.Millisecond, PollInterval: 10 * time.Millisecond}))
+		}, pair.New(pair.Options{RequestTimeout: 300 * time.Millisecond, PollInterval: 10 * time.Millisecond, MachineIDPath: f.machineIDPath}))
 		_ = stdin.Close()
 	}()
 	return run
@@ -271,6 +273,25 @@ func (client fixtureControlClient) Connect(context.Context) (control.ConnectAnsw
 		return control.ConnectAnswer{}, fmt.Errorf("write state for fake daemon: %w", err)
 	}
 	return control.ConnectAnswer{Result: "connected"}, nil
+}
+
+func (client fixtureControlClient) Disconnect(context.Context) (control.DisconnectAnswer, error) {
+	record, exists, err := workerstate.ReadState(client.stateDir)
+	if err != nil {
+		return control.DisconnectAnswer{}, fmt.Errorf("read state for fake daemon: %w", err)
+	}
+	if !exists {
+		return control.DisconnectAnswer{Result: "not_paired"}, nil
+	}
+	if !record.Connect {
+		return control.DisconnectAnswer{Result: "already_disconnected"}, nil
+	}
+	record.Connect = false
+	record.StopReason = nil
+	if err := workerstate.WriteState(client.stateDir, record); err != nil {
+		return control.DisconnectAnswer{}, fmt.Errorf("write state for fake daemon: %w", err)
+	}
+	return control.DisconnectAnswer{Result: "disconnected"}, nil
 }
 
 func TestPairingHappyPath(t *testing.T) {
@@ -520,13 +541,21 @@ func runLostAcknowledgmentThenFinish(t *testing.T) secretAudit {
 }
 
 type approvalState struct {
-	Status        string `json:"status"`
-	Hostname      string `json:"hostname"`
-	OSName        string `json:"os_name"`
-	OSVersion     string `json:"os_version"`
-	PairingCode   string `json:"pairing_code"`
-	FailureReason string `json:"failure_reason"`
-	DisplayName   string `json:"display_name"`
+	Status         string               `json:"status"`
+	Hostname       string               `json:"hostname"`
+	OSName         string               `json:"os_name"`
+	OSVersion      string               `json:"os_version"`
+	PairingCode    string               `json:"pairing_code"`
+	FailureReason  string               `json:"failure_reason"`
+	DisplayName    string               `json:"display_name"`
+	EarlierMachine *earlierMachineState `json:"earlier_machine"`
+	rawResponse    string
+}
+
+type earlierMachineState struct {
+	DisplayName string     `json:"display_name"`
+	StillPaired *bool      `json:"still_paired"`
+	UnpairedAt  *time.Time `json:"unpaired_at"`
 }
 
 func approvalRequest(t *testing.T, serverURL, key, method, suffix string) approvalState {
@@ -545,10 +574,15 @@ func approvalRequest(t *testing.T, serverURL, key, method, suffix string) approv
 		body, _ := io.ReadAll(response.Body)
 		t.Fatalf("approval API status = %d, want 200; body=%s", response.StatusCode, body)
 	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read approval API response: %v", err)
+	}
 	var state approvalState
-	if err := json.NewDecoder(response.Body).Decode(&state); err != nil {
+	if err := json.Unmarshal(body, &state); err != nil {
 		t.Fatalf("decode approval API response: %v", err)
 	}
+	state.rawResponse = string(body)
 	return state
 }
 

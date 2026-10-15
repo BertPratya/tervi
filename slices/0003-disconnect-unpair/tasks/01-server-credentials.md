@@ -127,9 +127,31 @@ than one row. A `pending` credential past `expires_at` is returned as
 // ended_at = now(), inside the caller's transaction. It reports whether a
 // credential changed; a machine with no active credential changes nothing.
 func Revoke(ctx context.Context, tx pgx.Tx, machineID string) (changed bool, err error)
+
+// RevokeCredential sets this one credential to revoked with ended_at =
+// now() if it is still active, inside the caller's transaction, and reports
+// whether it changed.
+func RevokeCredential(ctx context.Context, tx pgx.Tx, credentialID string) (changed bool, err error)
 ```
 
-Tasks 02 and 03 call it. The caller closes the machine's connection after
+`RevokeCredential` was added in the slice review (fix 1): the unpair route
+(task 02) uses it, so a request ends only the credential that proved it,
+never a newer one the same machine got in the meantime.
+
+Also in `internal/server/credential` (fix 1): the one SQL condition for
+"this machine has an `active` credential", built by a function that takes
+the caller's machine ID column (for example
+`credential.HasActiveSQL("m.machine_id")`), used by the machines list and
+the approval answer's `still_paired`. `Revoke` and `RevokeCredential` share
+one `UPDATE` statement, which differs only in the column it matches (fix 2).
+
+The two error codes `unknown_credential` and `credential_revoked` are
+constants in `internal/protocol`, next to the close codes, so the server and
+the worker use the same ones (fix 2; fix 1 had put them in
+`internal/server/credential`). Every server route that answers them uses
+them.
+
+Tasks 02 and 03 call `Revoke`. The caller closes the machine's connection after
 its transaction commits (next part), so a worker that reconnects at once is
 already refused.
 
@@ -221,6 +243,8 @@ with a revoked credential (set its row to `revoked` in the test) and checks
 | `TestAcknowledgeRevoked` — the acknowledgment and save-failure routes answer `401 credential_revoked` for a `revoked` credential | R20, R22 |
 | `TestFindCredential` — finds `active`, `revoked`, `failed`, and `expired` rows by proof; a `pending` row past its expiry reads as `expired`; an unknown proof is not found | R18, R20 |
 | `TestRevokeCredential` — an `active` credential becomes `revoked` with `ended_at` set; a machine with none changes nothing and reports so | R18 |
+| `TestRevokeCredentialDoesNotRevokeReplacement` — `RevokeCredential` ends only the credential it names; a newer `active` credential on the same machine stays `active` (fix 1) | R11 |
+| `TestCredentialErrorCodes` (in `internal/protocol`) and `TestRevokeSQL` — the two error codes have their contract values, and `Revoke` and `RevokeCredential` build their `UPDATE` from one statement (fix 2) | R20 |
 | `TestRevokedWhileOpening` — a credential revoked between the route's check and adding the connection (through the test hook) is closed with `4002` right after it is added, and the machine is Offline | R18, R20 |
 | `TestMigrationVersion` — `go run ./cmd/server migrate` reports version 3; the existing version tests expect 3, and 4 counts as newer than this program | R19 |
 | `TestConnectionRefusesRevoked` — a revoked credential gets `401 credential_revoked` and no WebSocket; unknown, `pending`, `failed`, and `expired` get `401 unknown_credential` | R20 |

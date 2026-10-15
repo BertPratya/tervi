@@ -17,22 +17,22 @@ until `tervi connect`.
   connected or reconnecting, the worker shall close the connection, stop
   trying to connect, keep the pairing, and print
   `✓ Disconnected. tervi stays in the background but won't connect.` then
-  `Connect again with: tervi connect`, and exit with `0`. The daemon shall
+  `  Connect again with: tervi connect`, and exit with `0`. The daemon shall
   keep running, and write the log line `○ Disconnected.`
 - R2. While the user has disconnected, the daemon shall not connect, also
   after the computer restarts, until the user runs `tervi connect`.
 - R3. When `tervi disconnect` runs and tervi is not running in the
   background, the worker shall still record that it must not connect, print
   `✓ Disconnected. tervi won't connect, including after the computer restarts.`
-  then `Connect again with: tervi connect`, and exit with `0`. It shall not
+  then `  Connect again with: tervi connect`, and exit with `0`. It shall not
   start tervi in the background.
 - R4. When `tervi disconnect` runs on a computer the user already
   disconnected, the worker shall print `Already disconnected.`, change
   nothing, and exit with `0`.
 - R5. When `tervi disconnect` runs on a computer whose credential was
   rejected (slice 2's R18), the worker shall change nothing, print
-  `Not connecting: the server doesn't accept this computer's credential.`
-  then `Pair again with: tervi pair --server <server>`, and exit with `0`.
+  `✗ Not connecting: the server doesn't accept this computer's credential.`
+  then `  Pair again with: tervi pair --server <server>`, and exit with `0`.
 - R6. When `tervi disconnect` runs on a computer that is not paired, the
   worker shall print
   `This computer isn't paired. Pair it with: tervi pair --server <url>`,
@@ -51,7 +51,7 @@ until `tervi connect`.
   R4.
 - R21. On such a computer, `tervi status`, `tervi connect`, and
   `tervi disconnect` shall print `✗ This computer was unpaired on the server.`
-  then `Pair it again with: tervi pair --server <server>`. `tervi status` and
+  then `  Pair it again with: tervi pair --server <server>`. `tervi status` and
   `tervi connect` shall exit with `1`; `tervi disconnect` with `0`, as in R5.
   *This task: `tervi disconnect` on such a computer.*
 
@@ -99,6 +99,7 @@ func (d *Daemon) Disconnect(ctx context.Context) DisconnectResult
 | `not_connecting`, `credential_revoked` | nothing | `revoked` |
 | `not_paired` | nothing | `not_paired` |
 | writing `state.json` fails | nothing else changes | `failed`, with the path |
+| reading `credential.json` or `state.json` fails | nothing | `unreadable`, with the path of the file it could not read |
 
 **The run loop after a disconnect.** Today, whenever `serveConnection`
 returns, `Run` logs `✗ Connection lost: <reason>` and waits to reconnect.
@@ -129,7 +130,7 @@ interface, so add a `Disconnect` method to it (only that), or the e2e tests
 stop compiling.
 
 `POST /disconnect` calls the engine's `Disconnect` and answers
-`{"result": "<result>"}`, plus `"path"` for `failed`, with the same
+`{"result": "<result>"}`, plus `"path"` for `failed` and `unreadable`, with the same
 encoding pattern as `ConnectAnswer`. `Client.Disconnect(ctx)` calls it with
 a 40-second timeout (above).
 
@@ -157,9 +158,10 @@ exits with `2`). Steps:
 | Daemon answered `disconnected` | `✓ Disconnected. tervi stays in the background but won't connect.` / `  Connect again with: tervi connect` | `0` |
 | Wrote it with no daemon | `✓ Disconnected. tervi won't connect, including after the computer restarts.` / `  Connect again with: tervi connect` | `0` |
 | Already disconnected (either way) | `Already disconnected.` | `0` |
-| Rejected (either way) | `Not connecting: the server doesn't accept this computer's credential.` / `  Pair again with: tervi pair --server <server>` | `0` |
+| Rejected (either way) | `✗ Not connecting: the server doesn't accept this computer's credential.` / `  Pair again with: tervi pair --server <server>` | `0` |
 | Revoked (either way) | `✗ This computer was unpaired on the server.` / `  Pair it again with: tervi pair --server <server>` | `0` |
 | `failed` or a write failure | `✗ Can't write <path>.`, as `tervi connect` prints it in slice 2 | `1` |
+| `unreadable`, or a read failure with no daemon | `✗ Can't read <path>.`, as slice 2 prints an unreadable file | `1` |
 | `WithLock` failed for another reason (opening `daemon.lock`, creating the runtime folder) | `✗ Can't reach tervi in the background: <reason>`; nothing written | `1` |
 | The daemon answered `not_paired` | `This computer isn't paired. Pair it with: tervi pair --server <url>` (R6) | `1` |
 | The socket failed after the lock was busy | as `tervi status` reports a socket failure | `1` |

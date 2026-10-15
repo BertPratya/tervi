@@ -59,8 +59,13 @@ func (d *Daemon) waitForConnect(ctx context.Context) ConnectResult {
 		if status.State == StateConnected {
 			return ConnectResult{Result: ResultConnected}
 		}
-		if status.State == StateNotConnecting && status.StopReason != nil && *status.StopReason == state.StopReasonCredentialRejected {
-			return ConnectResult{Result: ResultRejected, LastError: status.LastError}
+		if status.State == StateNotConnecting && status.StopReason != nil {
+			switch *status.StopReason {
+			case state.StopReasonCredentialRejected:
+				return ConnectResult{Result: ResultRejected, LastError: status.LastError}
+			case state.StopReasonCredentialRevoked:
+				return ConnectResult{Result: ResultRevoked}
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -70,16 +75,4 @@ func (d *Daemon) waitForConnect(ctx context.Context) ConnectResult {
 		case <-changed:
 		}
 	}
-}
-
-func (d *Daemon) reject(server string) {
-	record, exists, err := state.ReadState(d.opts.StateDir)
-	if err == nil && exists {
-		record.Connect = false
-		reason := state.StopReasonCredentialRejected
-		record.StopReason = &reason
-		_ = state.WriteState(d.opts.StateDir, record)
-	}
-	d.setRejected()
-	d.logLine("✗ The server doesn't accept this computer's credential. Pair again with: tervi pair --server %s", server)
 }

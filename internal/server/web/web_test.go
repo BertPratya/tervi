@@ -93,6 +93,40 @@ func TestMachinesPageServed(t *testing.T) {
 	assertPageHeaders(t, testFile)
 }
 
+func TestMachinesPageHasRevokeDialog(t *testing.T) {
+	page, err := staticFiles.ReadFile("static/machines.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageText := string(page)
+	dialogStart := strings.Index(pageText, `<dialog id="revoke-dialog"`)
+	dialogEnd := strings.Index(pageText, `</dialog>`)
+	appStart := strings.Index(pageText, `<div id="app">`)
+	appEnd := strings.Index(pageText, `</div>`)
+	if dialogStart < 0 || dialogEnd < dialogStart {
+		t.Fatal("Machines page has no Revoke dialog")
+	}
+	if appStart < 0 || appEnd < appStart || (dialogStart >= appStart && dialogStart <= appEnd) {
+		t.Fatal("Revoke dialog must be outside the part that refresh replaces")
+	}
+	dialog := pageText[dialogStart : dialogEnd+len(`</dialog>`)]
+	if !strings.Contains(dialog, `id="revoke-question"`) || !strings.Contains(dialog, `>Revoke</button>`) || !strings.Contains(dialog, `>Cancel</button>`) {
+		t.Fatal("Revoke dialog must contain its question, Revoke button, and Cancel button")
+	}
+}
+
+func TestMachinesRevokeButtonUsesShownName(t *testing.T) {
+	script, err := staticFiles.ReadFile("static/machines.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scriptText := string(script)
+	if !strings.Contains(scriptText, `import { shown } from '/static/view.js';`) ||
+		!strings.Contains(scriptText, "button.setAttribute('aria-label', `Revoke ${shown(machine.display_name)}`)") {
+		t.Fatal("Revoke button aria-label must use shown() so an empty name is announced as unknown")
+	}
+}
+
 func TestMachinesPageAnnouncesOnlyFailureLineAndPreservesRowSpacing(t *testing.T) {
 	page, err := staticFiles.ReadFile("static/machines.html")
 	if err != nil {

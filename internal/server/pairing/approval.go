@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/bertpratya/tervi/internal/secret"
+	"github.com/bertpratya/tervi/internal/server/credential"
 	"github.com/bertpratya/tervi/internal/server/httpapi"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -19,6 +22,16 @@ type approvalRow struct {
 	pairingCode   string
 	failureReason string
 	displayName   string
+	hasEarlier    bool
+	earlierName   string
+	stillPaired   bool
+	unpairedAt    pgtype.Timestamptz
+}
+
+type earlierMachineAnswer struct {
+	DisplayName string     `json:"display_name"`
+	StillPaired bool       `json:"still_paired"`
+	UnpairedAt  *time.Time `json:"unpaired_at"`
 }
 
 func (deps Deps) readApproval(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +72,7 @@ func (deps Deps) decide(w http.ResponseWriter, r *http.Request, accept bool) {
 	}
 	approvalHash := secret.Hash(secret.FromString(proof))
 	var row approvalRow
+	var updated int
 	var err error
 	if accept {
 		code, generationErr := secret.NewPairingCode()
@@ -69,18 +83,20 @@ func (deps Deps) decide(w http.ResponseWriter, r *http.Request, accept bool) {
 		err = deps.Pool.QueryRow(r.Context(), `UPDATE pairing_requests
 			SET status = 'waiting_for_code', pairing_code = $2
 			WHERE approval_key_hash = $1 AND status = 'waiting_for_approval' AND expires_at > now()
-			RETURNING status, hostname, os_name, os_version, pairing_code,
-				coalesce(failure_reason, ''), ''`, approvalHash, code.Reveal()).Scan(
-			&row.status, &row.hostname, &row.osName, &row.osVersion, &row.pairingCode, &row.failureReason, &row.displayName)
+			RETURNING 1`, approvalHash, code.Reveal()).Scan(&updated)
 	} else {
 		err = deps.Pool.QueryRow(r.Context(), `UPDATE pairing_requests
 			SET status = 'rejected'
 			WHERE approval_key_hash = $1 AND status = 'waiting_for_approval' AND expires_at > now()
-			RETURNING status, hostname, os_name, os_version, coalesce(pairing_code, ''),
-				coalesce(failure_reason, ''), ''`, approvalHash).Scan(
-			&row.status, &row.hostname, &row.osName, &row.osVersion, &row.pairingCode, &row.failureReason, &row.displayName)
+			RETURNING 1`, approvalHash).Scan(&updated)
 	}
 	if err == nil {
+		// Return the current approval, including any matched machine, after the decision.
+		row, err = queryApproval(r.Context(), deps.Pool, approvalHash)
+		if err != nil {
+			httpapi.WriteInternalError(w, deps.Logger, kind, err)
+			return
+		}
 		httpapi.WriteJSON(w, http.StatusOK, approvalBody(row, false))
 		return
 	}
@@ -106,11 +122,18 @@ func queryApproval(ctx context.Context, pool *pgxpool.Pool, approvalHash []byte)
 	err := pool.QueryRow(ctx, `SELECT `+effectiveStatus+`,
 		pr.hostname, pr.os_name, pr.os_version, coalesce(pr.pairing_code, ''),
 		`+effectiveFailureReason+`,
-		coalesce(m.display_name, '')
-		FROM pairing_requests AS pr
-		LEFT JOIN machines AS m ON m.pairing_request_id = pr.id
+		coalesce(m.display_name, ''),
+		earlier.machine_id IS NOT NULL,
+		coalesce(earlier.display_name, ''),
+		`+credential.HasActiveSQL("earlier.machine_id")+`,
+		(SELECT ended.ended_at FROM credentials AS ended
+			WHERE ended.machine_id = earlier.machine_id AND ended.ended_at IS NOT NULL
+			ORDER BY ended.ended_at DESC, ended.credential_id DESC LIMIT 1)
+		FROM pairing_requests AS pr `+pairingCredentialJoin+` `+pairingMachineJoin+`
+		LEFT JOIN machines AS earlier ON earlier.machine_id = pr.matched_machine_id
 		WHERE pr.approval_key_hash = $1`, approvalHash).Scan(
-		&row.status, &row.hostname, &row.osName, &row.osVersion, &row.pairingCode, &row.failureReason, &row.displayName)
+		&row.status, &row.hostname, &row.osName, &row.osVersion, &row.pairingCode, &row.failureReason, &row.displayName,
+		&row.hasEarlier, &row.earlierName, &row.stillPaired, &row.unpairedAt)
 	return row, err
 }
 
@@ -130,6 +153,18 @@ func approvalBody(row approvalRow, alreadyDecided bool) map[string]any {
 	}
 	if row.status == "paired" {
 		body["display_name"] = row.displayName
+	}
+	if row.hasEarlier {
+		var unpairedAt *time.Time
+		if !row.stillPaired && row.unpairedAt.Valid {
+			value := row.unpairedAt.Time.UTC()
+			unpairedAt = &value
+		}
+		body["earlier_machine"] = earlierMachineAnswer{
+			DisplayName: row.earlierName,
+			StillPaired: row.stillPaired,
+			UnpairedAt:  unpairedAt,
+		}
 	}
 	return body
 }

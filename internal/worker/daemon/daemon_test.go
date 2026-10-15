@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -256,7 +257,7 @@ func TestServerCloseNoticedAtOnce(t *testing.T) {
 	}{
 		{name: "server stopping", code: protocol.CloseServerStopping, reason: "the server is stopping"},
 		{name: "replaced", code: protocol.CloseReplaced, reason: "replaced by a newer connection"},
-		{name: "other close", code: 4002, reason: "the server closed the connection"},
+		{name: "other close", code: 4003, reason: "the server closed the connection"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newDaemonFixture(t, true, 10, 30, func(conn *websocket.Conn) {
@@ -593,12 +594,45 @@ func TestStatusWhileTrying(t *testing.T) {
 func TestRefreshStateKeepsLastServer(t *testing.T) {
 	f := newDaemonFixture(t, true, 10, 30, nil)
 	d := f.newDaemon(t, Options{})
-	d.setTrying(1, f.server.URL, time.Now())
+	d.mu.Lock()
+	d.status.Server = f.server.URL
+	d.mu.Unlock()
 	d.refreshState()
 
 	status := d.Status()
 	if status.State != StateReconnecting || status.Server != f.server.URL {
 		t.Fatalf("Status() = %+v, want reconnecting with server %q", status, f.server.URL)
+	}
+}
+
+func TestStatusShowsCredentialServerDuringFirstAttempt(t *testing.T) {
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	dialStarted := make(chan struct{})
+	releaseDial := make(chan struct{})
+	d := f.newDaemon(t, Options{Dial: func(context.Context, string, *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+		close(dialStarted)
+		<-releaseDial
+		return nil, nil, errors.New("test dial finished")
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+
+	select {
+	case <-dialStarted:
+	case <-time.After(time.Second):
+		cancel()
+		close(releaseDial)
+		t.Fatal("daemon did not start the first connection attempt")
+	}
+	status := d.Status()
+	close(releaseDial)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	if status.State != StateReconnecting || status.Server != f.server.URL {
+		t.Fatalf("Status() during first attempt = %+v, want reconnecting with server %q", status, f.server.URL)
 	}
 }
 
@@ -771,26 +805,35 @@ func TestKeepsTryingForever(t *testing.T) {
 	<-done
 }
 
-func TestOnlyUnknownCredentialStops(t *testing.T) {
+func TestCredentialRefusalCodes(t *testing.T) {
 	for _, status := range []int{http.StatusInternalServerError, http.StatusNotFound, http.StatusUnauthorized} {
 		response := &http.Response{StatusCode: status, Body: http.NoBody}
-		if unknownCredential(response) {
-			t.Errorf("unknownCredential(%d) = true, want false without exact body", status)
+		if got := credentialRefusal(response); got != "" {
+			t.Errorf("credentialRefusal(%d) = %q, want empty without exact body", status, got)
 		}
 	}
 	response := &http.Response{StatusCode: http.StatusUnauthorized, Body: http.NoBody}
-	if unknownCredential(response) {
-		t.Fatal("401 without unknown_credential body was treated as rejection")
+	if got := credentialRefusal(response); got != "" {
+		t.Fatalf("credentialRefusal(401 without a credential error body) = %q, want empty", got)
 	}
-	if !isUnknownCredentialBody([]byte(`{"error":"unknown_credential"}`)) {
+	if !isCredentialErrorBody([]byte(`{"error":"unknown_credential"}`), "unknown_credential") {
 		t.Fatal("exact rejection body was not recognized")
 	}
-	if !isUnknownCredentialBody([]byte("{ \"error\": \"unknown_credential\" }\n")) {
+	if !isCredentialErrorBody([]byte("{ \"error\": \"unknown_credential\" }\n"), "unknown_credential") {
 		t.Fatal("JSON whitespace around the rejection was not recognized")
 	}
-	for _, body := range [][]byte{[]byte(`{"error":"other"}`), []byte(`not json`), []byte(`{"error":"unknown_credential","extra":true}`), []byte(`{"error":"other","error":"unknown_credential"}`)} {
-		if isUnknownCredentialBody(body) {
-			t.Errorf("body %q was treated as exact rejection", body)
+	for _, test := range []struct {
+		body string
+		code string
+	}{
+		{body: `{"error":"other"}`, code: "unknown_credential"},
+		{body: `not json`, code: "unknown_credential"},
+		{body: `{"error":"unknown_credential","extra":true}`, code: "unknown_credential"},
+		{body: `{"error":"other","error":"unknown_credential"}`, code: "unknown_credential"},
+		{body: `{"error":"credential_revoked","extra":true}`, code: "credential_revoked"},
+	} {
+		if isCredentialErrorBody([]byte(test.body), test.code) {
+			t.Errorf("body %q was treated as exact %s refusal", test.body, test.code)
 		}
 	}
 
@@ -912,6 +955,222 @@ func TestRejectionStops(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+func TestDaemonStopsOnRevokedAnswer(t *testing.T) {
+	fixed := time.Date(2025, 1, 2, 3, 4, 5, 0, time.FixedZone("local", 7*60*60))
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	var calls atomic.Int32
+	revokedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":"credential_revoked"}`)
+	}))
+	defer revokedServer.Close()
+	if err := f.store.Save(credential.Entry{Server: revokedServer.URL, Credential: secret.FromString(daemonCredential)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.WriteState(f.dir, state.State{MachineID: "preserved-machine", CredentialSaved: true, Confirmed: true, Connect: true}); err != nil {
+		t.Fatal(err)
+	}
+	d := f.newDaemon(t, Options{Now: func() time.Time { return fixed }})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	waitFor(t, time.Second, func() bool {
+		status := d.Status()
+		return status.State == StateNotConnecting && status.StopReason != nil && *status.StopReason == "credential_revoked"
+	}, "revoked credential stop")
+	record, _, err := state.ReadState(f.dir)
+	if err != nil || record.Connect || record.StopReason == nil || *record.StopReason != "credential_revoked" || record.MachineID != "preserved-machine" || !record.CredentialSaved || !record.Confirmed {
+		t.Fatalf("state after revocation = (%+v, %v), want disabled with reason and pairing fields preserved", record, err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if got := calls.Load(); got != 1 {
+		t.Errorf("server received %d connection attempts after revocation, want 1", got)
+	}
+	wantLog := "03:04:05 ✗ This computer was unpaired on the server. Pair it again with: tervi pair --server " + revokedServer.URL + "\n"
+	if got := f.logs.String(); got != wantLog {
+		t.Errorf("revocation log = %q, want exactly %q", got, wantLog)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+}
+
+func TestDaemonStopsOnCloseRevoked(t *testing.T) {
+	f := newDaemonFixture(t, true, 10, 30, func(conn *websocket.Conn) {
+		_ = conn.Close(websocket.StatusCode(protocol.CloseRevoked), "credential revoked")
+	})
+	var dials atomic.Int32
+	d := f.newDaemon(t, Options{Dial: func(ctx context.Context, address string, options *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+		dials.Add(1)
+		return websocket.Dial(ctx, address, options)
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	waitFor(t, time.Second, func() bool {
+		status := d.Status()
+		return status.State == StateNotConnecting && status.StopReason != nil && *status.StopReason == "credential_revoked"
+	}, "revoked close stop")
+	if record, _, err := state.ReadState(f.dir); err != nil || record.Connect || record.StopReason == nil || *record.StopReason != "credential_revoked" {
+		t.Fatalf("state after revoked close = (%+v, %v), want connect false and credential_revoked", record, err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if got := dials.Load(); got != 1 {
+		t.Fatalf("daemon made %d dials after a revoked close, want 1", got)
+	}
+	lines := strings.Split(strings.TrimSpace(f.logs.String()), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[1], "✗ This computer was unpaired on the server. Pair it again with: tervi pair --server "+f.server.URL) || strings.Contains(lines[1], "Connection lost") {
+		t.Fatalf("logs after revoked close = %q, want connected then the unpaired line", f.logs.String())
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+}
+
+func TestDaemonStopsOnCloseRevokedBeforeHello(t *testing.T) {
+	dir := t.TempDir()
+	backend := credential.NewMemoryBackend()
+	store := credential.NewStore(backend)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		requests.Add(1)
+		_ = conn.Close(websocket.StatusCode(protocol.CloseRevoked), "credential revoked")
+	}))
+	defer server.Close()
+	if err := store.Save(credential.Entry{Server: server.URL, Credential: secret.FromString(daemonCredential)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.WriteState(dir, state.State{MachineID: "machine-id", CredentialSaved: true, Confirmed: true, Connect: true}); err != nil {
+		t.Fatal(err)
+	}
+	logs := &safeBuffer{}
+	fixed := time.Date(2025, 1, 2, 3, 4, 5, 0, time.FixedZone("local", 7*60*60))
+	d := New(Options{StateDir: dir, Store: store, Log: logs, Now: func() time.Time { return fixed }})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	waitFor(t, time.Second, func() bool {
+		status := d.Status()
+		return status.State == StateNotConnecting && status.StopReason != nil && *status.StopReason == state.StopReasonCredentialRevoked
+	}, "revoked close before hello")
+	time.Sleep(100 * time.Millisecond)
+	if got := requests.Load(); got != 1 {
+		t.Errorf("server accepted %d connections after revoked close, want 1", got)
+	}
+	wantLog := "03:04:05 ✗ This computer was unpaired on the server. Pair it again with: tervi pair --server " + server.URL + "\n"
+	if got := logs.String(); got != wantLog {
+		t.Errorf("logs before hello = %q, want %q", got, wantLog)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+}
+
+func TestDaemonRevokedBodyStrict(t *testing.T) {
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	var calls atomic.Int32
+	revokedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		call := calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		if call == 1 {
+			_, _ = io.WriteString(w, `{"error":"credential_revoked","extra":true}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"error":"unknown_credential"}`)
+	}))
+	defer revokedServer.Close()
+	if err := f.store.Save(credential.Entry{Server: revokedServer.URL, Credential: secret.FromString(daemonCredential)}); err != nil {
+		t.Fatal(err)
+	}
+	d := f.newDaemon(t, Options{Rand: func() float64 { return 0 }})
+	d.waitOverride = func(_ time.Duration, ctx context.Context) bool { return ctx.Err() == nil }
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	waitFor(t, time.Second, func() bool {
+		status := d.Status()
+		return status.State == StateNotConnecting && status.StopReason != nil && *status.StopReason == state.StopReasonCredentialRejected
+	}, "unknown credential rejection after unrecognized 401")
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("server received %d attempts, want failed revoked-shaped response then unknown_credential rejection", got)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+}
+
+func TestConnectAfterRevoked(t *testing.T) {
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	secondStarted := make(chan struct{})
+	finishSecond := make(chan struct{})
+	var calls atomic.Int32
+	revokedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 2 {
+			close(secondStarted)
+			<-finishSecond
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":"credential_revoked"}`)
+	}))
+	defer revokedServer.Close()
+	if err := f.store.Save(credential.Entry{Server: revokedServer.URL, Credential: secret.FromString(daemonCredential)}); err != nil {
+		t.Fatal(err)
+	}
+	d := f.newDaemon(t, Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	waitFor(t, time.Second, func() bool {
+		status := d.Status()
+		return status.State == StateNotConnecting && status.StopReason != nil && *status.StopReason == "credential_revoked"
+	}, "first revoked response")
+	resultCh := make(chan ConnectResult, 1)
+	go func() { resultCh <- d.Connect(ctx) }()
+	select {
+	case <-secondStarted:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("Connect did not make a second dial")
+	}
+	between, _, err := state.ReadState(f.dir)
+	if err != nil || !between.Connect || between.StopReason != nil {
+		close(finishSecond)
+		cancel()
+		t.Fatalf("state during second connect attempt = (%+v, %v), want connect true and cleared reason", between, err)
+	}
+	close(finishSecond)
+	select {
+	case result := <-resultCh:
+		if result.Result != "revoked" {
+			t.Errorf("Connect() = %+v, want revoked", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Connect did not return after the second revoked response")
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("server received %d attempts, want 2", got)
+	}
+	if record, _, err := state.ReadState(f.dir); err != nil || record.Connect || record.StopReason == nil || *record.StopReason != state.StopReasonCredentialRevoked {
+		t.Errorf("state after second revocation = (%+v, %v), want connect false and credential_revoked", record, err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
 }
 
 func TestRejectionPreservesCurrentPairingFields(t *testing.T) {

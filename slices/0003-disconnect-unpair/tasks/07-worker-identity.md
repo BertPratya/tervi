@@ -145,7 +145,10 @@ The acknowledgment route now also answers `401 credential_revoked`
 pairing whose acknowledgment answer was lost, whose machine was then
 revoked on the page; every `tervi pair` would repeat that message. This
 can only happen when `tervi pair` resumes that pairing
-(`Flow.FinishEarlier`).
+(`Flow.FinishEarlier`). `pair/confirm.go` compares against the error-code
+constants in `internal/protocol` (fix 2). `cli/unpair.go` prints the
+`--local-only` question with `fmt.Fprint`, as the lines next to it do
+(fix 2).
 
 - In `pair`, an acknowledgment answered `401 credential_revoked` makes
   `FinishEarlier` return the new exported constant `cli.StartNewPairing`
@@ -160,11 +163,22 @@ can only happen when `tervi pair` resumes that pairing
   (`reportSaveFailure` discards it): the credential it reports is always
   the one just issued, still `pending`, which nothing revokes.
 
+**One answer reader.** `tervi pair`'s machine ID question and
+`tervi unpair`'s questions read the answer with one function in
+`internal/worker/cli/answer.go`. It reads one byte at a time up to a
+newline or the end of input, so nothing typed after the answer (such as
+the pairing code) is taken; end of input after some bytes counts as the
+answer. Then it removes spaces around the answer and accepts `y` or `yes`
+in any case (R10). Each question's last line ends with `[y/N] ` (one space)
+and no newline, so the answer is typed on the same line, as the spec's
+"What the user does" shows (fix 1).
+
 ## Boundaries
 
 - May create or change: `internal/worker/pair/`, `internal/worker/cli/`
   (the new `machineid.go`, `cli.go`, `handover.go`, `leftover.go`, the
-  `Flow` interface, the usage line),
+  `Flow` interface, the usage line; a new `answer.go` and `unpair.go`, only
+  so both `[y/N]` questions share one answer reader, above),
   `cmd/tervi/` (wiring only), their tests, `test/e2e/` helpers and tests
   that build `pair.Options` (only to set `MachineIDPath`).
 - Must not change: `internal/worker/daemon/`, `internal/worker/control/`,

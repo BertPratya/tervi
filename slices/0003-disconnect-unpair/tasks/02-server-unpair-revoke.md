@@ -74,10 +74,13 @@ shows only machines with an `active` credential. `httpapi` has
 
 | Credential found by `credential.Find` | Answer |
 | --- | --- |
-| `active` | In one transaction, `credential.Revoke` on its machine; after commit, `List.CloseRevoked(machineID)`; `204` with no body |
+| `active` | In one transaction, `credential.RevokeCredential` on this credential; after commit, `List.CloseRevoked(machineID)` if it changed; `204` with no body |
 | `revoked` | `204`, nothing changes (R12: repeating finishes) |
 | no proof, no row, `pending`, `failed`, `expired` | `401 {"error": "unknown_credential"}` |
 | a database failure | `500 internal_error`, logged with the kind `unpair machine` |
+
+The route writes the error code with the constant from `internal/protocol`
+(fix 2), like every server route that answers it.
 
 ### Revoke: `internal/server/machines/revoke.go` (new)
 
@@ -89,6 +92,10 @@ shows only machines with an `active` credential. `httpapi` has
 | The machine has an `active` credential | In one transaction, `credential.Revoke`; after commit, `List.CloseRevoked(machineID)`; `204` |
 | The machine has no `active` credential | `204`, nothing changes |
 | A database failure | `500 internal_error`, kind `revoke machine` |
+
+The route checks only that the machine exists; whether it had an `active`
+credential comes from `credential.Revoke`'s `changed`, and the connection is
+closed only when it changed (fix 1).
 
 The route checks no `Origin` header and no proof: that was the user's
 decision for this slice (plan, "Technical decisions"). The global `Host`
@@ -115,11 +122,18 @@ Revoke bert-desktop? It stops working at once and must be paired again to come b
   next refresh (R18); a `404` means it is already gone.
 - On any other answer, or no answer, the row stays and the failure line
   (the existing `aria-live` line) shows `Couldn't revoke <name>. Try again.`
-  (R18) until the next refresh finishes; after that the line follows the
-  refresh as today (empty, or `Can't reach the server. Trying again…`).
+  (R18) until a refresh sent after the failed answer finishes; after that
+  the line follows the refresh as today (empty, or
+  `Can't reach the server. Trying again…`).
 - A refresh that arrives while the dialog is open does not close it. If the
   machine has disappeared from the list meanwhile, Revoke still sends the
-  request, and the answer is handled as above.
+  request, and the answer is handled as above. A failed answer never adds
+  a machine back to the list.
+- A refresh can already be waiting for its answer when a revoke answers.
+  Its list was read before the revoke, so when it arrives:
+  - machines revoked with `204` or `404` while it waited are dropped from
+    it, so a removed row does not come back (R18);
+  - if a revoke failed while it waited, the failure line stays, as above.
 
 `machines-view.js` gets the logic as pure functions, tested with
 `node --test` like the rest of the view, so `machines.js` only wires them to
@@ -130,14 +144,22 @@ the page:
 export function revokeQuestion(machine) { … }
 // The page state after a revoke answer: status is the HTTP status, or
 // null when no answer came. 204 and 404 drop the machine from
-// state.machines; anything else keeps it and sets state.revokeFailure to
-// the machine's name, which view() shows as the failure line.
+// state.machines and clear state.revokeFailure; anything else leaves state.machines as it is and sets
+// state.revokeFailure to the machine's name, which view() shows as the
+// failure line.
 export function afterRevoke(state, machineId, status) { … }
+// The page state after a refresh answer. revokedSince holds the IDs of the
+// machines revoked with 204 or 404 while that refresh waited; failedSince
+// is true when a revoke failed while it waited. answerMachines (null when
+// the refresh failed) replaces state.machines, without the machines in
+// revokedSince. state.revokeFailure is cleared unless failedSince is true.
+export function afterRefresh(state, answerMachines, revokedSince, failedSince) { … }
 ```
 
 `view()` shows `Couldn't revoke <name>. Try again.` while
-`state.revokeFailure` is set; `machines.js` clears it when the next refresh
-finishes.
+`state.revokeFailure` is set. `machines.js` keeps `revokedSince` and
+`failedSince` for the refresh that is waiting, and resets them when it
+sends the next refresh.
 
 ### Contract
 
@@ -163,14 +185,15 @@ Remove `x-planned: true` from `unpairMachine` and `revokeMachine` in
 | `TestUnpairRevokes` — an `active` credential answers `204`, becomes `revoked` with `ended_at`, and is refused on the connection route afterwards | R11 |
 | `TestUnpairRepeat` — a second unpair with the same credential answers `204` and changes nothing | R12, R13 |
 | `TestUnpairUnknown` — no proof, an unknown proof, and `pending`, `failed`, `expired` credentials answer `401 unknown_credential` | R13 |
-| `TestUnpairClosesConnection` — a connected machine's connection is closed with `4002` after the change is committed, and it shows Offline | R11, R18 |
+| `TestUnpairClosesConnection` — a connected machine's connection is closed with `4002`, its credential is `revoked` by then, and it shows Offline | R11, R18 |
 | `TestRevokeMachine` — a paired machine answers `204`, its credential is `revoked`, it disappears from `GET /api/v1/machines`, and its `machines` row is still there | R18, R19 |
 | `TestRevokeClosesConnection` — a connected machine is closed with `4002` and is refused when it reconnects | R18 |
 | `TestRevokeRepeatAndUnknown` — revoking again answers `204`; an unknown ID and a non-UUID answer `404 unknown_machine` | R18 |
 | `TestRevokeNeedsNoProof` — the route works without any `Authorization` or `Origin` header | R30 |
 | `TestRevokeDatabaseFailure` and `TestUnpairDatabaseFailure` — `500 internal_error`, with the kinds `revoke machine` and `unpair machine` in the log | R18, R11 |
 | `machines-view.test.js` — the question text with a name, a name with `<b>` shown as text, the failure text | R17 |
-| `machines-view.test.js` — `afterRevoke`: `204` and `404` drop the machine and set no failure; `500` and `null` keep it and set the failure line; the next refresh's state clears it | R18 |
+| `machines-view.test.js` — `afterRevoke`: `204` and `404` drop the machine and set no failure; `500` and `null` leave the list unchanged (also when the machine is no longer in it) and set the failure line | R18 |
+| `machines-view.test.js` — `afterRefresh`: the answer replaces the list without the machines in `revokedSince`, in the answer's order; the failure line is cleared, or kept when `failedSince` is true; a failed refresh (`null`) keeps the list | R18 |
 | `TestMachinesPageHasRevokeDialog` — the page has the dialog outside the part that refreshes, with **Revoke** and **Cancel** | R17 |
 | Contract test — `unpairMachine` and `revokeMachine` as above; no `x-planned` left on them | contract |
 

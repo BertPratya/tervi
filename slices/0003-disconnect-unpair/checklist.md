@@ -1,7 +1,7 @@
 # 0003 Disconnect and unpair — checklist
 
 Spec: [spec.md](spec.md)
-Tried on: — · Commit: —
+Tried on: not tried by hand · Commit: f91aaa5
 
 This checklist starts from an empty database, with this computer paired
 again by slice 3's `tervi`. It disconnects and connects again, unpairs,
@@ -41,10 +41,13 @@ slice 3's `tervi`, so the server knows its identity from the start.
 
 Do the rows in order: each one can depend on the state the row before left.
 
+Not tried: the user chose to merge the slice without trying it by hand
+(2026-10-15). The rows stay `⬜`.
+
 | # | Requirement | Do this | You should see | Result |
 | --- | --- | --- | --- | --- |
 | 1 | R1, R8 | `tervi disconnect`, and watch the Machines page | `✓ Disconnected. tervi stays in the background but won't connect.` / `  Connect again with: tervi connect`; within about 5 seconds the page shows `Offline · last seen less than a minute ago` | ⬜ |
-| 2 | R1 | `tervi logs` | The last line is `○ Disconnected.` | ⬜ |
+| 2 | R1 | `tervi logs` | The last line is `<time> ○ Disconnected.` | ⬜ |
 | 3 | R7 | `tervi status` | `○ Disconnected.` / `  Connect with: tervi connect` | ⬜ |
 | 4 | R4 | `tervi disconnect` again | `Already disconnected.` | ⬜ |
 | 5 | — | Restart the computer and log in. In terminal 1 (over SSH, reconnect with the `-L 8080:localhost:8080` forward), from the project folder: `docker compose up -d`, then `go run ./cmd/server` | The server starts | ⬜ |
@@ -76,7 +79,7 @@ Do the rows in order: each one can depend on the state the row before left.
 | 31 | R18 | On the still-open page, click **Revoke**, then **Revoke** | The row stays, and the page shows `Couldn't revoke <name>. Try again.` (after the next refresh, `Can't reach the server. Trying again…`) | ⬜ |
 | 32 | — | Start the server again | Within 40 seconds the page shows this computer `Online` again | ⬜ |
 | 33 | R18 | Click **Revoke**, then **Revoke** | The row disappears at once | ⬜ |
-| 34 | R20 | `tervi logs` | The last line is `✗ This computer was unpaired on the server. Pair it again with: tervi pair --server http://localhost:8080` | ⬜ |
+| 34 | R20 | `tervi logs` | The last line is `<time> ✗ This computer was unpaired on the server. Pair it again with: tervi pair --server http://localhost:8080` | ⬜ |
 | 35 | R21 | `tervi status; echo $?` | `✗ This computer was unpaired on the server.` / `  Pair it again with: tervi pair --server http://localhost:8080`, then `1` | ⬜ |
 | 36 | R21 | `tervi connect; echo $?` | The same two lines, then `1` | ⬜ |
 | 37 | R21 | `tervi disconnect; echo $?` | The same two lines, then `0` | ⬜ |
@@ -97,26 +100,26 @@ Do the rows in order: each one can depend on the state the row before left.
 
 | Requirement | What the tests prove | Tests | Result |
 | --- | --- | --- | --- |
-| R1, R2, R7, R8, R9 | Disconnect and connect with the real server, including a daemon started afterwards staying idle | `TestDisconnectEndToEnd`, `TestDisconnectWithoutDaemonEndToEnd`, `TestDisconnectConnected`, `TestDisconnectReconnecting`, `TestDisconnectedAfterRestart`, `TestDisconnectLogLine`, `TestDisconnectDuringConnect`, `TestDisconnectDuringAttempt` | ⬜ |
-| R3 | No daemon is started; the lock keeps a starting daemon out while the file is written | `TestDisconnectNoDaemon`, `TestWithLockBusy` | ⬜ |
-| R4, R5, R6 | Each case, both with and without a daemon | `TestDisconnectAlready`, `TestDisconnectRejectedOrRevoked`, `TestDisconnectNotPaired` | ⬜ |
-| R7 | `○ Disconnected.` from the daemon and from `state.json` | `TestStatusDisconnected`, `TestStatusNoDaemonConnectTrue`, `TestDisconnectThenStatus` | ⬜ |
-| R10 | Every answer to the question | `TestUnpairAsks`, `TestUnpairYesSkipsQuestion` | ⬜ |
-| R11 | The order of removal, the credential sent, the linger line, the server's side | `TestUnpairRemovesInOrder`, `TestUnpairLingerLine`, `TestUnpairRevokes`, `TestUnpairClosesConnection`, `TestUnpairEndToEnd` | ⬜ |
-| R12 | No answer and other answers remove nothing; repeating finishes | `TestUnpairNoAnswer`, `TestUnpairOtherAnswer`, `TestUnpairRepeat` | ⬜ |
-| R13 | A credential the server already refuses | `TestUnpairServerAlreadyRefuses`, `TestUnpairUnknown` | ⬜ |
-| R14, R15 | `--local-only` sends nothing; not paired; leftovers, also with a damaged or exposed `credential.json`, which cannot be caused safely by hand; an unfinished pairing; no copy of the secret is left, including a crash's temporary file | `TestUnpairLocalOnly`, `TestUnpairNotPaired`, `TestUnpairLeftovers`, `TestUnpairUnfinishedPairing`, `TestUnpairRemovesSecretLeftovers`, `TestDeleteLeftovers` | ⬜ |
-| R16 | Each failure says what is left, and a second run finishes | `TestUnpairServiceFailure`, `TestUnpairDeleteFailure` | ⬜ |
-| R17 | The question text and the dialog | `machines-view.test.js`, `TestMachinesPageHasRevokeDialog` | ⬜ |
-| R18 | Revoking, closing with `4002` (also for a connection opened at that moment), repeats, unknown IDs, and the page after each answer | `TestRevokeMachine`, `TestRevokeClosesConnection`, `TestRevokeRepeatAndUnknown`, `TestCloseRevoked`, `TestRevokedWhileOpening`, `machines-view.test.js`, `TestRevokeConnectedEndToEnd` | ⬜ |
-| R19 | Ended machines are not listed but stay in the database; the migration keeps every machine | `TestListOnlyMachinesWithActiveCredential`, `TestMigrationMovesCredentials` | ⬜ |
-| R20 | `4002` and `credential_revoked` both stop the daemon, also when it was offline | `TestDaemonStopsOnRevokedAnswer`, `TestDaemonStopsOnCloseRevoked`, `TestConnectionRefusesRevoked`, `TestRevokeOfflineEndToEnd` | ⬜ |
-| R21 | The unpaired message in status, connect, and disconnect | `TestStatusRevoked`, `TestConnectRevokedMessage`, `TestDisconnectRejectedOrRevoked` | ⬜ |
-| R22 | Pairing after a revocation, also when the acknowledgment of a resumed pairing is the one refused | `TestPairAfterRevoked`, `TestConfirmRevoked` | ⬜ |
-| R23 | The identity's value, that it is never shown, and the question without a machine ID (which needs root to cause by hand) | `TestIdentityKnownValue`, `TestIdentityParsing`, `TestStartSendsIdentity`, `TestIdentityNeverShown`, `TestNoMachineIDQuestion`, `TestNoMachineIDYes`, `TestStartStoresIdentity`, `TestStartRejectsBadIdentity` | ⬜ |
-| R24, R25, R28 | Which machine matches, decided once, and the page's lines | `TestMatchPairedBefore`, `TestMatchMostRecent`, `TestMatchDecidedOnce`, `TestApprovalShowsEarlierMachine`, `view.test.js` | ⬜ |
-| R26, R27 | Accept brings the machine back and ends its earlier credential; failures leave it alone | `TestCodeAttachesToMatchedMachine`, `TestAcknowledgeBringsMachineBack`, `TestAcknowledgeClosesEarlierConnection`, `TestSaveFailureKeepsEarlierCredential`, `TestPairSameComputerAgainEndToEnd` | ⬜ |
-| R29 | The identity depends only on the machine ID | `TestIdentitySameEachTime` | ⬜ |
-| R30 | Revoke needs no proof | `TestRevokeNeedsNoProof` | ⬜ |
+| R1, R2, R7, R8, R9 | Disconnect and connect with the real server, including a daemon started afterwards staying idle | `TestDisconnectEndToEnd`, `TestDisconnectWithoutDaemonEndToEnd`, `TestDisconnectConnected`, `TestDisconnectReconnecting`, `TestDisconnectedAfterRestart`, `TestDisconnectLogLine`, `TestDisconnectDuringConnect`, `TestDisconnectDuringAttempt` | ✅ |
+| R3 | No daemon is started; the lock keeps a starting daemon out while the file is written | `TestDisconnectNoDaemon`, `TestWithLockBusy` | ✅ |
+| R4, R5, R6 | Each case, both with and without a daemon | `TestDisconnectAlready`, `TestDisconnectRejectedOrRevoked`, `TestDisconnectNotPaired` | ✅ |
+| R7 | `○ Disconnected.` from the daemon and from `state.json` | `TestStatusDisconnected`, `TestStatusNoDaemonConnectTrue`, `TestDisconnectThenStatus` | ✅ |
+| R10 | Every answer to the question | `TestUnpairAsks`, `TestUnpairYesSkipsQuestion` | ✅ |
+| R11 | The order of removal, the credential sent, the linger line, the server's side | `TestUnpairRemovesInOrder`, `TestUnpairLingerLine`, `TestUnpairRevokes`, `TestUnpairClosesConnection`, `TestRevokeCredentialDoesNotRevokeReplacement`, `TestUnpairEndToEnd` | ✅ |
+| R12 | No answer and other answers remove nothing; repeating finishes | `TestUnpairNoAnswer`, `TestUnpairOtherAnswer`, `TestUnpairRepeat` | ✅ |
+| R13 | A credential the server already refuses | `TestUnpairServerAlreadyRefuses`, `TestUnpairUnknown` | ✅ |
+| R14, R15 | `--local-only` sends nothing; not paired; leftovers, also with a damaged or exposed `credential.json`, which cannot be caused safely by hand; an unfinished pairing; no copy of the secret is left, including a crash's temporary file | `TestUnpairLocalOnly`, `TestUnpairNotPaired`, `TestUnpairLeftovers`, `TestUnpairUnfinishedPairing`, `TestUnpairRemovesSecretLeftovers`, `TestDeleteLeftovers` | ✅ |
+| R16 | Each failure says what is left, and a second run finishes | `TestUnpairServiceFailure`, `TestUnpairDeleteFailure` | ✅ |
+| R17 | The question text and the dialog | `machines-view.test.js`, `TestMachinesPageHasRevokeDialog` | ✅ |
+| R18 | Revoking, closing with `4002` (also for a connection opened at that moment), repeats, unknown IDs, and the page after each answer | `TestRevokeMachine`, `TestRevokeClosesConnection`, `TestRevokeRepeatAndUnknown`, `TestCloseRevoked`, `TestRevokedWhileOpening`, `machines-view.test.js`, `TestRevokeConnectedEndToEnd` | ✅ |
+| R19 | Ended machines are not listed but stay in the database; the migration keeps every machine | `TestListOnlyMachinesWithActiveCredential`, `TestMigrationMovesCredentials` | ✅ |
+| R20 | `4002` and `credential_revoked` both stop the daemon, also when it was offline | `TestDaemonStopsOnRevokedAnswer`, `TestDaemonStopsOnCloseRevoked`, `TestConnectionRefusesRevoked`, `TestRevokeOfflineEndToEnd` | ✅ |
+| R21 | The unpaired message in status, connect, and disconnect | `TestStatusRevoked`, `TestConnectRevokedMessage`, `TestDisconnectRejectedOrRevoked` | ✅ |
+| R22 | Pairing after a revocation, also when the acknowledgment of a resumed pairing is the one refused | `TestPairAfterRevoked`, `TestConfirmRevoked` | ✅ |
+| R23 | The identity's value, that it is never shown, and the question without a machine ID (which needs root to cause by hand) | `TestIdentityKnownValue`, `TestIdentityParsing`, `TestStartSendsIdentity`, `TestIdentityNeverShown`, `TestNoMachineIDQuestion`, `TestNoMachineIDYes`, `TestStartStoresIdentity`, `TestStartRejectsBadIdentity` | ✅ |
+| R24, R25, R28 | Which machine matches, decided once, and the page's lines | `TestMatchPairedBefore`, `TestMatchMostRecent`, `TestMatchDecidedOnce`, `TestApprovalShowsEarlierMachine`, `view.test.js` | ✅ |
+| R26, R27 | Accept brings the machine back and ends its earlier credential; failures leave it alone | `TestCodeAttachesToMatchedMachine`, `TestAcknowledgeBringsMachineBack`, `TestAcknowledgeClosesEarlierConnection`, `TestSaveFailureKeepsEarlierCredential`, `TestPairSameComputerAgainEndToEnd` | ✅ |
+| R29 | The identity depends only on the machine ID | `TestIdentitySameEachTime` | ✅ |
+| R30 | Revoke needs no proof | `TestRevokeNeedsNoProof` | ✅ |
 
-Tests run: `go test ./...` on — → —
+Tests run: `go test ./...` on f91aaa5 → pass (also `go vet ./...`, and `node --test internal/server/web/static/`: 34 pass)

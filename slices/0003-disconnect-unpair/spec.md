@@ -95,22 +95,22 @@ page). It also lets the server recognize a computer that pairs again.
   connected or reconnecting, the worker shall close the connection, stop
   trying to connect, keep the pairing, and print
   `✓ Disconnected. tervi stays in the background but won't connect.` then
-  `Connect again with: tervi connect`, and exit with `0`. The daemon shall
+  `  Connect again with: tervi connect`, and exit with `0`. The daemon shall
   keep running, and write the log line `○ Disconnected.`
 - R2. While the user has disconnected, the daemon shall not connect, also
   after the computer restarts, until the user runs `tervi connect`.
 - R3. When `tervi disconnect` runs and tervi is not running in the
   background, the worker shall still record that it must not connect, print
   `✓ Disconnected. tervi won't connect, including after the computer restarts.`
-  then `Connect again with: tervi connect`, and exit with `0`. It shall not
+  then `  Connect again with: tervi connect`, and exit with `0`. It shall not
   start tervi in the background.
 - R4. When `tervi disconnect` runs on a computer the user already
   disconnected, the worker shall print `Already disconnected.`, change
   nothing, and exit with `0`.
 - R5. When `tervi disconnect` runs on a computer whose credential was
   rejected (slice 2's R18), the worker shall change nothing, print
-  `Not connecting: the server doesn't accept this computer's credential.`
-  then `Pair again with: tervi pair --server <server>`, and exit with `0`.
+  `✗ Not connecting: the server doesn't accept this computer's credential.`
+  then `  Pair again with: tervi pair --server <server>`, and exit with `0`.
 - R6. When `tervi disconnect` runs on a computer that is not paired, the
   worker shall print
   `This computer isn't paired. Pair it with: tervi pair --server <url>`,
@@ -202,7 +202,7 @@ page). It also lets the server recognize a computer that pairs again.
   `✗ This computer was unpaired on the server. Pair it again with: tervi pair --server <server>`.
 - R21. On such a computer, `tervi status`, `tervi connect`, and
   `tervi disconnect` shall print `✗ This computer was unpaired on the server.`
-  then `Pair it again with: tervi pair --server <server>`. `tervi status` and
+  then `  Pair it again with: tervi pair --server <server>`. `tervi status` and
   `tervi connect` shall exit with `1`; `tervi disconnect` with `0`, as in R5.
 - R22. On such a computer, `tervi pair` shall replace the old pairing, as
   slice 2's R33 does after a rejection, printing

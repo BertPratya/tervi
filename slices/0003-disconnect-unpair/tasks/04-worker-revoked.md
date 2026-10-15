@@ -24,7 +24,7 @@ no daemon is running.
   `✗ This computer was unpaired on the server. Pair it again with: tervi pair --server <server>`.
 - R21. On such a computer, `tervi status`, `tervi connect`, and
   `tervi disconnect` shall print `✗ This computer was unpaired on the server.`
-  then `Pair it again with: tervi pair --server <server>`. `tervi status` and
+  then `  Pair it again with: tervi pair --server <server>`. `tervi status` and
   `tervi connect` shall exit with `1`; `tervi disconnect` with `0`, as in R5.
   *This task: `tervi status` and `tervi connect`. `tervi disconnect` is
   task 05.*
@@ -56,7 +56,9 @@ Add `StopReasonCredentialRevoked = "credential_revoked"` next to
 ### The daemon: `internal/worker/daemon/revoked.go` (new)
 
 Put the revocation handling in the new file `daemon/revoked.go`; `Run` and
-`tryConnection` only call it, so `daemon.go` stays under 300 lines.
+`tryConnection` only call it, so `daemon.go` stays under 300 lines. The
+daemon compares against the error-code constants in `internal/protocol`
+(fix 2).
 
 - **Recognizing it.** A `401` whose body is exactly
   `{"error": "credential_revoked"}` (same strict parsing as today) is a
@@ -99,7 +101,7 @@ Unpaired message (R21), two lines, used by both commands:
 | --- | --- | --- |
 | `not_connecting`, reason `credential_revoked` | the unpaired message | `1` |
 | `not_connecting`, reason `credential_rejected` | as in slice 2 | `1` |
-| `not_connecting`, no reason | `○ Disconnected.` then `  Connect with: tervi connect` (replaces slice 2's `○ Not connecting.`) | `1` |
+| `not_connecting`, no reason, or a reason this version doesn't know | `○ Disconnected.` then `  Connect with: tervi connect` (replaces slice 2's `○ Not connecting.`) | `1` |
 | other states | as in slice 2 | as in slice 2 |
 
 When the socket does not answer (no daemon), `tervi status` reads
@@ -109,8 +111,12 @@ When the socket does not answer (no daemon), `tervi status` reads
 | --- | --- | --- |
 | `connect: false`, `stop_reason: "credential_revoked"` | the unpaired message | `1` |
 | `connect: false`, `stop_reason: "credential_rejected"` | slice 2's rejection message | `1` |
-| `connect: false`, no reason (also a missing `connect`) | `○ Disconnected.` / `  Connect with: tervi connect` | `1` |
+| `connect: false`, no reason, or a reason this version doesn't know (a missing `connect` counts as `false`) | `○ Disconnected.` / `  Connect with: tervi connect` | `1` |
 | `connect: true` | slice 2's `✗ tervi isn't running in the background.` / `  Start it with: tervi connect` | `1` |
+
+The message is chosen by `connect` first, then by the reason, in that
+order. `tervi status` uses the `state.json` record that the pairing check
+already read, instead of reading the file again.
 
 The pairing check before this (not paired, unreadable files) is unchanged.
 
@@ -121,7 +127,8 @@ with `1`. Everything else is as in slice 2.
 
 - May create or change: `internal/worker/daemon/`, `internal/worker/control/`
   (only passing `revoked` through), `internal/worker/cli/status.go`,
-  `internal/worker/cli/connect.go`, `internal/worker/state/state.go`, their
+  `internal/worker/cli/connect.go`, `internal/worker/cli/cli.go` (only to
+  hold the unpaired message, which both commands use), `internal/worker/state/state.go`, their
   tests.
 - Must not change: `internal/protocol/`, anything under `internal/server/`,
   `internal/worker/pair/`, `internal/worker/service/`, `api/`, `design/`,

@@ -48,6 +48,17 @@ func (client Client) Connect(ctx context.Context) (ConnectAnswer, error) {
 	return answer, nil
 }
 
+// Disconnect asks the daemon to stop connecting and waits for the close to
+// reach the server.
+func (client Client) Disconnect(ctx context.Context) (DisconnectAnswer, error) {
+	var answer DisconnectAnswer
+	outcome := request(ctx, client.RuntimeDir, http.MethodPost, "/disconnect", disconnectTimeout, &answer)
+	if outcome.err != nil {
+		return DisconnectAnswer{}, outcome.err
+	}
+	return answer, nil
+}
+
 func request(ctx context.Context, runtimeDir, method, path string, timeout time.Duration, answer any) requestOutcome {
 	if ctx == nil {
 		ctx = context.Background()

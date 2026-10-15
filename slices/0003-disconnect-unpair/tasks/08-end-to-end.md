@@ -16,7 +16,7 @@ appears anywhere.
   connected or reconnecting, the worker shall close the connection, stop
   trying to connect, keep the pairing, and print
   `✓ Disconnected. tervi stays in the background but won't connect.` then
-  `Connect again with: tervi connect`, and exit with `0`. The daemon shall
+  `  Connect again with: tervi connect`, and exit with `0`. The daemon shall
   keep running, and write the log line `○ Disconnected.`
 - R2. While the user has disconnected, the daemon shall not connect, also
   after the computer restarts, until the user runs `tervi connect`.
@@ -48,7 +48,7 @@ appears anywhere.
   `✗ This computer was unpaired on the server. Pair it again with: tervi pair --server <server>`.
 - R21. On such a computer, `tervi status`, `tervi connect`, and
   `tervi disconnect` shall print `✗ This computer was unpaired on the server.`
-  then `Pair it again with: tervi pair --server <server>`. `tervi status` and
+  then `  Pair it again with: tervi pair --server <server>`. `tervi status` and
   `tervi connect` shall exit with `1`; `tervi disconnect` with `0`, as in R5.
 - R26. When the user clicks **Accept** on such a page and the pairing
   completes, the server shall continue the earlier machine instead of
@@ -105,7 +105,16 @@ approval page with Accept.
    Online; after a revoke instead of an unpair, the same holds.
 7. **No secrets.** Across tests 1–6: no credential, machine ID, or identity
    appears in any output, log, page, or file, except the credential in
-   `credential.json` while paired.
+   `credential.json` while paired. Here "machine ID" means the 32 hex
+   characters in the fixture's `/etc/machine-id` file, and "identity" means
+   the 64-character `identity_hash` the worker computes from it. Neither is
+   tervi's `machine_id`: that UUID names the machine on the server, and the
+   Machines API, the pairing answers, and `state.json` carry it by design,
+   so it is not checked here. Check the standard output and error of every
+   command, the daemon logs, the server log, the pages and API answers the
+   tests read, and every file under the worker's state folder. The identity
+   may appear only in the request that starts a pairing and in the
+   database.
 
 Use the wait helpers, never fixed sleeps, except for "stays Offline", which
 waits a fixed 3 check intervals with the fixture's short interval.
