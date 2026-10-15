@@ -15,14 +15,6 @@ import (
 	"github.com/bertpratya/tervi/internal/worker/credential"
 )
 
-func unknownCredential(response *http.Response) bool {
-	return credentialRefusal(response) == "unknown_credential"
-}
-
-func isUnknownCredentialBody(body []byte) bool {
-	return isCredentialErrorBody(body, "unknown_credential")
-}
-
 func isCredentialErrorBody(body []byte, expected string) bool {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	opening, err := decoder.Token()

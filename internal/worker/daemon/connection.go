@@ -81,13 +81,13 @@ func (d *Daemon) tryConnection(parent context.Context, try int) attemptResult {
 		return attemptResult{kind: attemptIdle}
 	}
 	switch credentialRefusal(response) {
-	case "unknown_credential":
+	case credentialErrorUnknown:
 		closeResponse(response)
 		if conn != nil {
 			_ = conn.CloseNow()
 		}
 		return attemptResult{kind: attemptRejected, server: server}
-	case "credential_revoked":
+	case credentialErrorRevoked:
 		closeResponse(response)
 		if conn != nil {
 			_ = conn.CloseNow()

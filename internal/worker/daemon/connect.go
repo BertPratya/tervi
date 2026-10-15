@@ -78,13 +78,6 @@ func (d *Daemon) waitForConnect(ctx context.Context) ConnectResult {
 }
 
 func (d *Daemon) reject(server string) {
-	record, exists, err := state.ReadState(d.opts.StateDir)
-	if err == nil && exists {
-		record.Connect = false
-		reason := state.StopReasonCredentialRejected
-		record.StopReason = &reason
-		_ = state.WriteState(d.opts.StateDir, record)
-	}
-	d.setRejected()
+	d.stopTrying(state.StopReasonCredentialRejected)
 	d.logLine("✗ The server doesn't accept this computer's credential. Pair again with: tervi pair --server %s", server)
 }

@@ -17,7 +17,11 @@ import (
 	"github.com/coder/websocket"
 )
 
-const connectWaitLimit = 30 * time.Second
+const (
+	connectWaitLimit       = 30 * time.Second
+	credentialErrorUnknown = "unknown_credential"
+	credentialErrorRevoked = "credential_revoked"
+)
 
 type waitResult uint8
 
@@ -229,6 +233,19 @@ func (d *Daemon) refreshState() {
 	server := d.knownServerLocked("")
 	d.enabled = true
 	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: 1, NextTry: d.opts.Now(), LastError: lastError})
+	d.mu.Unlock()
+}
+
+func (d *Daemon) stopTrying(reason string) {
+	record, exists, err := state.ReadState(d.opts.StateDir)
+	if err == nil && exists {
+		record.Connect = false
+		record.StopReason = &reason
+		_ = state.WriteState(d.opts.StateDir, record)
+	}
+	d.mu.Lock()
+	d.enabled = false
+	d.setStatusLocked(Status{State: StateNotConnecting, StopReason: &reason})
 	d.mu.Unlock()
 }
 

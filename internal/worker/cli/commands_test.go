@@ -587,20 +587,31 @@ func TestStatusDisconnected(t *testing.T) {
 		name           string
 		noDaemon       bool
 		missingConnect bool
+		unknownReason  bool
 	}{
 		{name: "daemon"},
 		{name: "no daemon", noDaemon: true},
 		{name: "no daemon and missing connect", noDaemon: true, missingConnect: true},
+		{name: "daemon with unknown stop reason", unknownReason: true},
+		{name: "no daemon with unknown stop reason", noDaemon: true, unknownReason: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runner := &commandRunner{}
-			client := &commandControl{statuses: []statusResult{{answer: control.StatusAnswer{State: "not_connecting"}}}}
+			answer := control.StatusAnswer{State: "not_connecting"}
+			if tc.unknownReason {
+				answer.StopReason = ptrString("future_stop_reason")
+			}
+			client := &commandControl{statuses: []statusResult{{answer: answer}}}
 			if tc.noDaemon {
 				client.statuses = []statusResult{{err: control.ErrNotRunning}}
 			}
 			env, _, stdout, stderr := commandEnv(t, runner, client, true)
-			if tc.missingConnect {
+			if tc.missingConnect || tc.unknownReason {
 				data := []byte(`{"machine_id":"machine-123","credential_saved":true,"confirmed":true}`)
+				if tc.unknownReason {
+					reason := `,"stop_reason":"future_stop_reason"`
+					data = []byte(`{"machine_id":"machine-123","credential_saved":true,"confirmed":true` + reason + `}`)
+				}
 				if err := os.WriteFile(state.StatePath(env.StateDir), data, 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -617,16 +628,49 @@ func TestStatusDisconnected(t *testing.T) {
 }
 
 func TestStatusNoDaemonConnectTrue(t *testing.T) {
-	runner := &commandRunner{}
-	client := &commandControl{statuses: []statusResult{{err: control.ErrNotRunning}}}
-	env, _, stdout, stderr := commandEnv(t, runner, client, true)
-	if err := state.WriteState(env.StateDir, state.State{MachineID: "machine-123", CredentialSaved: true, Confirmed: true, Connect: true}); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name       string
+		stopReason *string
+	}{
+		{name: "without stop reason"},
+		{name: "with revoked stop reason", stopReason: ptrString("credential_revoked")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &commandRunner{}
+			client := &commandControl{statuses: []statusResult{{err: control.ErrNotRunning}}}
+			env, _, stdout, stderr := commandEnv(t, runner, client, true)
+			if err := state.WriteState(env.StateDir, state.State{MachineID: "machine-123", CredentialSaved: true, Confirmed: true, Connect: true, StopReason: tc.stopReason}); err != nil {
+				t.Fatal(err)
+			}
+			if code := Run(context.Background(), []string{"status"}, env, nil); code != 1 {
+				t.Fatalf("Run(status) = %d, want 1", code)
+			}
+			want := "✗ tervi isn't running in the background.\n  Start it with: tervi connect\n"
+			if stdout.String() != want || stderr.Len() != 0 {
+				t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
+			}
+		})
 	}
+}
+
+func TestStatusNoDaemonUsesPairedStateRecord(t *testing.T) {
+	runner := &commandRunner{}
+	var statePath string
+	client := &commandControl{statusFunc: func(context.Context) (control.StatusAnswer, error) {
+		if err := os.Remove(statePath); err != nil {
+			return control.StatusAnswer{}, err
+		}
+		if err := os.Mkdir(statePath, 0700); err != nil {
+			return control.StatusAnswer{}, err
+		}
+		return control.StatusAnswer{}, control.ErrNotRunning
+	}}
+	env, _, stdout, stderr := commandEnv(t, runner, client, true)
+	statePath = state.StatePath(env.StateDir)
 	if code := Run(context.Background(), []string{"status"}, env, nil); code != 1 {
 		t.Fatalf("Run(status) = %d, want 1", code)
 	}
-	want := "✗ tervi isn't running in the background.\n  Start it with: tervi connect\n"
+	want := "○ Disconnected.\n  Connect with: tervi connect\n"
 	if stdout.String() != want || stderr.Len() != 0 {
 		t.Errorf("stdout=%q stderr=%q, want %q and empty", stdout.String(), stderr.String(), want)
 	}

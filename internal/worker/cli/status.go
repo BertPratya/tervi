@@ -25,7 +25,7 @@ func runStatus(ctx context.Context, args []string, env Env) int {
 	if env.ControlClient == nil {
 		return missingSetting(env.Stdout, "ControlClient")
 	}
-	entry, _, paired, err := credential.Paired(env.StateDir, env.Store)
+	entry, record, paired, err := credential.Paired(env.StateDir, env.Store)
 	if err != nil {
 		printPairingReadFailure(env.Stdout, env.StateDir, err)
 		return 1
@@ -43,7 +43,7 @@ func runStatus(ctx context.Context, args []string, env Env) int {
 			return 130
 		}
 		if errors.Is(err, control.ErrNotRunning) {
-			printNoDaemonStatus(env.Stdout, env.StateDir, entry)
+			printNoDaemonStatus(env.Stdout, record, entry)
 			return 1
 		}
 		printStatusControlFailure(env.Stdout, err, entry)
@@ -64,11 +64,10 @@ func runStatus(ctx context.Context, args []string, env Env) int {
 				printRejectedStatus(env.Stdout, entry.Server)
 				return 1
 			case state.StopReasonCredentialRevoked:
-				printUnpairedStatus(env.Stdout, entry.Server)
+				printUnpaired(env.Stdout, entry.Server)
 				return 1
 			default:
-				fmt.Fprintln(env.Stdout, "○ Not connecting.")
-				fmt.Fprintln(env.Stdout, "  Connect with: tervi connect")
+				printDisconnectedStatus(env.Stdout)
 				return 1
 			}
 		}
@@ -97,36 +96,28 @@ func printRejectedStatus(output io.Writer, server string) {
 	fmt.Fprintf(output, "  Pair again with: tervi pair --server %s\n", server)
 }
 
-func printUnpairedStatus(output io.Writer, server string) {
-	fmt.Fprintln(output, "✗ This computer was unpaired on the server.")
-	fmt.Fprintf(output, "  Pair it again with: tervi pair --server %s\n", server)
-}
-
 func printDisconnectedStatus(output io.Writer) {
 	fmt.Fprintln(output, "○ Disconnected.")
 	fmt.Fprintln(output, "  Connect with: tervi connect")
 }
 
-func printNoDaemonStatus(output io.Writer, stateDir string, entry credential.Entry) {
-	record, exists, err := state.ReadState(stateDir)
-	if err == nil && exists {
-		if record.StopReason != nil {
-			switch *record.StopReason {
-			case state.StopReasonCredentialRejected:
-				printRejectedStatus(output, entry.Server)
-				return
-			case state.StopReasonCredentialRevoked:
-				printUnpairedStatus(output, entry.Server)
-				return
-			}
-		}
-		if !record.Connect && record.StopReason == nil {
-			printDisconnectedStatus(output)
+func printNoDaemonStatus(output io.Writer, record state.State, entry credential.Entry) {
+	if record.Connect {
+		fmt.Fprintln(output, "✗ tervi isn't running in the background.")
+		fmt.Fprintln(output, "  Start it with: tervi connect")
+		return
+	}
+	if record.StopReason != nil {
+		switch *record.StopReason {
+		case state.StopReasonCredentialRejected:
+			printRejectedStatus(output, entry.Server)
+			return
+		case state.StopReasonCredentialRevoked:
+			printUnpaired(output, entry.Server)
 			return
 		}
 	}
-	fmt.Fprintln(output, "✗ tervi isn't running in the background.")
-	fmt.Fprintln(output, "  Start it with: tervi connect")
+	printDisconnectedStatus(output)
 }
 
 func printConnectedStatus(output io.Writer, answer control.StatusAnswer, entry credential.Entry) {

@@ -2,8 +2,6 @@ package daemon
 
 import (
 	"time"
-
-	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
 // State and result names are shared with the control socket and CLI.
@@ -87,14 +85,6 @@ func (d *Daemon) setConnected(server string, since time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.setStatusLocked(Status{State: StateConnected, Server: server, ConnectedSince: since})
-}
-
-func (d *Daemon) setRejected() {
-	reason := state.StopReasonCredentialRejected
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.enabled = false
-	d.setStatusLocked(Status{State: StateNotConnecting, StopReason: &reason})
 }
 
 func (d *Daemon) currentServer() string {

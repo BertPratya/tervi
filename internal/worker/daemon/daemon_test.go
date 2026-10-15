@@ -772,26 +772,35 @@ func TestKeepsTryingForever(t *testing.T) {
 	<-done
 }
 
-func TestOnlyUnknownCredentialStops(t *testing.T) {
+func TestCredentialRefusalCodes(t *testing.T) {
 	for _, status := range []int{http.StatusInternalServerError, http.StatusNotFound, http.StatusUnauthorized} {
 		response := &http.Response{StatusCode: status, Body: http.NoBody}
-		if unknownCredential(response) {
-			t.Errorf("unknownCredential(%d) = true, want false without exact body", status)
+		if got := credentialRefusal(response); got != "" {
+			t.Errorf("credentialRefusal(%d) = %q, want empty without exact body", status, got)
 		}
 	}
 	response := &http.Response{StatusCode: http.StatusUnauthorized, Body: http.NoBody}
-	if unknownCredential(response) {
-		t.Fatal("401 without unknown_credential body was treated as rejection")
+	if got := credentialRefusal(response); got != "" {
+		t.Fatalf("credentialRefusal(401 without a credential error body) = %q, want empty", got)
 	}
-	if !isUnknownCredentialBody([]byte(`{"error":"unknown_credential"}`)) {
+	if !isCredentialErrorBody([]byte(`{"error":"unknown_credential"}`), "unknown_credential") {
 		t.Fatal("exact rejection body was not recognized")
 	}
-	if !isUnknownCredentialBody([]byte("{ \"error\": \"unknown_credential\" }\n")) {
+	if !isCredentialErrorBody([]byte("{ \"error\": \"unknown_credential\" }\n"), "unknown_credential") {
 		t.Fatal("JSON whitespace around the rejection was not recognized")
 	}
-	for _, body := range [][]byte{[]byte(`{"error":"other"}`), []byte(`not json`), []byte(`{"error":"unknown_credential","extra":true}`), []byte(`{"error":"other","error":"unknown_credential"}`)} {
-		if isUnknownCredentialBody(body) {
-			t.Errorf("body %q was treated as exact rejection", body)
+	for _, test := range []struct {
+		body string
+		code string
+	}{
+		{body: `{"error":"other"}`, code: "unknown_credential"},
+		{body: `not json`, code: "unknown_credential"},
+		{body: `{"error":"unknown_credential","extra":true}`, code: "unknown_credential"},
+		{body: `{"error":"other","error":"unknown_credential"}`, code: "unknown_credential"},
+		{body: `{"error":"credential_revoked","extra":true}`, code: "credential_revoked"},
+	} {
+		if isCredentialErrorBody([]byte(test.body), test.code) {
+			t.Errorf("body %q was treated as exact %s refusal", test.body, test.code)
 		}
 	}
 
