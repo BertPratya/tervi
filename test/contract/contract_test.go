@@ -3,6 +3,7 @@ package contract_test
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -64,7 +65,23 @@ func TestServerMatchesContract(t *testing.T) {
 		seen:   make(map[string]map[int]bool),
 	}
 
-	startA := client.startPairing(t, "worker-a")
+	const identity = "1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	identityHash, err := hex.DecodeString(identity)
+	if err != nil {
+		t.Fatal("decode contract identity")
+	}
+	matchedMachineID, _ := dbtest.InsertMachineCredential(t, pool, dbtest.MachineCredential{
+		DisplayName: "contract earlier machine",
+		OSName:      "Linux",
+		OSVersion:   "1",
+		Hash:        secret.Hash(secret.FromString("contract-earlier-credential")),
+		Status:      "active",
+	})
+	if _, err := pool.Exec(context.Background(), `UPDATE machines SET identity_hash = $2 WHERE machine_id = $1`, matchedMachineID, identityHash); err != nil {
+		t.Fatalf("set contract machine identity: %v", err)
+	}
+
+	startA := client.startPairingWithIdentity(t, "worker-a", identity)
 	pollingA := startA.PollingKey
 	approvalPathA := approvalPath(t, startA.ApprovalURL)
 	approvalHeadersA := bearerHeaders(approvalKey(t, startA.ApprovalURL))
@@ -74,6 +91,7 @@ func TestServerMatchesContract(t *testing.T) {
 	response = client.call(t, http.MethodGet, "/api/v1/approvals/current", "", approvalHeadersA, callOptions{})
 	expectStatus(t, response, http.StatusOK)
 	expectJSONField(t, response, "status", "waiting_for_approval")
+	expectJSONFieldPresent(t, response, "earlier_machine")
 	response = client.call(t, http.MethodGet, approvalPathA, "", nil, callOptions{})
 	expectStatus(t, response, http.StatusOK)
 	response = client.call(t, http.MethodPost, "/api/v1/approvals/current/accept", "", approvalHeadersA, callOptions{})
@@ -605,8 +623,16 @@ func loadContract(t *testing.T) *openapi3.T {
 }
 
 func (c *contractClient) startPairing(t *testing.T, hostname string) startResponse {
+	return c.startPairingWithIdentity(t, hostname, "")
+}
+
+func (c *contractClient) startPairingWithIdentity(t *testing.T, hostname, identity string) startResponse {
 	t.Helper()
-	response := c.call(t, http.MethodPost, "/api/v1/pairings", jsonBody(map[string]string{"hostname": hostname, "os_name": "linux", "os_version": "1"}), jsonHeaders(), callOptions{})
+	request := map[string]string{"hostname": hostname, "os_name": "linux", "os_version": "1"}
+	if identity != "" {
+		request["identity_hash"] = identity
+	}
+	response := c.call(t, http.MethodPost, "/api/v1/pairings", jsonBody(request), jsonHeaders(), callOptions{})
 	expectStatus(t, response, http.StatusCreated)
 	var started startResponse
 	if err := json.Unmarshal(response.body, &started); err != nil {

@@ -27,7 +27,7 @@ func New(cfg Config, pool *pgxpool.Pool, logger *slog.Logger, connections *conne
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
-	pairing.Register(mux, pairing.Deps{Pool: pool, PublicURL: cfg.PublicURL, Logger: logger})
+	pairing.Register(mux, pairing.Deps{Pool: pool, PublicURL: cfg.PublicURL, Logger: logger, List: connections})
 	connection.Register(mux, connection.Deps{
 		Pool: pool, Logger: logger, List: connections,
 		CheckInterval: cfg.CheckInterval, ConnectionTimeout: cfg.ConnectionTimeout,
