@@ -11,13 +11,15 @@ const (
 	StateNotConnecting = "not_connecting"
 	StateNotPaired     = "not_paired"
 
-	ResultConnected        = "connected"
-	ResultAlreadyConnected = "already_connected"
-	ResultRejected         = "rejected"
-	ResultRevoked          = "revoked"
-	ResultNotPaired        = "not_paired"
-	ResultStillTrying      = "still_trying"
-	ResultFailed           = "failed"
+	ResultConnected           = "connected"
+	ResultAlreadyConnected    = "already_connected"
+	ResultRejected            = "rejected"
+	ResultRevoked             = "revoked"
+	ResultNotPaired           = "not_paired"
+	ResultStillTrying         = "still_trying"
+	ResultFailed              = "failed"
+	ResultDisconnected        = "disconnected"
+	ResultAlreadyDisconnected = "already_disconnected"
 )
 
 // Status describes the daemon's connection state.
@@ -37,6 +39,12 @@ type ConnectResult struct {
 	Result    string
 	LastError string
 	Path      string
+}
+
+// DisconnectResult is the outcome of asking the daemon to stop connecting.
+type DisconnectResult struct {
+	Result string
+	Path   string
 }
 
 // Status returns a snapshot of the daemon's current connection state.

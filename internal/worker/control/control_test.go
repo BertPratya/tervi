@@ -18,8 +18,9 @@ import (
 )
 
 type fakeEngine struct {
-	status daemon.Status
-	result daemon.ConnectResult
+	status           daemon.Status
+	result           daemon.ConnectResult
+	disconnectResult daemon.DisconnectResult
 }
 
 func (f *fakeEngine) Run(ctx context.Context) error {
@@ -30,6 +31,8 @@ func (f *fakeEngine) Run(ctx context.Context) error {
 func (f *fakeEngine) Status() daemon.Status { return f.status }
 
 func (f *fakeEngine) Connect(context.Context) daemon.ConnectResult { return f.result }
+
+func (f *fakeEngine) Disconnect(context.Context) daemon.DisconnectResult { return f.disconnectResult }
 
 func TestSecondDaemonExits(t *testing.T) {
 	runtimeDir := filepath.Join(t.TempDir(), "tervi")
@@ -287,6 +290,45 @@ func TestConnectOverSocket(t *testing.T) {
 	}
 }
 
+func TestDisconnectOverSocket(t *testing.T) {
+	cases := []struct {
+		name   string
+		result daemon.DisconnectResult
+		want   string
+	}{
+		{"disconnected", daemon.DisconnectResult{Result: daemon.ResultDisconnected}, `{"result":"disconnected"}`},
+		{"already disconnected", daemon.DisconnectResult{Result: daemon.ResultAlreadyDisconnected}, `{"result":"already_disconnected"}`},
+		{"rejected", daemon.DisconnectResult{Result: daemon.ResultRejected}, `{"result":"rejected"}`},
+		{"revoked", daemon.DisconnectResult{Result: daemon.ResultRevoked}, `{"result":"revoked"}`},
+		{"not paired", daemon.DisconnectResult{Result: daemon.ResultNotPaired}, `{"result":"not_paired"}`},
+		{"failed", daemon.DisconnectResult{Result: daemon.ResultFailed, Path: "/state/state.json"}, `{"result":"failed","path":"/state/state.json"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runtimeDir := filepath.Join(t.TempDir(), "tervi")
+			ctx, stop := context.WithCancel(context.Background())
+			done := startDaemon(t, ctx, runtimeDir, &fakeEngine{disconnectResult: tc.result})
+			defer func() { stop(); <-done }()
+			waitForSocket(t, filepath.Join(runtimeDir, "daemon.sock"))
+			got, err := rawRequest(t, runtimeDir, "POST", "/disconnect")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Errorf("POST /disconnect = %s, want %s", got, tc.want)
+			}
+			gotAnswer, err := (Client{RuntimeDir: runtimeDir}).Disconnect(context.Background())
+			if err != nil {
+				t.Fatalf("Client.Disconnect() error = %v", err)
+			}
+			wantAnswer := disconnectAnswer(tc.result)
+			if !reflect.DeepEqual(gotAnswer, wantAnswer) {
+				t.Errorf("Client.Disconnect() = %+v, want %+v", gotAnswer, wantAnswer)
+			}
+		})
+	}
+}
+
 func TestClientNotRunning(t *testing.T) {
 	t.Run("missing socket", func(t *testing.T) {
 		_, err := (Client{RuntimeDir: t.TempDir()}).Status(context.Background())
@@ -446,6 +488,10 @@ func (engine *delayedConnectEngine) Connect(ctx context.Context) daemon.ConnectR
 	return daemon.ConnectResult{Result: "still_trying"}
 }
 
+func (*delayedConnectEngine) Disconnect(context.Context) daemon.DisconnectResult {
+	return daemon.DisconnectResult{Result: daemon.ResultNotPaired}
+}
+
 func TestRunWaitsForHandlersOnShutdown(t *testing.T) {
 	runtimeDir := filepath.Join(t.TempDir(), "tervi")
 	ctx, stop := context.WithCancel(context.Background())
@@ -495,6 +541,10 @@ func (engine *blockedConnectEngine) Connect(context.Context) daemon.ConnectResul
 	close(engine.started)
 	<-engine.release
 	return daemon.ConnectResult{Result: "still_trying"}
+}
+
+func (*blockedConnectEngine) Disconnect(context.Context) daemon.DisconnectResult {
+	return daemon.DisconnectResult{Result: daemon.ResultNotPaired}
 }
 
 func TestRunBoundsHandlerWaitOnShutdown(t *testing.T) {
@@ -558,6 +608,9 @@ func (returningEngine) Run(context.Context) error { return nil }
 func (returningEngine) Status() daemon.Status     { return daemon.Status{State: "not_paired"} }
 func (returningEngine) Connect(context.Context) daemon.ConnectResult {
 	return daemon.ConnectResult{Result: "not_paired"}
+}
+func (returningEngine) Disconnect(context.Context) daemon.DisconnectResult {
+	return daemon.DisconnectResult{Result: daemon.ResultNotPaired}
 }
 
 func TestDaemonCommandStops(t *testing.T) {

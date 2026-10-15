@@ -25,7 +25,6 @@ func credentialRefusal(response *http.Response) string {
 	return ""
 }
 
-func (d *Daemon) revoke(server string) {
+func (d *Daemon) revoke(_ string) {
 	d.stopTrying(state.StopReasonCredentialRevoked)
-	d.logLine("✗ This computer was unpaired on the server. Pair it again with: tervi pair --server %s", server)
 }

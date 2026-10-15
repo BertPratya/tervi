@@ -375,7 +375,7 @@ R8 and R9 need no new server code: a disconnect closes the connection with
 | 02 | [Server: unpair and Revoke, and the Machines page's Revoke button](tasks/02-server-unpair-revoke.md) | 01 | core | done |
 | 03 | [Server: recognizing a computer that pairs again, and the approval page](tasks/03-server-recognition.md) | 01, 02 | core | todo |
 | 04 | [Worker: a revoked credential, and the state without a daemon](tasks/04-worker-revoked.md) | 01 | core | done |
-| 05 | [Worker: `tervi disconnect`](tasks/05-worker-disconnect.md) | 04 | core | todo |
+| 05 | [Worker: `tervi disconnect`](tasks/05-worker-disconnect.md) | 04 | core | done |
 | 06 | [Worker: `tervi unpair`](tasks/06-worker-unpair.md) | 02, 05 | core | todo |
 | 07 | [Worker: the computer's identity when pairing](tasks/07-worker-identity.md) | 03, 04, 06 | core | todo |
 | 08 | [End-to-end test of disconnect, unpair, Revoke, and pairing again](tasks/08-end-to-end.md) | 01–07 | normal | todo |

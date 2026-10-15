@@ -77,7 +77,6 @@ func (d *Daemon) waitForConnect(ctx context.Context) ConnectResult {
 	}
 }
 
-func (d *Daemon) reject(server string) {
+func (d *Daemon) reject(_ string) {
 	d.stopTrying(state.StopReasonCredentialRejected)
-	d.logLine("✗ The server doesn't accept this computer's credential. Pair again with: tervi pair --server %s", server)
 }

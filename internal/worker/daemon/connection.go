@@ -76,7 +76,7 @@ func (d *Daemon) tryConnection(parent context.Context, try int) attemptResult {
 	cancel()
 	if parent.Err() != nil {
 		if conn != nil {
-			_ = conn.Close(websocket.StatusCode(protocol.CloseNormal), "daemon stopped")
+			closeAttemptConnection(parent, conn)
 		}
 		return attemptResult{kind: attemptIdle}
 	}
@@ -118,7 +118,7 @@ func (d *Daemon) tryConnection(parent context.Context, try int) attemptResult {
 	hello, helloErr := readHello(parent, conn)
 	if helloErr != nil {
 		if parent.Err() != nil {
-			_ = conn.Close(websocket.StatusCode(protocol.CloseNormal), "daemon stopped")
+			closeAttemptConnection(parent, conn)
 			return attemptResult{kind: attemptIdle}
 		}
 		if websocket.CloseStatus(helloErr) == websocket.StatusCode(protocol.CloseRevoked) {
@@ -135,6 +135,14 @@ func (d *Daemon) tryConnection(parent context.Context, try int) attemptResult {
 		return d.failedAttempt(server, helloErr, nil, entry.Credential.Reveal())
 	}
 	return attemptResult{kind: attemptConnected, server: server, conn: conn, hello: hello}
+}
+
+func closeAttemptConnection(ctx context.Context, conn *websocket.Conn) {
+	reason := "daemon stopped"
+	if errors.Is(context.Cause(ctx), errDaemonDisconnected) {
+		reason = "daemon disconnected"
+	}
+	_ = conn.Close(websocket.StatusCode(protocol.CloseNormal), reason)
 }
 
 func (d *Daemon) failedAttempt(server string, err error, response *http.Response, credentialValue string) attemptResult {

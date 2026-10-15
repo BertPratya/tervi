@@ -54,7 +54,10 @@ type Daemon struct {
 	connectTimeout time.Duration
 	waitOverride   func(time.Duration, context.Context) bool
 
-	connectMu sync.Mutex
+	connectMu     sync.Mutex
+	attemptCancel context.CancelCauseFunc
+	activeConn    *websocket.Conn
+	disconnectSeq uint64
 }
 
 // New creates a daemon. Run owns its connection loop; Connect wakes it.
@@ -101,28 +104,35 @@ func (d *Daemon) Run(ctx context.Context) error {
 			continue
 		}
 
-		if announce {
-			d.logLine("… Reconnecting (try %d)", try)
+		attemptCtx, sequence, cancelAttempt, started := d.startAttempt(ctx, try, d.currentServer(), d.opts.Now(), announce)
+		if !started {
+			continue
 		}
-		d.setTrying(try, d.currentServer(), d.opts.Now())
-		result := d.tryConnection(ctx, try)
+		result := d.tryConnection(attemptCtx, try)
+		d.finishAttempt(cancelAttempt)
 		if ctx.Err() != nil {
 			return nil
+		}
+		if d.finishAttemptIfDisconnected(sequence, result) {
+			try, announce = 1, false
+			continue
 		}
 		switch result.kind {
 		case attemptIdle:
 			d.refreshState()
 			try, announce = 1, false
 		case attemptRejected:
-			d.reject(result.server)
+			d.stopForSequenceOrRefresh(sequence, result.server, state.StopReasonCredentialRejected)
 			try, announce = 1, false
 		case attemptRevoked:
-			d.revoke(result.server)
+			d.stopForSequenceOrRefresh(sequence, result.server, state.StopReasonCredentialRevoked)
 			try, announce = 1, false
 		case attemptFailed:
 			wait := reconnectWait(try+1, d.opts.Rand())
-			d.logLine("✗ %s. Next try in %s", result.logError, SecondsText(wholeSeconds(wait)))
-			d.setRetry(try+1, result.server, result.lastError, d.opts.Now().Add(wait))
+			if !d.reportAttemptFailed(sequence, try, result, wait) {
+				try, announce = 1, false
+				continue
+			}
 			waited := d.wait(wait, ctx)
 			if waited == waitCancelled {
 				return nil
@@ -133,27 +143,36 @@ func (d *Daemon) Run(ctx context.Context) error {
 				try, announce = try+1, true
 			}
 		case attemptConnected:
-			d.setConnected(result.server, d.opts.Now())
 			d.drainWake()
-			d.logLine("✓ Connected to %s", result.server)
+			if !d.startServingOrClose(sequence, result) {
+				try, announce = 1, false
+				continue
+			}
 			lost := d.serveConnection(ctx, result.conn, result.hello)
+			d.finishServing(result.conn)
 			if ctx.Err() != nil {
 				if !lost.closeStarted {
 					_ = result.conn.Close(websocket.StatusCode(protocol.CloseNormal), "daemon stopped")
 				}
 				return nil
 			}
+			if d.disconnectedAfterServing(sequence) {
+				try, announce = 1, false
+				continue
+			}
 			if !lost.closeStarted {
 				_ = result.conn.CloseNow()
 			}
 			if lost.revoked {
-				d.revoke(result.server)
+				d.stopForSequenceOrRefresh(sequence, result.server, state.StopReasonCredentialRevoked)
 				try, announce = 1, false
 				continue
 			}
-			d.logLine("✗ Connection lost: %s", lost.reason)
 			wait := reconnectWait(1, d.opts.Rand())
-			d.setRetry(1, result.server, "", d.opts.Now().Add(wait))
+			if !d.reportConnectionLost(sequence, result.server, lost.reason, d.opts.Now().Add(wait)) {
+				try, announce = 1, false
+				continue
+			}
 			waited := d.wait(wait, ctx)
 			if waited == waitCancelled {
 				return nil
@@ -237,16 +256,11 @@ func (d *Daemon) refreshState() {
 }
 
 func (d *Daemon) stopTrying(reason string) {
-	record, exists, err := state.ReadState(d.opts.StateDir)
-	if err == nil && exists {
-		record.Connect = false
-		record.StopReason = &reason
-		_ = state.WriteState(d.opts.StateDir, record)
-	}
 	d.mu.Lock()
-	d.enabled = false
-	d.setStatusLocked(Status{State: StateNotConnecting, StopReason: &reason})
+	sequence := d.disconnectSeq
+	server := d.knownServerLocked("")
 	d.mu.Unlock()
+	d.stopForSequence(sequence, server, reason)
 }
 
 func (d *Daemon) isEnabled() bool {
