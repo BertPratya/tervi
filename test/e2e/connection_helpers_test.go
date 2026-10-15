@@ -510,9 +510,24 @@ func completeLivePairObserved(t *testing.T, f *connectedFixture, run *workerRun,
 }
 
 func (f *connectedFixture) recordApproval(answer approvalState) {
-	data, err := json.Marshal(answer)
-	if err == nil {
-		f.approvalAnswers = append(f.approvalAnswers, string(data))
+	f.approvalAnswers = append(f.approvalAnswers, answer.rawResponse)
+}
+
+func TestApprovalAuditRecordsRawResponse(t *testing.T) {
+	body := "{\n  \"status\": \"waiting_for_approval\",\n  \"extra\": \"preserve-me\"\n}\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	defer server.Close()
+
+	fixture := &connectedFixture{
+		daemonLogs:   &safeBuffer{},
+		daemonStderr: &safeBuffer{},
+		serverLogs:   &safeBuffer{},
+	}
+	fixture.recordApproval(approvalRequest(t, server.URL, "test-key", http.MethodGet, ""))
+	if got := fixture.audit().contents; !strings.Contains(got, "preserve-me") {
+		t.Fatalf("approval audit = %q, want the unmodeled field from the raw response body", got)
 	}
 }
 

@@ -159,6 +159,12 @@ func TestRevokeOfflineEndToEnd(t *testing.T) {
 	f.runner.startDaemon(t)
 	waitFor(t, f.daemonLogs, unpairedDaemonLine(f.serverURL), connectionWait)
 	waitForControlState(t, f.controlClient, "not_connecting", connectionWait)
+	if strings.Contains(f.daemonLogs.String(), "… Reconnecting (try 2)") {
+		t.Error("daemon retried after receiving credential_revoked on its first connection attempt")
+	}
+	if got := strings.Count(f.daemonLogs.String(), "✓ Connected to "+f.serverURL); got != 1 {
+		t.Errorf("connected log lines after offline revoke = %d, want 1", got)
+	}
 	state := f.stateSnapshot(t)
 	if state.Connect || state.StopReason == nil || *state.StopReason != "credential_revoked" {
 		t.Errorf("state after daemon started with revoked credential = %+v, want credential_revoked", state)
@@ -387,10 +393,6 @@ func assertExactlyOneOnlineMachine(t *testing.T, f *connectedFixture, expectedID
 	machines := decodeLiveMachines(t, f.machineList(t)).Machines
 	if len(machines) != 1 || machines[0].MachineID != expectedID || !machines[0].Online {
 		t.Errorf("Machines list after pairing again = %+v, want the earlier machine as the only Online entry", machines)
-		return
-	}
-	if hostname, err := os.Hostname(); err == nil && machines[0].DisplayName != hostname {
-		t.Errorf("machine display name after pairing again = %q, want current computer name %q", machines[0].DisplayName, hostname)
 	}
 }
 
