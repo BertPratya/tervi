@@ -107,8 +107,7 @@ func queryApproval(ctx context.Context, pool *pgxpool.Pool, approvalHash []byte)
 		pr.hostname, pr.os_name, pr.os_version, coalesce(pr.pairing_code, ''),
 		`+effectiveFailureReason+`,
 		coalesce(m.display_name, '')
-		FROM pairing_requests AS pr
-		LEFT JOIN machines AS m ON m.pairing_request_id = pr.id
+		FROM pairing_requests AS pr `+pairingCredentialJoin+` `+pairingMachineJoin+`
 		WHERE pr.approval_key_hash = $1`, approvalHash).Scan(
 		&row.status, &row.hostname, &row.osName, &row.osVersion, &row.pairingCode, &row.failureReason, &row.displayName)
 	return row, err

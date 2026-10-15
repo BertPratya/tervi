@@ -23,8 +23,7 @@ func (deps Deps) poll(w http.ResponseWriter, r *http.Request) {
 		GREATEST(0, CEIL(EXTRACT(EPOCH FROM pr.expires_at - now()))::integer),
 		pr.tries_left,
 		`+effectiveFailureReason+`
-		FROM pairing_requests AS pr
-		LEFT JOIN machines AS m ON m.pairing_request_id = pr.id
+		FROM pairing_requests AS pr `+pairingCredentialJoin+`
 		WHERE pr.polling_key_hash = $1`, secret.Hash(secret.FromString(proof))).
 		Scan(&status, &expiresInSeconds, &triesLeft, &failureReason)
 	if errors.Is(err, pgx.ErrNoRows) {

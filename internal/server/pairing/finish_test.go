@@ -86,7 +86,7 @@ func machineState(t *testing.T, api *testAPI, machineID string) (string, float64
 	var status string
 	var seconds float64
 	if err := api.pool.QueryRow(context.Background(), `SELECT status,
-		EXTRACT(EPOCH FROM expires_at - now()) FROM machines WHERE machine_id = $1`, machineID).
+		EXTRACT(EPOCH FROM expires_at - now()) FROM credentials WHERE machine_id = $1`, machineID).
 		Scan(&status, &seconds); err != nil {
 		t.Fatalf("read machine state: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestCredentialOnlyHashed(t *testing.T) {
 		t.Error("a database row contains the raw credential")
 	}
 	var storedHash []byte
-	if err := api.pool.QueryRow(context.Background(), `SELECT credential_hash FROM machines WHERE machine_id = $1`, got.MachineID).Scan(&storedHash); err != nil {
+	if err := api.pool.QueryRow(context.Background(), `SELECT credential_hash FROM credentials WHERE machine_id = $1`, got.MachineID).Scan(&storedHash); err != nil {
 		t.Fatalf("read credential hash: %v", err)
 	}
 	if !bytes.Equal(storedHash, secret.Hash(secret.FromString(got.Credential))) {
@@ -418,7 +418,7 @@ func TestCodeUnavailableUsesPollStatusAfterExpiry(t *testing.T) {
 		api := newTestAPI(t)
 		started, _, code := createCodeReady(t, api)
 		credential := acceptedCredential(t, api, started.PollingKey, code)
-		if _, err := api.pool.Exec(context.Background(), `UPDATE machines
+		if _, err := api.pool.Exec(context.Background(), `UPDATE credentials
 			SET expires_at = now() - interval '1 second' WHERE machine_id = $1`, credential.MachineID); err != nil {
 			t.Fatalf("expire pending machine: %v", err)
 		}
@@ -452,7 +452,7 @@ func TestAcknowledgment(t *testing.T) {
 		t.Errorf("acknowledgment result = %q, want ok", ack.Result)
 	}
 	var machineStatus, requestStatus string
-	if err := api.pool.QueryRow(context.Background(), `SELECT m.status, pr.status FROM machines m JOIN pairing_requests pr ON pr.id = m.pairing_request_id WHERE m.machine_id = $1`, credential.MachineID).
+	if err := api.pool.QueryRow(context.Background(), `SELECT c.status, pr.status FROM credentials c JOIN pairing_requests pr ON pr.id = c.pairing_request_id WHERE c.machine_id = $1`, credential.MachineID).
 		Scan(&machineStatus, &requestStatus); err != nil {
 		t.Fatalf("read paired state: %v", err)
 	}
@@ -479,8 +479,8 @@ func TestAcknowledgmentRepeatable(t *testing.T) {
 		t.Errorf("machine count after repeat acknowledgment = %d, want 1", got)
 	}
 	var machineStatus, requestStatus string
-	if err := api.pool.QueryRow(context.Background(), `SELECT m.status, pr.status FROM machines m
-		JOIN pairing_requests pr ON pr.id = m.pairing_request_id WHERE m.machine_id = $1`, credential.MachineID).
+	if err := api.pool.QueryRow(context.Background(), `SELECT c.status, pr.status FROM credentials c
+		JOIN pairing_requests pr ON pr.id = c.pairing_request_id WHERE c.machine_id = $1`, credential.MachineID).
 		Scan(&machineStatus, &requestStatus); err != nil {
 		t.Fatalf("read state after repeat acknowledgment: %v", err)
 	}
@@ -493,7 +493,7 @@ func TestAcknowledgmentAfterExpiry(t *testing.T) {
 	api := newTestAPI(t)
 	started, approval, code := createCodeReady(t, api)
 	credential := acceptedCredential(t, api, started.PollingKey, code)
-	if _, err := api.pool.Exec(context.Background(), `UPDATE machines SET expires_at = now() - interval '1 second' WHERE machine_id = $1`, credential.MachineID); err != nil {
+	if _, err := api.pool.Exec(context.Background(), `UPDATE credentials SET expires_at = now() - interval '1 second' WHERE machine_id = $1`, credential.MachineID); err != nil {
 		t.Fatalf("expire pending machine: %v", err)
 	}
 	ack := decodeResponse(t, api.request(t, http.MethodPost, ackEndpoint, "", credential.Credential))
@@ -501,8 +501,8 @@ func TestAcknowledgmentAfterExpiry(t *testing.T) {
 		t.Errorf("acknowledgment result = %q, want expired", ack.Result)
 	}
 	var machineStatus string
-	if err := api.pool.QueryRow(context.Background(), `SELECT status FROM machines WHERE machine_id = $1`, credential.MachineID).Scan(&machineStatus); err != nil {
-		t.Fatalf("read machine status: %v", err)
+	if err := api.pool.QueryRow(context.Background(), `SELECT status FROM credentials WHERE machine_id = $1`, credential.MachineID).Scan(&machineStatus); err != nil {
+		t.Fatalf("read credential status: %v", err)
 	}
 	if machineStatus == "active" {
 		t.Error("expired machine became active")
@@ -527,7 +527,7 @@ func TestSaveFailure(t *testing.T) {
 		t.Errorf("save failure result = %q, want ok", failure.Result)
 	}
 	var machineStatus, requestStatus, reason string
-	if err := api.pool.QueryRow(context.Background(), `SELECT m.status, pr.status, pr.failure_reason FROM machines m JOIN pairing_requests pr ON pr.id = m.pairing_request_id WHERE m.machine_id = $1`, credential.MachineID).
+	if err := api.pool.QueryRow(context.Background(), `SELECT c.status, pr.status, pr.failure_reason FROM credentials c JOIN pairing_requests pr ON pr.id = c.pairing_request_id WHERE c.machine_id = $1`, credential.MachineID).
 		Scan(&machineStatus, &requestStatus, &reason); err != nil {
 		t.Fatalf("read failed save state: %v", err)
 	}
@@ -556,7 +556,7 @@ func TestSaveFailureOnActive(t *testing.T) {
 		t.Errorf("save failure on active machine = %q, want active", got.Result)
 	}
 	var machineStatus, requestStatus string
-	if err := api.pool.QueryRow(context.Background(), `SELECT m.status, pr.status FROM machines m JOIN pairing_requests pr ON pr.id = m.pairing_request_id WHERE m.machine_id = $1`, credential.MachineID).
+	if err := api.pool.QueryRow(context.Background(), `SELECT c.status, pr.status FROM credentials c JOIN pairing_requests pr ON pr.id = c.pairing_request_id WHERE c.machine_id = $1`, credential.MachineID).
 		Scan(&machineStatus, &requestStatus); err != nil {
 		t.Fatalf("read active state: %v", err)
 	}
@@ -575,8 +575,8 @@ func TestNotPairedUntilConfirmed(t *testing.T) {
 		t.Error("pending machine was shown as paired before acknowledgment")
 	}
 	var status string
-	if err := api.pool.QueryRow(context.Background(), `SELECT status FROM machines WHERE machine_id = $1`, credential.MachineID).Scan(&status); err != nil {
-		t.Fatalf("read pending machine: %v", err)
+	if err := api.pool.QueryRow(context.Background(), `SELECT status FROM credentials WHERE machine_id = $1`, credential.MachineID).Scan(&status); err != nil {
+		t.Fatalf("read pending credential: %v", err)
 	}
 	if status != "pending" {
 		t.Errorf("machine status = %q, want pending", status)
@@ -595,8 +595,8 @@ func TestCleanupPass(t *testing.T) {
 		secret.Hash(secret.FromString(oldWaiting.PollingKey))); err != nil {
 		t.Fatalf("expire waiting request: %v", err)
 	}
-	if _, err := api.pool.Exec(context.Background(), `UPDATE machines SET expires_at = now() - interval '1 second' WHERE machine_id = $1`, oldPending.MachineID); err != nil {
-		t.Fatalf("expire pending machine: %v", err)
+	if _, err := api.pool.Exec(context.Background(), `UPDATE credentials SET expires_at = now() - interval '1 second' WHERE machine_id = $1`, oldPending.MachineID); err != nil {
+		t.Fatalf("expire pending credential: %v", err)
 	}
 	if err := cleanupPass(context.Background(), api.pool); err != nil {
 		t.Fatalf("run cleanup pass: %v", err)
@@ -604,9 +604,9 @@ func TestCleanupPass(t *testing.T) {
 	var oldWaitingStatus, oldMachineStatus, oldPendingStatus, oldPendingReason string
 	var freshWaitingStatus, freshMachineStatus, freshPendingStatus string
 	_ = api.pool.QueryRow(context.Background(), `SELECT status FROM pairing_requests WHERE polling_key_hash = $1`, secret.Hash(secret.FromString(oldWaiting.PollingKey))).Scan(&oldWaitingStatus)
-	_ = api.pool.QueryRow(context.Background(), `SELECT m.status, pr.status, pr.failure_reason FROM machines m JOIN pairing_requests pr ON pr.id = m.pairing_request_id WHERE m.machine_id = $1`, oldPending.MachineID).Scan(&oldMachineStatus, &oldPendingStatus, &oldPendingReason)
+	_ = api.pool.QueryRow(context.Background(), `SELECT c.status, pr.status, pr.failure_reason FROM credentials c JOIN pairing_requests pr ON pr.id = c.pairing_request_id WHERE c.machine_id = $1`, oldPending.MachineID).Scan(&oldMachineStatus, &oldPendingStatus, &oldPendingReason)
 	_ = api.pool.QueryRow(context.Background(), `SELECT status FROM pairing_requests WHERE polling_key_hash = $1`, secret.Hash(secret.FromString(freshWaiting.PollingKey))).Scan(&freshWaitingStatus)
-	_ = api.pool.QueryRow(context.Background(), `SELECT m.status, pr.status FROM machines m JOIN pairing_requests pr ON pr.id = m.pairing_request_id WHERE m.machine_id = $1`, freshPending.MachineID).Scan(&freshMachineStatus, &freshPendingStatus)
+	_ = api.pool.QueryRow(context.Background(), `SELECT c.status, pr.status FROM credentials c JOIN pairing_requests pr ON pr.id = c.pairing_request_id WHERE c.machine_id = $1`, freshPending.MachineID).Scan(&freshMachineStatus, &freshPendingStatus)
 	if oldWaitingStatus != "expired" || oldMachineStatus != "expired" || oldPendingStatus != "failed" || oldPendingReason != "not_confirmed" {
 		t.Error("cleanup did not expire waiting and pending records")
 	}
@@ -620,5 +620,24 @@ func TestUnknownCredential(t *testing.T) {
 	for _, path := range []string{ackEndpoint, failEndpoint} {
 		rec := api.request(t, http.MethodPost, path, "", "unknown-credential")
 		assertError(t, rec, http.StatusUnauthorized, "unknown_credential")
+	}
+}
+
+func TestAcknowledgeRevoked(t *testing.T) {
+	api := newTestAPI(t)
+	started, _, code := createCodeReady(t, api)
+	issued := acceptedCredential(t, api, started.PollingKey, code)
+	if _, err := api.pool.Exec(context.Background(), `UPDATE credentials
+		SET status = 'revoked', ended_at = now() WHERE machine_id = $1`, issued.MachineID); err != nil {
+		t.Fatalf("revoke credential fixture: %v", err)
+	}
+	for _, route := range []struct {
+		name string
+		path string
+	}{{name: "acknowledgment", path: ackEndpoint}, {name: "save failure", path: failEndpoint}} {
+		t.Run(route.name, func(t *testing.T) {
+			response := api.request(t, http.MethodPost, route.path, "", issued.Credential)
+			assertError(t, response, http.StatusUnauthorized, "credential_revoked")
+		})
 	}
 }

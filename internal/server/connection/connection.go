@@ -18,6 +18,7 @@ type Deps struct {
 	CheckInterval     time.Duration
 	ConnectionTimeout time.Duration
 	Now               func() time.Time
+	AfterCheck        func(machineID string)
 }
 
 func (deps Deps) normalized() Deps {

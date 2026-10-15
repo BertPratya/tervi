@@ -5,10 +5,15 @@ import (
 	"net/http"
 
 	"github.com/bertpratya/tervi/internal/secret"
+	"github.com/bertpratya/tervi/internal/server/credential"
 	"github.com/bertpratya/tervi/internal/server/httpapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+const changeCredentialQuery = `UPDATE credentials SET status = $2
+	WHERE credential_id = $1 AND status = 'pending' AND expires_at > now()
+	RETURNING machine_id::text, pairing_request_id::text`
 
 func (deps Deps) acknowledge(w http.ResponseWriter, r *http.Request) {
 	deps.changeMachine(w, r, true)
@@ -28,7 +33,19 @@ func (deps Deps) changeMachine(w http.ResponseWriter, r *http.Request, acknowled
 		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_credential")
 		return
 	}
-	credentialHash := secret.Hash(secret.FromString(proof))
+	credentialRow, found, err := credential.Find(r.Context(), deps.Pool, secret.FromString(proof))
+	if err != nil {
+		httpapi.WriteInternalError(w, deps.Logger, kind, err)
+		return
+	}
+	if !found {
+		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_credential")
+		return
+	}
+	if credentialRow.Status == credential.StatusRevoked {
+		httpapi.WriteError(w, http.StatusUnauthorized, "credential_revoked")
+		return
+	}
 	tx, err := deps.Pool.Begin(r.Context())
 	if err != nil {
 		httpapi.WriteInternalError(w, deps.Logger, kind, err)
@@ -36,16 +53,11 @@ func (deps Deps) changeMachine(w http.ResponseWriter, r *http.Request, acknowled
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	var machineID, requestID string
-	var updateErr error
+	nextStatus := credential.StatusFailed
 	if acknowledgment {
-		updateErr = tx.QueryRow(r.Context(), `UPDATE machines SET status = 'active'
-			WHERE credential_hash = $1 AND status = 'pending' AND expires_at > now()
-			RETURNING machine_id::text, pairing_request_id::text`, credentialHash).Scan(&machineID, &requestID)
-	} else {
-		updateErr = tx.QueryRow(r.Context(), `UPDATE machines SET status = 'failed'
-			WHERE credential_hash = $1 AND status = 'pending' AND expires_at > now()
-			RETURNING machine_id::text, pairing_request_id::text`, credentialHash).Scan(&machineID, &requestID)
+		nextStatus = credential.StatusActive
 	}
+	updateErr := tx.QueryRow(r.Context(), changeCredentialQuery, credentialRow.CredentialID, nextStatus).Scan(&machineID, &requestID)
 	if updateErr == nil {
 		var tag pgconn.CommandTag
 		if acknowledgment {
@@ -71,27 +83,28 @@ func (deps Deps) changeMachine(w http.ResponseWriter, r *http.Request, acknowled
 		return
 	}
 	_ = tx.Rollback(r.Context())
-	var status string
-	err = deps.Pool.QueryRow(r.Context(), `SELECT CASE WHEN status = 'pending' AND expires_at <= now()
-		THEN 'expired' ELSE status END FROM machines WHERE credential_hash = $1`, credentialHash).Scan(&status)
-	if errors.Is(err, pgx.ErrNoRows) {
-		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_credential")
-		return
-	}
+	credentialRow, found, err = credential.Find(r.Context(), deps.Pool, secret.FromString(proof))
 	if err != nil {
 		httpapi.WriteInternalError(w, deps.Logger, kind, err)
 		return
 	}
+	if !found {
+		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_credential")
+		return
+	}
 	result := ""
-	switch status {
-	case "active":
+	switch credentialRow.Status {
+	case credential.StatusRevoked:
+		httpapi.WriteError(w, http.StatusUnauthorized, "credential_revoked")
+		return
+	case credential.StatusActive:
 		if acknowledgment {
 			result = "ok"
 		} else {
 			result = "active"
 		}
-	case "failed", "expired":
-		result = status
+	case credential.StatusFailed, credential.StatusExpired:
+		result = credentialRow.Status
 	default:
 		httpapi.WriteInternalError(w, deps.Logger, kind, nil)
 		return

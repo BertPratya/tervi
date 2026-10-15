@@ -18,6 +18,7 @@ import (
 	"github.com/bertpratya/tervi/internal/secret"
 	"github.com/bertpratya/tervi/internal/server/db/dbtest"
 	"github.com/coder/websocket"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -25,12 +26,13 @@ const testCredential = "connection-test-credential-do-not-log"
 const testMachineID = "11111111-1111-4111-8111-111111111111"
 
 type routeFixture struct {
-	pool   *pgxpool.Pool
-	list   *List
-	logger *slog.Logger
-	logs   *bytes.Buffer
-	server *httptest.Server
-	clock  *testClock
+	pool       *pgxpool.Pool
+	list       *List
+	logger     *slog.Logger
+	logs       *bytes.Buffer
+	server     *httptest.Server
+	clock      *testClock
+	afterCheck func(machineID string)
 }
 
 type testClock struct {
@@ -57,10 +59,17 @@ func newRouteFixture(t *testing.T, interval, timeout time.Duration) *routeFixtur
 	logger := slog.New(slog.NewTextHandler(logs, nil))
 	clock := &testClock{now: time.Now()}
 	list := NewList()
+	fixture := &routeFixture{pool: pool, list: list, logger: logger, logs: logs, clock: clock}
 	mux := http.NewServeMux()
-	Register(mux, Deps{Pool: pool, Logger: logger, List: list, CheckInterval: interval, ConnectionTimeout: timeout, Now: clock.Now})
+	Register(mux, Deps{Pool: pool, Logger: logger, List: list, CheckInterval: interval, ConnectionTimeout: timeout, Now: clock.Now,
+		AfterCheck: func(machineID string) {
+			if fixture.afterCheck != nil {
+				fixture.afterCheck(machineID)
+			}
+		},
+	})
 	server := httptest.NewServer(mux)
-	fixture := &routeFixture{pool: pool, list: list, logger: logger, logs: logs, server: server, clock: clock}
+	fixture.server = server
 	fixture.addMachine(t, "active", testCredential)
 	t.Cleanup(func() {
 		list.CloseAll()
@@ -76,29 +85,214 @@ func newRouteFixture(t *testing.T, interval, timeout time.Duration) *routeFixtur
 
 func (f *routeFixture) addMachine(t *testing.T, status, credential string) string {
 	t.Helper()
-	ctx := context.Background()
-	var pairingID string
-	if err := f.pool.QueryRow(ctx, `INSERT INTO pairing_requests
-		(status, polling_key_hash, approval_key_hash, expires_at)
-		VALUES ('waiting_for_approval', $1, $2, now() + interval '10 minutes') RETURNING id::text`,
-		[]byte("polling-"+status+credential), []byte("approval-"+status+credential)).Scan(&pairingID); err != nil {
-		t.Fatalf("insert pairing request: %v", err)
-	}
-	var machineID string
-	query := `INSERT INTO machines
-		(pairing_request_id, display_name, credential_hash, status, expires_at)
-		VALUES ($1, 'test machine', $2, $3, now() + interval '10 minutes') RETURNING machine_id::text`
-	args := []any{pairingID, secret.Hash(secret.FromString(credential)), status}
+	machineID := ""
 	if credential == testCredential {
-		query = `INSERT INTO machines
-			(machine_id, pairing_request_id, display_name, credential_hash, status, expires_at)
-			VALUES ($1, $2, 'test machine', $3, $4, now() + interval '10 minutes') RETURNING machine_id::text`
-		args = []any{testMachineID, pairingID, secret.Hash(secret.FromString(credential)), status}
+		machineID = testMachineID
 	}
-	if err := f.pool.QueryRow(ctx, query, args...).Scan(&machineID); err != nil {
-		t.Fatalf("insert machine: %v", err)
+	gotMachineID, _ := dbtest.InsertMachineCredential(t, f.pool, dbtest.MachineCredential{
+		MachineID: machineID, DisplayName: "test machine", Hash: secret.Hash(secret.FromString(credential)), Status: status,
+	})
+	return gotMachineID
+}
+
+func TestConnectionRefusesRevoked(t *testing.T) {
+	f := newRouteFixture(t, 10*time.Second, 30*time.Second)
+	f.addMachine(t, "revoked", "revoked-credential")
+	f.addMachine(t, "pending", "pending-credential")
+	f.addMachine(t, "failed", "failed-credential")
+	f.addMachine(t, "expired", "expired-credential")
+	if _, err := f.pool.Exec(context.Background(), `UPDATE credentials SET expires_at = now() - interval '1 second'
+		WHERE credential_hash = $1`, secret.Hash(secret.FromString("expired-credential"))); err != nil {
+		t.Fatalf("expire credential fixture: %v", err)
 	}
-	return machineID
+	for _, test := range []struct {
+		proof string
+		want  string
+	}{
+		{proof: "revoked-credential", want: "credential_revoked"},
+		{proof: "unknown-route-credential", want: "unknown_credential"},
+		{proof: "pending-credential", want: "unknown_credential"},
+		{proof: "failed-credential", want: "unknown_credential"},
+		{proof: "expired-credential", want: "unknown_credential"},
+	} {
+		t.Run(test.proof, func(t *testing.T) {
+			_, response, err := f.dial(t, test.proof, nil)
+			if err == nil {
+				t.Fatal("revoked or inactive credential opened a WebSocket")
+			}
+			assertJSONError(t, response, http.StatusUnauthorized, test.want)
+		})
+	}
+}
+
+func TestRevokedWhileOpening(t *testing.T) {
+	f := newRouteFixture(t, 10*time.Second, 30*time.Second)
+	f.afterCheck = func(machineID string) {
+		if machineID != testMachineID {
+			t.Errorf("AfterCheck machine ID = %q, want %q", machineID, testMachineID)
+		}
+		if _, err := f.pool.Exec(context.Background(), `UPDATE credentials SET status = 'revoked', ended_at = now()
+			WHERE machine_id = $1`, machineID); err != nil {
+			t.Errorf("revoke credential in AfterCheck: %v", err)
+		}
+	}
+	conn, _, err := f.dial(t, testCredential, nil)
+	if err != nil {
+		t.Fatalf("complete WebSocket handshake: %v", err)
+	}
+	defer conn.CloseNow()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, _, err = conn.Read(ctx)
+	if websocket.CloseStatus(err) != protocol.CloseRevoked {
+		t.Fatalf("opening connection close status = %d (%v), want %d", websocket.CloseStatus(err), err, protocol.CloseRevoked)
+	}
+	if f.list.Online(testMachineID) {
+		t.Fatal("machine remains Online after its credential was revoked during opening")
+	}
+}
+
+func TestRevokedWhileOpeningDoesNotCloseReplacement(t *testing.T) {
+	f := newRouteFixture(t, 10*time.Second, 30*time.Second)
+	transactionReady := make(chan pgx.Tx, 1)
+	f.afterCheck = func(machineID string) {
+		tx, err := f.pool.Begin(context.Background())
+		if err != nil {
+			t.Errorf("begin credential status transaction: %v", err)
+			return
+		}
+		fail := func(operation string, err error) {
+			t.Errorf("%s: %v", operation, err)
+			_ = tx.Rollback(context.Background())
+		}
+		if _, err := tx.Exec(context.Background(), `LOCK TABLE credentials IN ACCESS EXCLUSIVE MODE`); err != nil {
+			fail("lock credentials table", err)
+			return
+		}
+		if _, err := tx.Exec(context.Background(), `UPDATE credentials SET status = 'revoked', ended_at = now()
+			WHERE machine_id = $1 AND credential_hash = $2`, machineID, secret.Hash(secret.FromString(testCredential))); err != nil {
+			fail("revoke opening credential", err)
+			return
+		}
+		var replacementRequestID string
+		if err := tx.QueryRow(context.Background(), `INSERT INTO pairing_requests
+			(status, polling_key_hash, approval_key_hash, expires_at)
+			VALUES ('paired', $1, $2, now() + interval '10 minutes') RETURNING id::text`,
+			[]byte("replacement-polling-key"), []byte("replacement-approval-key")).Scan(&replacementRequestID); err != nil {
+			fail("insert replacement pairing request", err)
+			return
+		}
+		if _, err := tx.Exec(context.Background(), `INSERT INTO credentials
+			(machine_id, pairing_request_id, credential_hash, status, expires_at)
+			VALUES ($1, $2, $3, 'active', now() + interval '10 minutes')`,
+			machineID, replacementRequestID, secret.Hash(secret.FromString("replacement-credential"))); err != nil {
+			fail("insert replacement active credential", err)
+			return
+		}
+		transactionReady <- tx
+	}
+	conn, _, err := f.dial(t, testCredential, nil)
+	if err != nil {
+		t.Fatalf("complete opening WebSocket handshake: %v", err)
+	}
+	defer conn.CloseNow()
+	var tx pgx.Tx
+	select {
+	case tx = <-transactionReady:
+	case <-time.After(3 * time.Second):
+		t.Fatal("credential status transaction was not ready")
+	}
+	defer tx.Rollback(context.Background())
+	deadline := time.Now().Add(time.Second)
+	for !f.list.Online(testMachineID) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !f.list.Online(testMachineID) {
+		t.Fatal("opening connection was not added while its credential status read was blocked")
+	}
+
+	replacement := &testSocket{}
+	if !f.list.add(testMachineID, replacement) {
+		t.Fatal("replacement connection was rejected before shutdown")
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit credential replacement: %v", err)
+	}
+
+	deadline = time.Now().Add(time.Second)
+	lastSeenSet := false
+	for time.Now().Before(deadline) {
+		if err := f.pool.QueryRow(context.Background(), `SELECT last_seen_at IS NOT NULL FROM machines WHERE machine_id = $1`, testMachineID).Scan(&lastSeenSet); err != nil {
+			t.Fatalf("read last_seen_at after opening route: %v", err)
+		}
+		if lastSeenSet {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !lastSeenSet {
+		t.Fatal("opening route did not finish its last_seen_at write")
+	}
+	if !f.list.Online(testMachineID) {
+		t.Fatal("revoked opening connection closed its replacement")
+	}
+	replacement.mu.Lock()
+	defer replacement.mu.Unlock()
+	for _, code := range replacement.codes {
+		if code == websocket.StatusCode(protocol.CloseRevoked) {
+			t.Fatal("revoked opening connection sent 4002 to its replacement")
+		}
+	}
+}
+
+func TestCloseRevoked(t *testing.T) {
+	f := newRouteFixture(t, 10*time.Second, 30*time.Second)
+	conn, _, err := f.dial(t, testCredential, nil)
+	if err != nil {
+		t.Fatalf("open WebSocket: %v", err)
+	}
+	_ = readJSON(t, conn)
+	if !f.list.Online(testMachineID) {
+		t.Fatal("machine is not Online after connecting")
+	}
+	f.list.CloseRevoked(testMachineID)
+	if f.list.Online(testMachineID) {
+		t.Fatal("machine remains Online immediately after CloseRevoked")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, _, err = conn.Read(ctx)
+	if websocket.CloseStatus(err) != protocol.CloseRevoked {
+		t.Fatalf("connection close status = %d (%v), want %d", websocket.CloseStatus(err), err, protocol.CloseRevoked)
+	}
+	conn.CloseNow()
+	f.list.CloseRevoked("machine-without-connection")
+}
+
+func TestCloseRevokedTrackedWhileStopping(t *testing.T) {
+	list := NewList()
+	fake := newForceCloseSocket()
+	if !list.add("machine", fake) {
+		t.Fatal("add() rejected the connection before shutdown")
+	}
+	list.CloseRevoked("machine")
+	stopped := make(chan struct{})
+	go func() {
+		list.CloseAll()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+		_ = fake.CloseNow()
+		t.Fatal("CloseAll returned while a revoked close was still pending")
+	case <-time.After(100 * time.Millisecond):
+	}
+	_ = fake.CloseNow()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("CloseAll did not return after revoked close finished")
+	}
 }
 
 func (f *routeFixture) dial(t *testing.T, proof string, headers http.Header) (*websocket.Conn, *http.Response, error) {

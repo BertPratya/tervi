@@ -41,8 +41,8 @@ func (handler listHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		CASE WHEN last_seen_at IS NULL THEN NULL
 			ELSE GREATEST(FLOOR(EXTRACT(EPOCH FROM (now() - last_seen_at))), 0)::bigint
 		END AS last_seen_seconds_ago
-		FROM machines
-		WHERE status = 'active'
+		FROM machines AS m
+		WHERE EXISTS (SELECT 1 FROM credentials AS c WHERE c.machine_id = m.machine_id AND c.status = 'active')
 		ORDER BY display_name, machine_id`)
 	if err != nil {
 		httpapi.WriteInternalError(w, handler.deps.Logger, "list machines", err)

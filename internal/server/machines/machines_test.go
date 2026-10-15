@@ -58,33 +58,10 @@ func newFixture(t *testing.T) *fixture {
 
 func (f *fixture) addMachine(t *testing.T, id, name, osName, osVersion, status, credential string) string {
 	t.Helper()
-	ctx := context.Background()
-	var pairingID string
-	if err := f.pool.QueryRow(ctx, `INSERT INTO pairing_requests
-		(status, polling_key_hash, approval_key_hash, expires_at)
-		VALUES ('paired', $1, $2, now() + interval '10 minutes') RETURNING id::text`,
-		[]byte("polling-"+credential), []byte("approval-"+credential)).Scan(&pairingID); err != nil {
-		t.Fatalf("insert pairing request: %v", err)
-	}
-	var machineID string
 	hash := secret.Hash(secret.FromString(credential))
-	if id == "" {
-		err := f.pool.QueryRow(ctx, `INSERT INTO machines
-			(pairing_request_id, display_name, os_name, os_version, credential_hash, status, expires_at)
-			VALUES ($1, $2, $3, $4, $5, $6, now() + interval '10 minutes') RETURNING machine_id::text`,
-			pairingID, name, osName, osVersion, hash, status).Scan(&machineID)
-		if err != nil {
-			t.Fatalf("insert machine: %v", err)
-		}
-		return machineID
-	}
-	err := f.pool.QueryRow(ctx, `INSERT INTO machines
-			(machine_id, pairing_request_id, display_name, os_name, os_version, credential_hash, status, expires_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, now() + interval '10 minutes') RETURNING machine_id::text`,
-		id, pairingID, name, osName, osVersion, hash, status).Scan(&machineID)
-	if err != nil {
-		t.Fatalf("insert machine: %v", err)
-	}
+	machineID, _ := dbtest.InsertMachineCredential(t, f.pool, dbtest.MachineCredential{
+		MachineID: id, DisplayName: name, OSName: osName, OSVersion: osVersion, Hash: hash, Status: status,
+	})
 	return machineID
 }
 
@@ -139,6 +116,31 @@ func TestListOnlyActiveSorted(t *testing.T) {
 	}
 	if got := answer.Machines[2].DisplayName; got != "zeta" {
 		t.Errorf("third display name = %q, want zeta", got)
+	}
+}
+
+func TestListOnlyMachinesWithActiveCredential(t *testing.T) {
+	f := newFixture(t)
+	ids := make([]string, 0, 4)
+	for _, status := range []string{"revoked", "pending", "failed", "expired"} {
+		ids = append(ids, f.addMachine(t, "", status, "Linux", "1", status, "list-status-"+status))
+	}
+	status, body := f.listMachines(t)
+	if status != http.StatusOK {
+		t.Fatalf("GET /api/v1/machines status = %d, want %d; body = %q", status, http.StatusOK, body)
+	}
+	answer := decodeMachineList(t, body)
+	if len(answer.Machines) != 0 {
+		t.Fatalf("listed %d machines without an active credential, want none", len(answer.Machines))
+	}
+	for _, id := range ids {
+		var count int
+		if err := f.pool.QueryRow(context.Background(), `SELECT count(*) FROM machines WHERE machine_id = $1`, id).Scan(&count); err != nil {
+			t.Fatalf("count retained machine %s: %v", id, err)
+		}
+		if count != 1 {
+			t.Errorf("machine %s row count = %d, want 1", id, count)
+		}
 	}
 }
 

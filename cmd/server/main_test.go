@@ -28,7 +28,7 @@ func TestHealth(t *testing.T) {
 	}
 }
 
-func TestMigrateCommand(t *testing.T) {
+func TestMigrationVersion(t *testing.T) {
 	pool, databaseURL := dbtest.NewEmpty(t)
 	t.Setenv("DATABASE_URL", databaseURL)
 
@@ -36,14 +36,14 @@ func TestMigrateCommand(t *testing.T) {
 	if code := run(context.Background(), []string{"migrate"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("run() = %d; stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
-	const want = "Database is up to date (version 2).\n"
+	const want = "Database is up to date (version 3).\n"
 	if stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
-	for _, table := range []string{"pairing_requests", "machines"} {
+	for _, table := range []string{"pairing_requests", "machines", "credentials"} {
 		var exists bool
 		if err := pool.QueryRow(context.Background(), `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil {
 			t.Fatalf("check table %s: %v", table, err)
@@ -83,7 +83,7 @@ func TestMigrateNeedsOnlyDatabaseURL(t *testing.T) {
 	if code := run(context.Background(), []string{"migrate"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("run() = %d; stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
-	if got, want := stdout.String(), "Database is up to date (version 2).\n"; got != want {
+	if got, want := stdout.String(), "Database is up to date (version 3).\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
