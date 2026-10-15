@@ -83,7 +83,7 @@ As in slice 2, HTTP over `$XDG_RUNTIME_DIR/tervi/daemon.sock`:
 
 | Operation | Called by | Answer |
 | --- | --- | --- |
-| `POST /disconnect` (new) | `tervi disconnect` | Sets `connect` to false and closes the connection with `1000`: `disconnected`, `already_disconnected`, `rejected` or `revoked` (nothing changes, R5, R21), `not_paired`, or `failed` (`state.json` could not be written, with its path) |
+| `POST /disconnect` (new) | `tervi disconnect` | Sets `connect` to false and closes the connection with `1000`: `disconnected`, `already_disconnected`, `rejected` or `revoked` (nothing changes, R5, R21), `not_paired`, `failed` (`state.json` could not be written, with its path), or `unreadable` (a file could not be read, with its path) |
 | `GET /status` | `tervi status` | As in slice 2; `not_connecting` carries the stop reason `credential_revoked` too |
 | `POST /connect` | `tervi connect`, `tervi pair` | As in slice 2, plus `revoked` |
 
