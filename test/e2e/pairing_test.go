@@ -541,13 +541,21 @@ func runLostAcknowledgmentThenFinish(t *testing.T) secretAudit {
 }
 
 type approvalState struct {
-	Status        string `json:"status"`
-	Hostname      string `json:"hostname"`
-	OSName        string `json:"os_name"`
-	OSVersion     string `json:"os_version"`
-	PairingCode   string `json:"pairing_code"`
-	FailureReason string `json:"failure_reason"`
-	DisplayName   string `json:"display_name"`
+	Status         string               `json:"status"`
+	Hostname       string               `json:"hostname"`
+	OSName         string               `json:"os_name"`
+	OSVersion      string               `json:"os_version"`
+	PairingCode    string               `json:"pairing_code"`
+	FailureReason  string               `json:"failure_reason"`
+	DisplayName    string               `json:"display_name"`
+	EarlierMachine *earlierMachineState `json:"earlier_machine"`
+	rawResponse    string
+}
+
+type earlierMachineState struct {
+	DisplayName string     `json:"display_name"`
+	StillPaired *bool      `json:"still_paired"`
+	UnpairedAt  *time.Time `json:"unpaired_at"`
 }
 
 func approvalRequest(t *testing.T, serverURL, key, method, suffix string) approvalState {
@@ -566,10 +574,15 @@ func approvalRequest(t *testing.T, serverURL, key, method, suffix string) approv
 		body, _ := io.ReadAll(response.Body)
 		t.Fatalf("approval API status = %d, want 200; body=%s", response.StatusCode, body)
 	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read approval API response: %v", err)
+	}
 	var state approvalState
-	if err := json.NewDecoder(response.Body).Decode(&state); err != nil {
+	if err := json.Unmarshal(body, &state); err != nil {
 		t.Fatalf("decode approval API response: %v", err)
 	}
+	state.rawResponse = string(body)
 	return state
 }
 
