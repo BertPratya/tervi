@@ -153,8 +153,9 @@ func TestIdentityNeverShown(t *testing.T) {
 	}))
 	defer server.Close()
 
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	env := testEnv(t, &stdout)
+	env.Stderr = &stderr
 	env.StateDir = stateDir
 	env.Store = backend
 	env.Stdin = strings.NewReader(testCode + "\n")
@@ -165,7 +166,8 @@ func TestIdentityNeverShown(t *testing.T) {
 	if startIdentity != testIdentityHash {
 		t.Fatal("start request did not send the derived identity")
 	}
-	if strings.Contains(stdout.String(), testOSMachineID) || strings.Contains(stdout.String(), testIdentityHash) {
+	if strings.Contains(stdout.String(), testOSMachineID) || strings.Contains(stdout.String(), testIdentityHash) ||
+		strings.Contains(stderr.String(), testOSMachineID) || strings.Contains(stderr.String(), testIdentityHash) {
 		t.Fatal("machine ID or identity appeared in worker output")
 	}
 	files, err := os.ReadDir(stateDir)

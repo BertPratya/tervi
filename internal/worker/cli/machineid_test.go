@@ -54,6 +54,16 @@ func TestNoMachineIDQuestion(t *testing.T) {
 			t.Errorf("output=%q stderr=%q start calls=%d", stdout.String(), stderr.String(), flow.startCalls)
 		}
 	})
+	t.Run("yes at end of input", func(t *testing.T) {
+		env, stdout, stderr := machineIDTestEnv(t, strings.NewReader("y"))
+		flow := &machineIDTestFlow{startCode: 1}
+		if code := Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow); code != 1 {
+			t.Fatalf("Run() = %d, want 1 from the start flow", code)
+		}
+		if stdout.String() != machineIDQuestion || stderr.Len() != 0 || flow.startCalls != 1 {
+			t.Errorf("output=%q stderr=%q start calls=%d", stdout.String(), stderr.String(), flow.startCalls)
+		}
+	})
 
 	for _, tc := range []struct {
 		name  string
@@ -153,6 +163,20 @@ func TestQuestionOnlyWhenStarting(t *testing.T) {
 			if tc.prepare != nil {
 				tc.prepare(t, env)
 			}
+			var beforeState []byte
+			var beforeEntry credential.Entry
+			var beforeEntryExists bool
+			if tc.name == "rejected" || tc.name == "revoked" {
+				var err error
+				beforeState, err = os.ReadFile(state.StatePath(env.StateDir))
+				if err != nil {
+					t.Fatal(err)
+				}
+				beforeEntry, beforeEntryExists, err = env.Store.Get()
+				if err != nil || !beforeEntryExists {
+					t.Fatalf("read credential before decline: exists=%t err=%v", beforeEntryExists, err)
+				}
+			}
 			flow := &machineIDTestFlow{hasMachineID: tc.hasID, startCode: 1}
 			_ = Run(context.Background(), []string{"pair", "--server", "http://localhost"}, env, flow)
 			if got := strings.Contains(stdout.String(), "Pair without it? [y/N]"); got != tc.wantPrompt {
@@ -160,6 +184,16 @@ func TestQuestionOnlyWhenStarting(t *testing.T) {
 			}
 			if flow.startCalls != tc.wantStart || flow.finishCalls != tc.wantFinish {
 				t.Errorf("flow calls start=%d finish=%d, want %d and %d", flow.startCalls, flow.finishCalls, tc.wantStart, tc.wantFinish)
+			}
+			if tc.name == "rejected" || tc.name == "revoked" {
+				afterState, err := os.ReadFile(state.StatePath(env.StateDir))
+				if err != nil || !bytes.Equal(afterState, beforeState) {
+					t.Errorf("declining %s changed state: read error=%v", tc.name, err)
+				}
+				afterEntry, afterEntryExists, err := env.Store.Get()
+				if err != nil || !afterEntryExists || !beforeEntryExists || afterEntry.Server != beforeEntry.Server || afterEntry.Credential.Reveal() != beforeEntry.Credential.Reveal() {
+					t.Errorf("declining %s changed the stored credential: exists=%t read error=%v", tc.name, afterEntryExists, err)
+				}
 			}
 		})
 	}

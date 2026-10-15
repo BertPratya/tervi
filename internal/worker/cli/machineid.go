@@ -1,10 +1,6 @@
 package cli
 
-import (
-	"fmt"
-	"io"
-	"strings"
-)
+import "fmt"
 
 func confirmMachineID(env Env, flow Flow, yes bool) bool {
 	if yes || flow == nil || flow.HasMachineID() {
@@ -19,30 +15,10 @@ func confirmMachineID(env Env, flow Flow, yes bool) bool {
 		fmt.Fprintln(env.Stdout, "Nothing was changed.")
 		return false
 	}
-	answer, complete := readMachineIDAnswer(env.Stdin)
-	if complete {
-		answer = strings.TrimSpace(answer)
-		if strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes") {
-			return true
-		}
+	answer, complete := readAnswer(env.Stdin)
+	if complete && isYes(answer) {
+		return true
 	}
 	fmt.Fprintln(env.Stdout, "Nothing was changed.")
 	return false
-}
-
-func readMachineIDAnswer(input io.Reader) (string, bool) {
-	var answer strings.Builder
-	for {
-		var char [1]byte
-		n, err := io.ReadFull(input, char[:])
-		if err != nil {
-			return "", false
-		}
-		if n > 0 {
-			if char[0] == '\n' {
-				return answer.String(), true
-			}
-			answer.WriteByte(char[0])
-		}
-	}
 }

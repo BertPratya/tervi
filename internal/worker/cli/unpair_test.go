@@ -53,6 +53,7 @@ func TestUnpairAsks(t *testing.T) {
 		continueRun bool
 	}{
 		{name: "lowercase y", answer: "y\n", continueRun: true},
+		{name: "lowercase y at end of input", answer: "y", continueRun: true},
 		{name: "title case yes", answer: "Yes\n", continueRun: true},
 		{name: "trimmed yes", answer: " yes \n", continueRun: true},
 		{name: "no", answer: "n\n"},

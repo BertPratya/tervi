@@ -1,13 +1,11 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/bertpratya/tervi/internal/worker/credential"
 	"github.com/bertpratya/tervi/internal/worker/service"
@@ -197,15 +195,8 @@ func pathExists(path string) (bool, error) {
 }
 
 func confirmUnpair(input io.Reader) bool {
-	if input == nil {
-		return false
-	}
-	answer, err := bufio.NewReader(input).ReadString('\n')
-	if err != nil && answer == "" {
-		return false
-	}
-	answer = strings.TrimSpace(answer)
-	return strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes")
+	answer, complete := readAnswer(input)
+	return complete && isYes(answer)
 }
 
 func printUnpairRemovalFailure(output io.Writer, failure *RemoveFailure, entry credential.Entry) int {
