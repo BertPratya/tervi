@@ -38,6 +38,8 @@ func (f *flowRecorder) StartNew(_ context.Context, env Env, server string) int {
 	return f.startCode
 }
 
+func (f *flowRecorder) HasMachineID() bool { return true }
+
 func (f *flowRecorder) FinishEarlier(_ context.Context, env Env, entry credential.Entry) int {
 	f.finishCalls++
 	f.entry = entry
@@ -83,7 +85,7 @@ func usageEnv(t *testing.T) (Env, *countingBackend, *trapReader, *bytes.Buffer, 
 }
 
 func TestUsageErrors(t *testing.T) {
-	usage := "Usage: tervi pair --server <url>\n       tervi connect\n       tervi disconnect\n       tervi unpair [--yes] [--local-only]\n       tervi status\n       tervi logs [-f]\n       tervi daemon\n"
+	usage := "Usage: tervi pair [--yes] --server <url>\n       tervi connect\n       tervi disconnect\n       tervi unpair [--yes] [--local-only]\n       tervi status\n       tervi logs [-f]\n       tervi daemon\n"
 	cases := []struct {
 		name string
 		args []string
@@ -157,7 +159,7 @@ func TestUsageErrors(t *testing.T) {
 }
 
 func TestUsage(t *testing.T) {
-	usage := "Usage: tervi pair --server <url>\n       tervi connect\n       tervi disconnect\n       tervi unpair [--yes] [--local-only]\n       tervi status\n       tervi logs [-f]\n       tervi daemon\n"
+	usage := "Usage: tervi pair [--yes] --server <url>\n       tervi connect\n       tervi disconnect\n       tervi unpair [--yes] [--local-only]\n       tervi status\n       tervi logs [-f]\n       tervi daemon\n"
 	env, _, _, stdout, stderr := usageEnv(t)
 	if code := Run(context.Background(), []string{"daemon", "--unexpected"}, env, nil); code != 2 {
 		t.Fatalf("Run() = %d, want 2", code)

@@ -39,6 +39,7 @@ type connectedFixture struct {
 	connections    *connection.List
 	store          *credential.Store
 	stateDir       string
+	machineIDPath  string
 	serviceDir     string
 	daemonLogs     *safeBuffer
 	daemonStderr   *safeBuffer
@@ -173,7 +174,7 @@ func newConnectedFixture(t *testing.T) *connectedFixture {
 		t.Fatalf("resolve test runtime directory: %v", err)
 	}
 	f := &connectedFixture{
-		t: t, pool: pool, store: store, stateDir: stateDir, serviceDir: t.TempDir(),
+		t: t, pool: pool, store: store, stateDir: stateDir, machineIDPath: writeTestMachineID(t), serviceDir: t.TempDir(),
 		daemonLogs: daemonLogs, daemonStderr: daemonStderr, serverLogs: serverLogs,
 		daemonCtx: daemonCtx, cancelDaemon: cancelDaemon,
 		controlClient: control.Client{RuntimeDir: runtimeDir},
@@ -243,7 +244,7 @@ func (f *connectedFixture) startPair(parent context.Context) *workerRun {
 	f.workerRuns = append(f.workerRuns, run)
 	go func() {
 		run.done <- cli.Run(parent, []string{"pair", "--server", f.serverURL}, env,
-			pair.New(pair.Options{RequestTimeout: 2 * time.Second, PollInterval: 10 * time.Millisecond}))
+			pair.New(pair.Options{RequestTimeout: 2 * time.Second, PollInterval: 10 * time.Millisecond, MachineIDPath: f.machineIDPath}))
 		_ = stdin.Close()
 	}()
 	return run

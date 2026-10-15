@@ -26,18 +26,21 @@ const (
 	maxResponseSize       = 1 << 20
 )
 
-// Options configures request and polling timings. Non-positive durations and a
-// nil clock use the production defaults.
+// Options configures machine ID reading, request and polling timings. An empty
+// MachineIDPath uses /etc/machine-id. Non-positive durations and a nil clock
+// use the production defaults.
 type Options struct {
 	RequestTimeout time.Duration
 	PollInterval   time.Duration
 	Now            func() time.Time
+	MachineIDPath  string
 }
 
 type pairingFlow struct {
 	requestTimeout time.Duration
 	pollInterval   time.Duration
 	now            func() time.Time
+	machineIDPath  string
 	client         *http.Client
 
 	codePhase func(ctx context.Context, env cli.Env, server string, pollingKey secret.Value, triesLeft int, deadline, shownExpiry time.Time) int
@@ -60,6 +63,7 @@ func newFlow(opts Options) *pairingFlow {
 		requestTimeout: opts.RequestTimeout,
 		pollInterval:   opts.PollInterval,
 		now:            opts.Now,
+		machineIDPath:  opts.MachineIDPath,
 		client:         NewHTTPClient(),
 	}
 	f.codePhase = f.runCodePhase
@@ -75,6 +79,9 @@ func (f *pairingFlow) StartNew(ctx context.Context, env cli.Env, server string) 
 	}
 
 	details := computerDetails()
+	if identity, ok := machineIdentity(f.machineIDPath); ok {
+		details.request["identity_hash"] = identity
+	}
 	body, err := json.Marshal(details.request)
 	if err != nil {
 		fmt.Fprintln(output(env), "✗ The pairing request could not be prepared. Run the command again.")
@@ -121,6 +128,11 @@ func (f *pairingFlow) StartNew(ctx context.Context, env cli.Env, server string) 
 	pollingKey := secret.FromString(start.PollingKey)
 	f.printStartScreen(env, server, details, start.ApprovalURL, shownExpiry)
 	return f.poll(ctx, env, server, pollingKey, deadline, shownExpiry)
+}
+
+func (f *pairingFlow) HasMachineID() bool {
+	_, ok := machineIdentity(f.machineIDPath)
+	return ok
 }
 
 func (f *pairingFlow) FinishEarlier(ctx context.Context, env cli.Env, entry credential.Entry) int {
