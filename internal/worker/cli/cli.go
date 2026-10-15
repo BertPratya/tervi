@@ -14,7 +14,7 @@ import (
 	"github.com/bertpratya/tervi/internal/worker/state"
 )
 
-const usageLine = "Usage: tervi pair --server <url>\n       tervi connect\n       tervi status\n       tervi logs [-f]\n       tervi daemon"
+const usageLine = "Usage: tervi pair --server <url>\n       tervi connect\n       tervi disconnect\n       tervi status\n       tervi logs [-f]\n       tervi daemon"
 
 // Env supplies the worker's local inputs, outputs, and state locations.
 type Env struct {
@@ -33,6 +33,7 @@ type Env struct {
 type ControlClient interface {
 	Status(ctx context.Context) (control.StatusAnswer, error)
 	Connect(ctx context.Context) (control.ConnectAnswer, error)
+	Disconnect(ctx context.Context) (control.DisconnectAnswer, error)
 }
 
 func printUnpaired(output io.Writer, server string) {
@@ -121,6 +122,8 @@ func Run(ctx context.Context, args []string, env Env, flow Flow) int {
 			return runDaemon(ctx, env)
 		case "connect":
 			return runConnect(ctx, args[1:], env)
+		case "disconnect":
+			return runDisconnect(ctx, args[1:], env)
 		case "status":
 			return runStatus(ctx, args[1:], env)
 		case "logs":

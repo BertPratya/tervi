@@ -15,6 +15,9 @@ func handler(engine Engine) http.Handler {
 	mux.HandleFunc("POST /connect", func(w http.ResponseWriter, request *http.Request) {
 		writeJSON(w, connectAnswer(engine.Connect(request.Context())))
 	})
+	mux.HandleFunc("POST /disconnect", func(w http.ResponseWriter, request *http.Request) {
+		writeJSON(w, disconnectAnswer(engine.Disconnect(request.Context())))
+	})
 	return mux
 }
 

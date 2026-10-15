@@ -99,6 +99,7 @@ func (d *Daemon) Disconnect(ctx context.Context) DisconnectResult
 | `not_connecting`, `credential_revoked` | nothing | `revoked` |
 | `not_paired` | nothing | `not_paired` |
 | writing `state.json` fails | nothing else changes | `failed`, with the path |
+| reading `credential.json` or `state.json` fails | nothing | `unreadable`, with the path of the file it could not read |
 
 **The run loop after a disconnect.** Today, whenever `serveConnection`
 returns, `Run` logs `✗ Connection lost: <reason>` and waits to reconnect.
@@ -129,7 +130,7 @@ interface, so add a `Disconnect` method to it (only that), or the e2e tests
 stop compiling.
 
 `POST /disconnect` calls the engine's `Disconnect` and answers
-`{"result": "<result>"}`, plus `"path"` for `failed`, with the same
+`{"result": "<result>"}`, plus `"path"` for `failed` and `unreadable`, with the same
 encoding pattern as `ConnectAnswer`. `Client.Disconnect(ctx)` calls it with
 a 40-second timeout (above).
 
@@ -160,6 +161,7 @@ exits with `2`). Steps:
 | Rejected (either way) | `✗ Not connecting: the server doesn't accept this computer's credential.` / `  Pair again with: tervi pair --server <server>` | `0` |
 | Revoked (either way) | `✗ This computer was unpaired on the server.` / `  Pair it again with: tervi pair --server <server>` | `0` |
 | `failed` or a write failure | `✗ Can't write <path>.`, as `tervi connect` prints it in slice 2 | `1` |
+| `unreadable`, or a read failure with no daemon | `✗ Can't read <path>.`, as slice 2 prints an unreadable file | `1` |
 | `WithLock` failed for another reason (opening `daemon.lock`, creating the runtime folder) | `✗ Can't reach tervi in the background: <reason>`; nothing written | `1` |
 | The daemon answered `not_paired` | `This computer isn't paired. Pair it with: tervi pair --server <url>` (R6) | `1` |
 | The socket failed after the lock was busy | as `tervi status` reports a socket failure | `1` |

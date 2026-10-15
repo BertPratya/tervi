@@ -63,13 +63,16 @@ type statusResult struct {
 }
 
 type commandControl struct {
-	statuses     []statusResult
-	statusCalls  int
-	statusFunc   func(context.Context) (control.StatusAnswer, error)
-	connect      control.ConnectAnswer
-	connectErr   error
-	connectCalls int
-	connectFunc  func(context.Context) (control.ConnectAnswer, error)
+	statuses        []statusResult
+	statusCalls     int
+	statusFunc      func(context.Context) (control.StatusAnswer, error)
+	connect         control.ConnectAnswer
+	connectErr      error
+	connectCalls    int
+	connectFunc     func(context.Context) (control.ConnectAnswer, error)
+	disconnect      control.DisconnectAnswer
+	disconnectErr   error
+	disconnectCalls int
 }
 
 func (c *commandControl) Status(ctx context.Context) (control.StatusAnswer, error) {
@@ -91,6 +94,11 @@ func (c *commandControl) Connect(ctx context.Context) (control.ConnectAnswer, er
 		return c.connectFunc(ctx)
 	}
 	return c.connect, c.connectErr
+}
+
+func (c *commandControl) Disconnect(context.Context) (control.DisconnectAnswer, error) {
+	c.disconnectCalls++
+	return c.disconnect, c.disconnectErr
 }
 
 func commandEnv(t *testing.T, runner *commandRunner, client *commandControl, paired bool) (Env, *credential.MemoryBackend, *bytes.Buffer, *bytes.Buffer) {

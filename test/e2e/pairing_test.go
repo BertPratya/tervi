@@ -273,6 +273,25 @@ func (client fixtureControlClient) Connect(context.Context) (control.ConnectAnsw
 	return control.ConnectAnswer{Result: "connected"}, nil
 }
 
+func (client fixtureControlClient) Disconnect(context.Context) (control.DisconnectAnswer, error) {
+	record, exists, err := workerstate.ReadState(client.stateDir)
+	if err != nil {
+		return control.DisconnectAnswer{}, fmt.Errorf("read state for fake daemon: %w", err)
+	}
+	if !exists {
+		return control.DisconnectAnswer{Result: "not_paired"}, nil
+	}
+	if !record.Connect {
+		return control.DisconnectAnswer{Result: "already_disconnected"}, nil
+	}
+	record.Connect = false
+	record.StopReason = nil
+	if err := workerstate.WriteState(client.stateDir, record); err != nil {
+		return control.DisconnectAnswer{}, fmt.Errorf("write state for fake daemon: %w", err)
+	}
+	return control.DisconnectAnswer{Result: "disconnected"}, nil
+}
+
 func TestPairingHappyPath(t *testing.T) {
 	audit := runHappyPath(t)
 	assertNoSecretLeaks(t, audit)

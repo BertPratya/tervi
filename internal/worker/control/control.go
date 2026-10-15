@@ -25,12 +25,14 @@ var (
 const statusTimeout = 5 * time.Second
 
 var connectTimeout = 35 * time.Second
+var disconnectTimeout = 40 * time.Second
 
 // Engine is the daemon interface exposed through the control socket.
 type Engine interface {
 	Run(context.Context) error
 	Status() daemon.Status
 	Connect(context.Context) daemon.ConnectResult
+	Disconnect(context.Context) daemon.DisconnectResult
 }
 
 // StatusAnswer is the JSON representation returned by GET /status.
@@ -51,6 +53,12 @@ type ConnectAnswer struct {
 	Path      string
 }
 
+// DisconnectAnswer is the JSON representation returned by POST /disconnect.
+type DisconnectAnswer struct {
+	Result string
+	Path   string
+}
+
 // statusAnswerJSON is the single definition of status answer field names used
 // by both encoding and decoding.
 type statusAnswerJSON struct {
@@ -69,6 +77,11 @@ type connectAnswerJSON struct {
 	Result    string   `json:"result"`
 	LastError **string `json:"last_error,omitempty"`
 	Path      *string  `json:"path,omitempty"`
+}
+
+type disconnectAnswerJSON struct {
+	Result string  `json:"result"`
+	Path   *string `json:"path,omitempty"`
 }
 
 // RuntimeDir returns the tervi directory below this session's runtime folder.
@@ -174,6 +187,34 @@ func (answer *ConnectAnswer) UnmarshalJSON(data []byte) error {
 	if wire.LastError != nil {
 		answer.LastError = *wire.LastError
 	}
+	if wire.Path != nil {
+		answer.Path = *wire.Path
+	}
+	return nil
+}
+
+func disconnectAnswer(result daemon.DisconnectResult) DisconnectAnswer {
+	answer := DisconnectAnswer{Result: result.Result}
+	if result.Result == daemon.ResultFailed || result.Result == daemon.ResultUnreadable {
+		answer.Path = result.Path
+	}
+	return answer
+}
+
+func (answer DisconnectAnswer) MarshalJSON() ([]byte, error) {
+	wire := disconnectAnswerJSON{Result: answer.Result}
+	if answer.Result == daemon.ResultFailed || answer.Result == daemon.ResultUnreadable {
+		wire.Path = &answer.Path
+	}
+	return json.Marshal(wire)
+}
+
+func (answer *DisconnectAnswer) UnmarshalJSON(data []byte) error {
+	var wire disconnectAnswerJSON
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*answer = DisconnectAnswer{Result: wire.Result}
 	if wire.Path != nil {
 		answer.Path = *wire.Path
 	}
