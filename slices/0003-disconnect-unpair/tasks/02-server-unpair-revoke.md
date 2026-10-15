@@ -115,11 +115,18 @@ Revoke bert-desktop? It stops working at once and must be paired again to come b
   next refresh (R18); a `404` means it is already gone.
 - On any other answer, or no answer, the row stays and the failure line
   (the existing `aria-live` line) shows `Couldn't revoke <name>. Try again.`
-  (R18) until the next refresh finishes; after that the line follows the
-  refresh as today (empty, or `Can't reach the server. Trying again…`).
+  (R18) until a refresh sent after the failed answer finishes; after that
+  the line follows the refresh as today (empty, or
+  `Can't reach the server. Trying again…`).
 - A refresh that arrives while the dialog is open does not close it. If the
   machine has disappeared from the list meanwhile, Revoke still sends the
-  request, and the answer is handled as above.
+  request, and the answer is handled as above. A failed answer never adds
+  a machine back to the list.
+- A refresh can already be waiting for its answer when a revoke answers.
+  Its list was read before the revoke, so when it arrives:
+  - machines revoked with `204` or `404` while it waited are dropped from
+    it, so a removed row does not come back (R18);
+  - if a revoke failed while it waited, the failure line stays, as above.
 
 `machines-view.js` gets the logic as pure functions, tested with
 `node --test` like the rest of the view, so `machines.js` only wires them to
@@ -130,14 +137,22 @@ the page:
 export function revokeQuestion(machine) { … }
 // The page state after a revoke answer: status is the HTTP status, or
 // null when no answer came. 204 and 404 drop the machine from
-// state.machines; anything else keeps it and sets state.revokeFailure to
-// the machine's name, which view() shows as the failure line.
+// state.machines; anything else leaves state.machines as it is and sets
+// state.revokeFailure to the machine's name, which view() shows as the
+// failure line.
 export function afterRevoke(state, machineId, status) { … }
+// The page state after a refresh answer. revokedSince holds the IDs of the
+// machines revoked with 204 or 404 while that refresh waited; failedSince
+// is true when a revoke failed while it waited. answerMachines (null when
+// the refresh failed) replaces state.machines, without the machines in
+// revokedSince. state.revokeFailure is cleared unless failedSince is true.
+export function afterRefresh(state, answerMachines, revokedSince, failedSince) { … }
 ```
 
 `view()` shows `Couldn't revoke <name>. Try again.` while
-`state.revokeFailure` is set; `machines.js` clears it when the next refresh
-finishes.
+`state.revokeFailure` is set. `machines.js` keeps `revokedSince` and
+`failedSince` for the refresh that is waiting, and resets them when it
+sends the next refresh.
 
 ### Contract
 
@@ -170,7 +185,8 @@ Remove `x-planned: true` from `unpairMachine` and `revokeMachine` in
 | `TestRevokeNeedsNoProof` — the route works without any `Authorization` or `Origin` header | R30 |
 | `TestRevokeDatabaseFailure` and `TestUnpairDatabaseFailure` — `500 internal_error`, with the kinds `revoke machine` and `unpair machine` in the log | R18, R11 |
 | `machines-view.test.js` — the question text with a name, a name with `<b>` shown as text, the failure text | R17 |
-| `machines-view.test.js` — `afterRevoke`: `204` and `404` drop the machine and set no failure; `500` and `null` keep it and set the failure line; the next refresh's state clears it | R18 |
+| `machines-view.test.js` — `afterRevoke`: `204` and `404` drop the machine and set no failure; `500` and `null` leave the list unchanged (also when the machine is no longer in it) and set the failure line | R18 |
+| `machines-view.test.js` — `afterRefresh`: the answer replaces the list without the machines in `revokedSince`, in the answer's order; the failure line is cleared, or kept when `failedSince` is true; a failed refresh (`null`) keeps the list | R18 |
 | `TestMachinesPageHasRevokeDialog` — the page has the dialog outside the part that refreshes, with **Revoke** and **Cancel** | R17 |
 | Contract test — `unpairMachine` and `revokeMachine` as above; no `x-planned` left on them | contract |
 
