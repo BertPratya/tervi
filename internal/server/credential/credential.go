@@ -15,9 +15,6 @@ const (
 	StatusFailed  = "failed"
 	StatusExpired = "expired"
 	StatusRevoked = "revoked"
-
-	ErrorUnknownCredential = "unknown_credential"
-	ErrorCredentialRevoked = "credential_revoked"
 )
 
 // HasActiveSQL returns the EXISTS predicate for a machine ID column that has

@@ -121,7 +121,7 @@ func runUnpair(ctx context.Context, args []string, env Env) int {
 	if !options.yes {
 		if options.localOnly {
 			fmt.Fprintf(env.Stdout, "This removes this computer's pairing without telling %s.\n", entry.Server)
-			fmt.Fprintf(env.Stdout, "If that server still exists, it will keep listing this computer until you revoke it on its Machines page. Continue? [y/N] ")
+			fmt.Fprint(env.Stdout, "If that server still exists, it will keep listing this computer until you revoke it on its Machines page. Continue? [y/N] ")
 		} else {
 			fmt.Fprintf(env.Stdout, "This removes this computer's pairing with %s.\n", entry.Server)
 			fmt.Fprint(env.Stdout, "tervi will stop running in the background. Continue? [y/N] ")

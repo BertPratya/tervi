@@ -162,15 +162,6 @@ func TestHasActiveSQL(t *testing.T) {
 	}
 }
 
-func TestCredentialErrorCodes(t *testing.T) {
-	if credential.ErrorUnknownCredential != "unknown_credential" {
-		t.Errorf("unknown credential code = %q", credential.ErrorUnknownCredential)
-	}
-	if credential.ErrorCredentialRevoked != "credential_revoked" {
-		t.Errorf("credential revoked code = %q", credential.ErrorCredentialRevoked)
-	}
-}
-
 func insertCredentialMachine(t *testing.T, pool *pgxpool.Pool, proof, status string) (string, string) {
 	t.Helper()
 	machineID, requestID := dbtest.InsertMachineCredential(t, pool, dbtest.MachineCredential{

@@ -3,6 +3,8 @@ package daemon
 import (
 	"io"
 	"net/http"
+
+	"github.com/bertpratya/tervi/internal/protocol"
 )
 
 func credentialRefusal(response *http.Response) string {
@@ -14,11 +16,11 @@ func credentialRefusal(response *http.Response) string {
 	if err != nil {
 		return ""
 	}
-	if isCredentialErrorBody(body, credentialErrorUnknown) {
-		return credentialErrorUnknown
+	if isCredentialErrorBody(body, protocol.ErrorUnknownCredential) {
+		return protocol.ErrorUnknownCredential
 	}
-	if isCredentialErrorBody(body, credentialErrorRevoked) {
-		return credentialErrorRevoked
+	if isCredentialErrorBody(body, protocol.ErrorCredentialRevoked) {
+		return protocol.ErrorCredentialRevoked
 	}
 	return ""
 }

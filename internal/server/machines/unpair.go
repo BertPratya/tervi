@@ -3,6 +3,7 @@ package machines
 import (
 	"net/http"
 
+	"github.com/bertpratya/tervi/internal/protocol"
 	"github.com/bertpratya/tervi/internal/secret"
 	"github.com/bertpratya/tervi/internal/server/credential"
 	"github.com/bertpratya/tervi/internal/server/httpapi"
@@ -15,7 +16,7 @@ type unpairHandler struct {
 func (handler unpairHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proof, ok := httpapi.BearerProof(r)
 	if !ok {
-		httpapi.WriteError(w, http.StatusUnauthorized, credential.ErrorUnknownCredential)
+		httpapi.WriteError(w, http.StatusUnauthorized, protocol.ErrorUnknownCredential)
 		return
 	}
 
@@ -25,7 +26,7 @@ func (handler unpairHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !found || (row.Status != credential.StatusActive && row.Status != credential.StatusRevoked) {
-		httpapi.WriteError(w, http.StatusUnauthorized, credential.ErrorUnknownCredential)
+		httpapi.WriteError(w, http.StatusUnauthorized, protocol.ErrorUnknownCredential)
 		return
 	}
 	if row.Status == credential.StatusRevoked {
