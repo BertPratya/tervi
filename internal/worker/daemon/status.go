@@ -16,6 +16,7 @@ const (
 	ResultConnected        = "connected"
 	ResultAlreadyConnected = "already_connected"
 	ResultRejected         = "rejected"
+	ResultRevoked          = "revoked"
 	ResultNotPaired        = "not_paired"
 	ResultStillTrying      = "still_trying"
 	ResultFailed           = "failed"

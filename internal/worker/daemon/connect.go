@@ -59,8 +59,13 @@ func (d *Daemon) waitForConnect(ctx context.Context) ConnectResult {
 		if status.State == StateConnected {
 			return ConnectResult{Result: ResultConnected}
 		}
-		if status.State == StateNotConnecting && status.StopReason != nil && *status.StopReason == state.StopReasonCredentialRejected {
-			return ConnectResult{Result: ResultRejected, LastError: status.LastError}
+		if status.State == StateNotConnecting && status.StopReason != nil {
+			switch *status.StopReason {
+			case state.StopReasonCredentialRejected:
+				return ConnectResult{Result: ResultRejected, LastError: status.LastError}
+			case state.StopReasonCredentialRevoked:
+				return ConnectResult{Result: ResultRevoked}
+			}
 		}
 		select {
 		case <-ctx.Done():

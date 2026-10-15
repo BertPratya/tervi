@@ -180,6 +180,9 @@ func handleConnectResult(ctx context.Context, output io.Writer, answer control.C
 	case daemon.ResultRejected:
 		printConnectRejected(output, entry.Server)
 		return 1
+	case daemon.ResultRevoked:
+		printUnpairedStatus(output, entry.Server)
+		return 1
 	case daemon.ResultNotPaired:
 		printConnectNotPaired(output)
 		return 1

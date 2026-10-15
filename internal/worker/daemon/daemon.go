@@ -112,6 +112,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case attemptRejected:
 			d.reject(result.server)
 			try, announce = 1, false
+		case attemptRevoked:
+			d.revoke(result.server)
+			try, announce = 1, false
 		case attemptFailed:
 			wait := reconnectWait(try+1, d.opts.Rand())
 			d.logLine("✗ %s. Next try in %s", result.logError, SecondsText(wholeSeconds(wait)))
@@ -138,6 +141,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 			}
 			if !lost.closeStarted {
 				_ = result.conn.CloseNow()
+			}
+			if lost.revoked {
+				d.revoke(result.server)
+				try, announce = 1, false
+				continue
 			}
 			d.logLine("✗ Connection lost: %s", lost.reason)
 			wait := reconnectWait(1, d.opts.Rand())

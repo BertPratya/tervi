@@ -11,6 +11,9 @@ import (
 // StopReasonCredentialRejected is the persisted reason for a rejected credential.
 const StopReasonCredentialRejected = "credential_rejected"
 
+// StopReasonCredentialRevoked is the persisted reason for a revoked credential.
+const StopReasonCredentialRevoked = "credential_revoked"
+
 // State is the non-secret local record for pairing and connection lifecycle.
 type State struct {
 	MachineID       string  `json:"machine_id"`

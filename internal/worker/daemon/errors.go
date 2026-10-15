@@ -16,15 +16,14 @@ import (
 )
 
 func unknownCredential(response *http.Response) bool {
-	if response == nil || response.StatusCode != http.StatusUnauthorized || response.Body == nil {
-		return false
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(response.Body)
-	return err == nil && isUnknownCredentialBody(body)
+	return credentialRefusal(response) == "unknown_credential"
 }
 
 func isUnknownCredentialBody(body []byte) bool {
+	return isCredentialErrorBody(body, "unknown_credential")
+}
+
+func isCredentialErrorBody(body []byte, expected string) bool {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	opening, err := decoder.Token()
 	if err != nil || opening != json.Delim('{') || !decoder.More() {
@@ -35,7 +34,7 @@ func isUnknownCredentialBody(body []byte) bool {
 		return false
 	}
 	var code string
-	if decoder.Decode(&code) != nil || code != "unknown_credential" || decoder.More() {
+	if decoder.Decode(&code) != nil || code != expected || decoder.More() {
 		return false
 	}
 	closing, err := decoder.Token()
