@@ -14,6 +14,13 @@ const maxRequestBodyBytes = 4 * 1024
 const pairingCredentialJoin = `LEFT JOIN credentials AS c ON c.pairing_request_id = pr.id`
 const pairingMachineJoin = `LEFT JOIN machines AS m ON m.machine_id = c.machine_id`
 
+func displayNameFor(hostname string) string {
+	if hostname == "" {
+		return "unknown"
+	}
+	return hostname
+}
+
 // Deps contains the dependencies used by pairing handlers.
 type Deps struct {
 	Pool      *pgxpool.Pool

@@ -302,25 +302,72 @@ func TestMatchMostRecent(t *testing.T) {
 	api := newTestAPI(t)
 	identity := recognitionIdentityBytes(t)
 	first := seedHistoricalMachine(t, api, "old-name", identity,
-		historicalCredentialFixture{status: "revoked", createdAt: time.Date(2025, time.January, 10, 0, 0, 0, 0, time.UTC)},
-		historicalCredentialFixture{status: "failed", createdAt: time.Date(2026, time.June, 10, 0, 0, 0, 0, time.UTC)},
-	)
-	second := seedHistoricalMachine(t, api, "different-name", identity,
 		historicalCredentialFixture{status: "revoked", createdAt: time.Date(2025, time.March, 10, 0, 0, 0, 0, time.UTC)},
 	)
+	second := seedHistoricalMachine(t, api, "different-name", identity,
+		historicalCredentialFixture{status: "revoked", createdAt: time.Date(2025, time.January, 10, 0, 0, 0, 0, time.UTC)},
+		historicalCredentialFixture{status: "failed", createdAt: time.Date(2026, time.June, 10, 0, 0, 0, 0, time.UTC)},
+		historicalCredentialFixture{status: "expired", createdAt: time.Date(2026, time.July, 10, 0, 0, 0, 0, time.UTC)},
+	)
 	started, _ := startWithIdentity(t, api, "current-renamed-name")
-	if got := matchedMachineID(t, api, started.PollingKey); got != second.machineID {
-		t.Errorf("matched machine = %q, want most recently paired %q (not %q)", got, second.machineID, first.machineID)
+	if got := matchedMachineID(t, api, started.PollingKey); got != first.machineID {
+		t.Errorf("matched machine = %q, want first-inserted, most recently paired %q (not %q)", got, first.machineID, second.machineID)
 	}
 }
 
 func TestMatchDecidedOnce(t *testing.T) {
-	api := newTestAPI(t)
-	started, _ := startWithIdentity(t, api, "first")
-	machine := seedHistoricalMachine(t, api, "paired-later", recognitionIdentityBytes(t), historicalCredentialFixture{status: "active"})
-	if got := matchedMachineID(t, api, started.PollingKey); got != "" {
-		t.Errorf("match changed to %q after pairing started; want no stored match (machine %q)", got, machine.machineID)
-	}
+	t.Run("later machine does not become the match", func(t *testing.T) {
+		api := newTestAPI(t)
+		started, approval := startWithIdentity(t, api, "first")
+		machine := seedHistoricalMachine(t, api, "paired-later", recognitionIdentityBytes(t), historicalCredentialFixture{status: "active"})
+		if got := matchedMachineID(t, api, started.PollingKey); got != "" {
+			t.Errorf("match changed to %q after pairing started; want no stored match (machine %q)", got, machine.machineID)
+		}
+		approvalRec := api.request(t, http.MethodGet, "/api/v1/approvals/current", "", approval)
+		approvalBody := decodeResponse(t, approvalRec)
+		if approvalRec.Code != http.StatusOK {
+			t.Fatalf("read approval after a later machine appeared: status=%d body=%s", approvalRec.Code, approvalRec.Body.String())
+		}
+		if _, present := responseField(t, approvalRec.Body.Bytes(), "earlier_machine"); present {
+			t.Errorf("approval after a later machine appeared included earlier_machine: %s", approvalRec.Body.String())
+		}
+		if approvalBody.EarlierMachine != nil {
+			t.Errorf("approval after a later machine appeared decoded earlier_machine=%+v; want no match", approvalBody.EarlierMachine)
+		}
+		code := acceptAndGetCode(t, api, approval)
+		newCredential := acceptedCredential(t, api, started.PollingKey, code)
+		if newCredential.MachineID == machine.machineID {
+			t.Errorf("credential attached to machine paired later (%q); want a new machine because start had no match", machine.machineID)
+		}
+		if got := machineCount(t, api); got != 2 {
+			t.Errorf("machine count = %d, want 2 (later machine and new unmatched machine)", got)
+		}
+	})
+
+	t.Run("later newer match does not replace the original match", func(t *testing.T) {
+		api := newTestAPI(t)
+		identity := recognitionIdentityBytes(t)
+		earlier := seedHistoricalMachine(t, api, "earlier-a", identity,
+			historicalCredentialFixture{status: "active", createdAt: time.Date(2025, time.January, 10, 0, 0, 0, 0, time.UTC)},
+		)
+		started, approval := startWithIdentity(t, api, "current")
+		later := seedHistoricalMachine(t, api, "later-b", identity,
+			historicalCredentialFixture{status: "active", createdAt: time.Date(2025, time.March, 10, 0, 0, 0, 0, time.UTC)},
+		)
+		if got := matchedMachineID(t, api, started.PollingKey); got != earlier.machineID {
+			t.Fatalf("stored match = %q, want earlier machine A %q (newer machine B is %q)", got, earlier.machineID, later.machineID)
+		}
+		approvalRec := api.request(t, http.MethodGet, "/api/v1/approvals/current", "", approval)
+		approvalBody := decodeResponse(t, approvalRec)
+		if approvalRec.Code != http.StatusOK || approvalBody.EarlierMachine == nil || approvalBody.EarlierMachine.DisplayName != "earlier-a" {
+			t.Fatalf("approval after machine B appeared = %d %s; want earlier machine A", approvalRec.Code, approvalRec.Body.String())
+		}
+		code := acceptAndGetCode(t, api, approval)
+		newCredential := acceptedCredential(t, api, started.PollingKey, code)
+		if newCredential.MachineID != earlier.machineID {
+			t.Errorf("credential attached to %q, want original match A %q (newer B is %q)", newCredential.MachineID, earlier.machineID, later.machineID)
+		}
+	})
 }
 
 func TestApprovalShowsEarlierMachine(t *testing.T) {
@@ -374,6 +421,23 @@ func TestApprovalShowsEarlierMachine(t *testing.T) {
 		rec := api.request(t, http.MethodGet, "/api/v1/approvals/current", "", approval)
 		if _, present := responseField(t, rec.Body.Bytes(), "earlier_machine"); present {
 			t.Errorf("approval without a match included earlier_machine: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("accept answer includes earlier machine", func(t *testing.T) {
+		api := newTestAPI(t)
+		seedHistoricalMachine(t, api, "accepted earlier display", recognitionIdentityBytes(t), historicalCredentialFixture{status: "revoked"})
+		started, approval := startWithIdentity(t, api, "current")
+		rec := api.request(t, http.MethodPost, "/api/v1/approvals/current/accept", "", approval)
+		got := decodeResponse(t, rec)
+		if rec.Code != http.StatusOK || got.Status != "waiting_for_code" || got.EarlierMachine == nil {
+			t.Fatalf("accept answer omitted earlier_machine: status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if got.EarlierMachine.DisplayName != "accepted earlier display" {
+			t.Errorf("accept earlier_machine display_name = %q, want accepted earlier display", got.EarlierMachine.DisplayName)
+		}
+		if matchedMachineID(t, api, started.PollingKey) == "" {
+			t.Fatal("accept fixture did not store a match")
 		}
 	})
 }

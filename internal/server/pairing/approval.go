@@ -71,6 +71,7 @@ func (deps Deps) decide(w http.ResponseWriter, r *http.Request, accept bool) {
 	}
 	approvalHash := secret.Hash(secret.FromString(proof))
 	var row approvalRow
+	var updated int
 	var err error
 	if accept {
 		code, generationErr := secret.NewPairingCode()
@@ -81,18 +82,15 @@ func (deps Deps) decide(w http.ResponseWriter, r *http.Request, accept bool) {
 		err = deps.Pool.QueryRow(r.Context(), `UPDATE pairing_requests
 			SET status = 'waiting_for_code', pairing_code = $2
 			WHERE approval_key_hash = $1 AND status = 'waiting_for_approval' AND expires_at > now()
-			RETURNING status, hostname, os_name, os_version, pairing_code,
-				coalesce(failure_reason, ''), ''`, approvalHash, code.Reveal()).Scan(
-			&row.status, &row.hostname, &row.osName, &row.osVersion, &row.pairingCode, &row.failureReason, &row.displayName)
+			RETURNING 1`, approvalHash, code.Reveal()).Scan(&updated)
 	} else {
 		err = deps.Pool.QueryRow(r.Context(), `UPDATE pairing_requests
 			SET status = 'rejected'
 			WHERE approval_key_hash = $1 AND status = 'waiting_for_approval' AND expires_at > now()
-			RETURNING status, hostname, os_name, os_version, coalesce(pairing_code, ''),
-				coalesce(failure_reason, ''), ''`, approvalHash).Scan(
-			&row.status, &row.hostname, &row.osName, &row.osVersion, &row.pairingCode, &row.failureReason, &row.displayName)
+			RETURNING 1`, approvalHash).Scan(&updated)
 	}
 	if err == nil {
+		// Return the current approval, including any matched machine, after the decision.
 		row, err = queryApproval(r.Context(), deps.Pool, approvalHash)
 		if err != nil {
 			httpapi.WriteInternalError(w, deps.Logger, kind, err)

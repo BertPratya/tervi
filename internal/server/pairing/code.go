@@ -129,15 +129,11 @@ func (deps Deps) issueCredential(w http.ResponseWriter, r *http.Request, request
 		httpapi.WriteInternalError(w, deps.Logger, "submit code", err)
 		return
 	}
-	displayName := hostname
-	if displayName == "" {
-		displayName = "unknown"
-	}
 	machineID := matchedMachineID
 	if machineID == "" {
 		err = tx.QueryRow(r.Context(), `INSERT INTO machines
 			(hostname, os_name, os_version, display_name, identity_hash)
-			VALUES ($1, $2, $3, $4, $5) RETURNING machine_id::text`, hostname, osName, osVersion, displayName, identityHash).Scan(&machineID)
+			VALUES ($1, $2, $3, $4, $5) RETURNING machine_id::text`, hostname, osName, osVersion, displayNameFor(hostname), identityHash).Scan(&machineID)
 		if err != nil {
 			httpapi.WriteInternalError(w, deps.Logger, "submit code", err)
 			return

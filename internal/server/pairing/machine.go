@@ -117,12 +117,8 @@ func (deps Deps) changeMachine(w http.ResponseWriter, r *http.Request, acknowled
 			httpapi.WriteInternalError(w, deps.Logger, kind, err)
 			return
 		}
-		displayName := hostname
-		if displayName == "" {
-			displayName = "unknown"
-		}
 		if _, err := tx.Exec(r.Context(), `UPDATE machines SET hostname = $2, os_name = $3, os_version = $4, display_name = $5
-			WHERE machine_id = $1`, machineID, hostname, osName, osVersion, displayName); err != nil {
+			WHERE machine_id = $1`, machineID, hostname, osName, osVersion, displayNameFor(hostname)); err != nil {
 			httpapi.WriteInternalError(w, deps.Logger, kind, err)
 			return
 		}

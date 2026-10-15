@@ -140,24 +140,31 @@ test('invalid_link gives an error result without polling', () => {
 });
 
 test('matched unpaired machine shows its name, local date, and button results', () => {
-  const actual = view({
-    status: 'waiting_for_approval',
-    hostname: 'new-name',
-    os_name: 'Linux',
-    os_version: '9.1',
-    earlier_machine: {
-      display_name: 'bert-desktop',
-      still_paired: false,
-      unpaired_at: '2026-10-13T09:12:44Z',
-    },
-  });
-  assert.equal(actual.matchHeading, 'This looks like a computer that was paired before:');
-  assert.equal(actual.matchDescription, 'bert-desktop, unpaired on 13 October.');
-  assert.deepEqual(actual.buttons, ['Accept', 'Reject']);
-  assert.deepEqual(actual.buttonResults, [
-    'brings back bert-desktop, with its history',
-    "doesn't pair it",
-  ]);
+  const originalTZ = process.env.TZ;
+  try {
+    process.env.TZ = 'UTC';
+    const actual = view({
+      status: 'waiting_for_approval',
+      hostname: 'new-name',
+      os_name: 'Linux',
+      os_version: '9.1',
+      earlier_machine: {
+        display_name: 'bert-desktop',
+        still_paired: false,
+        unpaired_at: '2026-10-13T09:12:44Z',
+      },
+    });
+    assert.equal(actual.matchHeading, 'This looks like a computer that was paired before:');
+    assert.equal(actual.matchDescription, 'bert-desktop, unpaired on 13 October.');
+    assert.deepEqual(actual.buttons, ['Accept', 'Reject']);
+    assert.deepEqual(actual.buttonResults, [
+      'brings back bert-desktop, with its history',
+      "doesn't pair it",
+    ]);
+  } finally {
+    if (originalTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTZ;
+  }
 });
 
 test('matched date uses browser time zone and fixed English month names', () => {
