@@ -21,6 +21,7 @@ const (
 	CloseTooLarge       = 1009
 	CloseReplaced       = 4000
 	CloseTimeout        = 4001
+	CloseRevoked        = 4002
 )
 
 const DefaultHelloTimeout = 30 * time.Second

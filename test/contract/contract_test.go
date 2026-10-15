@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/bertpratya/tervi/api"
+	"github.com/bertpratya/tervi/internal/secret"
 	"github.com/bertpratya/tervi/internal/server"
 	"github.com/bertpratya/tervi/internal/server/connection"
 	"github.com/bertpratya/tervi/internal/server/db/dbtest"
@@ -202,6 +203,23 @@ func TestServerMatchesContract(t *testing.T) {
 	response = client.call(t, http.MethodPost, "/api/v1/approvals/current/reject", "", unknownApproval, callOptions{})
 	expectStatus(t, response, http.StatusNotFound)
 	expectJSONField(t, response, "error", "invalid_link")
+
+	if _, err := pool.Exec(context.Background(), `UPDATE credentials
+		SET status = 'revoked', ended_at = now() WHERE credential_hash = $1`, secret.Hash(secret.FromString(credentialA))); err != nil {
+		t.Fatalf("revoke contract credential: %v", err)
+	}
+	client.openConnectionRefused(t, credentialA, "credential_revoked")
+	for _, route := range []struct {
+		operation string
+		path      string
+	}{
+		{operation: "acknowledgeMachine", path: "/api/v1/machines/current/acknowledgment"},
+		{operation: "reportSaveFailure", path: "/api/v1/machines/current/save-failure"},
+	} {
+		response := client.call(t, http.MethodPost, route.path, "", bearerHeaders(credentialA), callOptions{})
+		expectStatus(t, response, http.StatusUnauthorized)
+		expectJSONField(t, response, "error", "credential_revoked")
+	}
 
 	// Host filtering runs before route handlers; send every operation through it.
 	for _, request := range []struct {
@@ -475,6 +493,61 @@ func (c *contractClient) openConnection(t *testing.T, credential string) {
 	c.seen[route.Operation.OperationID][http.StatusSwitchingProtocols] = true
 	if err := validateContractResponse(requestInput, http.StatusSwitchingProtocols, response.Header, nil); err != nil {
 		t.Fatalf("openConnection response violates contract: %v", err)
+	}
+}
+
+func (c *contractClient) openConnectionRefused(t *testing.T, credential, wantError string) {
+	t.Helper()
+	path := "/api/v1/machines/current/connection"
+	request, err := http.NewRequest(http.MethodGet, c.server.URL+path, nil)
+	if err != nil {
+		t.Fatalf("build openConnection request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+credential)
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	request.Header.Set("Sec-WebSocket-Version", "13")
+	request.Header.Set("Sec-WebSocket-Key", "dGhpcyBpcyBhIDE2LWJ5dGUga2V5")
+	route, pathParams, err := c.router.FindRoute(request)
+	if err != nil {
+		t.Fatalf("find openConnection route: %v", err)
+	}
+	requestInput := &openapi3filter.RequestValidationInput{
+		Request: request, PathParams: pathParams, QueryParams: request.URL.Query(),
+		Route: route, Options: filterOptions(),
+	}
+	if err := openapi3filter.ValidateRequest(context.Background(), requestInput); err != nil {
+		t.Fatalf("openConnection request violates contract: %v", err)
+	}
+	websocketURL := "ws" + strings.TrimPrefix(c.server.URL, "http") + path
+	_, response, err := websocket.Dial(context.Background(), websocketURL, &websocket.DialOptions{HTTPHeader: bearerHeaders(credential)})
+	if err == nil {
+		t.Fatal("openConnection accepted a revoked credential")
+	}
+	if response == nil {
+		t.Fatalf("openConnection returned no HTTP response: %v", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read openConnection response: %v", err)
+	}
+	if c.seen[route.Operation.OperationID] == nil {
+		c.seen[route.Operation.OperationID] = make(map[int]bool)
+	}
+	c.seen[route.Operation.OperationID][response.StatusCode] = true
+	if err := validateContractResponse(requestInput, response.StatusCode, response.Header, body); err != nil {
+		t.Fatalf("openConnection response violates contract: %v", err)
+	}
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("openConnection status = %d, want %d", response.StatusCode, http.StatusUnauthorized)
+	}
+	var errorBody map[string]string
+	if err := json.Unmarshal(body, &errorBody); err != nil {
+		t.Fatalf("decode openConnection error: %v", err)
+	}
+	if errorBody["error"] != wantError {
+		t.Fatalf("openConnection error = %q, want %q", errorBody["error"], wantError)
 	}
 }
 

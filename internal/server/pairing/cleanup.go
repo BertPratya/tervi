@@ -46,15 +46,15 @@ func cleanupPass(ctx context.Context, pool *pgxpool.Pool) error {
 		WHERE status IN ('waiting_for_approval', 'waiting_for_code') AND expires_at <= now()`); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `WITH expired_machines AS (
-			UPDATE machines SET status = 'expired'
+	if _, err := tx.Exec(ctx, `WITH expired_credentials AS (
+			UPDATE credentials SET status = 'expired'
 			WHERE status = 'pending' AND expires_at <= now()
 			RETURNING pairing_request_id
 		)
 		UPDATE pairing_requests AS pr
 		SET status = 'failed', failure_reason = 'not_confirmed'
-		FROM expired_machines AS em
-		WHERE pr.id = em.pairing_request_id AND pr.status = 'finishing'`); err != nil {
+		FROM expired_credentials AS ec
+		WHERE pr.id = ec.pairing_request_id AND pr.status = 'finishing'`); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

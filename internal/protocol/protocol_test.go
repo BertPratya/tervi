@@ -76,6 +76,7 @@ func TestProtocolConstants(t *testing.T) {
 		1009: CloseTooLarge,
 		4000: CloseReplaced,
 		4001: CloseTimeout,
+		4002: CloseRevoked,
 	}
 	for code, got := range want {
 		if got != int(code) {

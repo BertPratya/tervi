@@ -39,8 +39,8 @@ func TestMigrateConcurrent(t *testing.T) {
 	successes := 0
 	for version := range versions {
 		successes++
-		if version != 2 {
-			t.Errorf("Migrate() version = %d, want 2", version)
+		if version != 3 {
+			t.Errorf("Migrate() version = %d, want 3", version)
 		}
 	}
 	if successes != 2 {
@@ -93,14 +93,14 @@ func TestCheckVersion(t *testing.T) {
 
 	t.Run("newer database", func(t *testing.T) {
 		pool := dbtest.New(t)
-		if _, err := pool.Exec(context.Background(), `INSERT INTO goose_db_version (version_id, is_applied) VALUES (3, true)`); err != nil {
+		if _, err := pool.Exec(context.Background(), `INSERT INTO goose_db_version (version_id, is_applied) VALUES (4, true)`); err != nil {
 			t.Fatalf("insert newer migration version: %v", err)
 		}
 		err := db.CheckVersion(context.Background(), pool)
 		if !errors.Is(err, db.ErrVersionMismatch) {
 			t.Fatalf("CheckVersion() error = %v, want ErrVersionMismatch", err)
 		}
-		if want := "database is at version 3, newer than this program (version 2): use a newer program"; err.Error() != want {
+		if want := "database is at version 4, newer than this program (version 3): use a newer program"; err.Error() != want {
 			t.Fatalf("CheckVersion() error = %q, want %q", err, want)
 		}
 	})

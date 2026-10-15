@@ -19,31 +19,40 @@ func TestMigrateCreatesTables(t *testing.T) {
 	}
 	wantColumns := map[string]map[string]columnSpec{
 		"pairing_requests": {
-			"id":                {dataType: "uuid", isNullable: "NO"},
-			"hostname":          {dataType: "text", isNullable: "NO"},
-			"os_name":           {dataType: "text", isNullable: "NO"},
-			"os_version":        {dataType: "text", isNullable: "NO"},
-			"status":            {dataType: "text", isNullable: "NO"},
-			"polling_key_hash":  {dataType: "bytea", isNullable: "NO"},
-			"approval_key_hash": {dataType: "bytea", isNullable: "NO"},
-			"pairing_code":      {dataType: "text", isNullable: "YES"},
-			"tries_left":        {dataType: "integer", isNullable: "NO"},
-			"failure_reason":    {dataType: "text", isNullable: "YES"},
-			"created_at":        {dataType: "timestamp with time zone", isNullable: "NO"},
-			"expires_at":        {dataType: "timestamp with time zone", isNullable: "NO"},
-		},
-		"machines": {
-			"machine_id":         {dataType: "uuid", isNullable: "NO"},
-			"pairing_request_id": {dataType: "uuid", isNullable: "NO"},
+			"id":                 {dataType: "uuid", isNullable: "NO"},
 			"hostname":           {dataType: "text", isNullable: "NO"},
 			"os_name":            {dataType: "text", isNullable: "NO"},
 			"os_version":         {dataType: "text", isNullable: "NO"},
-			"display_name":       {dataType: "text", isNullable: "NO"},
+			"status":             {dataType: "text", isNullable: "NO"},
+			"polling_key_hash":   {dataType: "bytea", isNullable: "NO"},
+			"approval_key_hash":  {dataType: "bytea", isNullable: "NO"},
+			"pairing_code":       {dataType: "text", isNullable: "YES"},
+			"tries_left":         {dataType: "integer", isNullable: "NO"},
+			"failure_reason":     {dataType: "text", isNullable: "YES"},
+			"created_at":         {dataType: "timestamp with time zone", isNullable: "NO"},
+			"expires_at":         {dataType: "timestamp with time zone", isNullable: "NO"},
+			"identity_hash":      {dataType: "bytea", isNullable: "YES"},
+			"matched_machine_id": {dataType: "uuid", isNullable: "YES"},
+		},
+		"machines": {
+			"machine_id":    {dataType: "uuid", isNullable: "NO"},
+			"hostname":      {dataType: "text", isNullable: "NO"},
+			"os_name":       {dataType: "text", isNullable: "NO"},
+			"os_version":    {dataType: "text", isNullable: "NO"},
+			"display_name":  {dataType: "text", isNullable: "NO"},
+			"created_at":    {dataType: "timestamp with time zone", isNullable: "NO"},
+			"last_seen_at":  {dataType: "timestamp with time zone", isNullable: "YES"},
+			"identity_hash": {dataType: "bytea", isNullable: "YES"},
+		},
+		"credentials": {
+			"credential_id":      {dataType: "uuid", isNullable: "NO"},
+			"machine_id":         {dataType: "uuid", isNullable: "NO"},
+			"pairing_request_id": {dataType: "uuid", isNullable: "NO"},
 			"credential_hash":    {dataType: "bytea", isNullable: "NO"},
 			"status":             {dataType: "text", isNullable: "NO"},
 			"created_at":         {dataType: "timestamp with time zone", isNullable: "NO"},
 			"expires_at":         {dataType: "timestamp with time zone", isNullable: "NO"},
-			"last_seen_at":       {dataType: "timestamp with time zone", isNullable: "YES"},
+			"ended_at":           {dataType: "timestamp with time zone", isNullable: "YES"},
 		},
 	}
 	for table, columns := range wantColumns {
@@ -85,13 +94,21 @@ func TestHashColumnsAreUnique(t *testing.T) {
 	pool := dbtest.New(t)
 	ctx := context.Background()
 	firstID := insertRequest(t, pool, []byte("polling-one"), []byte("approval-one"))
-	if _, err := pool.Exec(ctx, `INSERT INTO machines
-		(pairing_request_id, display_name, credential_hash, status, expires_at)
-		VALUES ($1, 'first', $2, 'active', now() + interval '10 minutes')`, firstID, []byte("credential-one")); err != nil {
+	var firstMachineID string
+	if err := pool.QueryRow(ctx, `INSERT INTO machines (display_name) VALUES ('first') RETURNING machine_id::text`).Scan(&firstMachineID); err != nil {
 		t.Fatalf("insert initial machine: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO credentials
+		(machine_id, pairing_request_id, credential_hash, status, expires_at)
+		VALUES ($1, $2, $3, 'active', now() + interval '10 minutes')`, firstMachineID, firstID, []byte("credential-one")); err != nil {
+		t.Fatalf("insert initial credential: %v", err)
 	}
 
 	secondID := insertRequest(t, pool, []byte("polling-two"), []byte("approval-two"))
+	var secondMachineID string
+	if err := pool.QueryRow(ctx, `INSERT INTO machines (display_name) VALUES ('second') RETURNING machine_id::text`).Scan(&secondMachineID); err != nil {
+		t.Fatalf("insert second machine: %v", err)
+	}
 	checks := []struct {
 		name  string
 		query string
@@ -111,9 +128,9 @@ func TestHashColumnsAreUnique(t *testing.T) {
 		},
 		{
 			name: "credential hash",
-			query: `INSERT INTO machines (pairing_request_id, display_name, credential_hash, status, expires_at)
-				VALUES ($1, 'second', $2, 'active', now() + interval '10 minutes')`,
-			args: []any{secondID, []byte("credential-one")},
+			query: `INSERT INTO credentials (machine_id, pairing_request_id, credential_hash, status, expires_at)
+				VALUES ($1, $2, $3, 'active', now() + interval '10 minutes')`,
+			args: []any{secondMachineID, secondID, []byte("credential-one")},
 		},
 	}
 	for _, check := range checks {
@@ -127,6 +144,39 @@ func TestHashColumnsAreUnique(t *testing.T) {
 	}
 }
 
+func TestMigrationOneActivePerMachine(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	requestID := insertRequest(t, pool, []byte("active-machine-poll"), []byte("active-machine-approval"))
+	var machineID string
+	if err := pool.QueryRow(ctx, `INSERT INTO machines (display_name)
+		VALUES ('one active credential machine') RETURNING machine_id::text`).Scan(&machineID); err != nil {
+		t.Fatalf("insert machine: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO credentials
+		(machine_id, pairing_request_id, credential_hash, status, expires_at)
+		VALUES ($1, $2, $3, 'active', now() + interval '10 minutes')`, machineID, requestID, []byte("first-active-hash")); err != nil {
+		t.Fatalf("insert first active credential: %v", err)
+	}
+	secondRequestID := insertRequest(t, pool, []byte("active-machine-poll-2"), []byte("active-machine-approval-2"))
+	_, err := pool.Exec(ctx, `INSERT INTO credentials
+		(machine_id, pairing_request_id, credential_hash, status, expires_at)
+		VALUES ($1, $2, $3, 'active', now() + interval '10 minutes')`, machineID, secondRequestID, []byte("second-active-hash"))
+	if err == nil {
+		t.Fatal("database accepted a second active credential for one machine")
+	}
+	assertPostgresErrorCode(t, err, "23505")
+
+	thirdRequestID := insertRequest(t, pool, []byte("revoked-machine-poll"), []byte("revoked-machine-approval"))
+	_, err = pool.Exec(ctx, `INSERT INTO credentials
+		(machine_id, pairing_request_id, credential_hash, status, expires_at)
+		VALUES ($1, $2, $3, 'revoked', now() + interval '10 minutes')`, machineID, thirdRequestID, []byte("invalid-revoked-hash"))
+	if err == nil {
+		t.Fatal("database accepted a revoked credential without ended_at")
+	}
+	assertPostgresErrorCode(t, err, "23514")
+}
+
 func TestStatusCheck(t *testing.T) {
 	pool := dbtest.New(t)
 	ctx := context.Background()
@@ -138,11 +188,15 @@ func TestStatusCheck(t *testing.T) {
 	}
 	assertPostgresErrorCode(t, err, "23514")
 	id := insertRequest(t, pool, []byte("p2"), []byte("a2"))
-	_, err = pool.Exec(ctx, `INSERT INTO machines
-		(pairing_request_id, display_name, credential_hash, status, expires_at)
-		VALUES ($1, 'machine', $2, 'impossible', now() + interval '10 minutes')`, id, []byte("credential"))
+	var machineID string
+	if err := pool.QueryRow(ctx, `INSERT INTO machines (display_name) VALUES ('machine') RETURNING machine_id::text`).Scan(&machineID); err != nil {
+		t.Fatalf("insert machine: %v", err)
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO credentials
+		(machine_id, pairing_request_id, credential_hash, status, expires_at)
+		VALUES ($1, $2, $3, 'impossible', now() + interval '10 minutes')`, machineID, id, []byte("credential"))
 	if err == nil {
-		t.Fatal("machines accepted an unknown status")
+		t.Fatal("credentials accepted an unknown status")
 	}
 	assertPostgresErrorCode(t, err, "23514")
 }

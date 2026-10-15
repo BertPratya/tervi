@@ -122,10 +122,10 @@ func TestNoSecretsEndToEnd(t *testing.T) {
 func rejectAndPairAgain(t *testing.T, f *connectedFixture) (livePair, livePair) {
 	t.Helper()
 	oldPair := pairLiveMachine(t, f)
-	if tag, err := f.pool.Exec(context.Background(), `UPDATE machines SET status = 'failed' WHERE machine_id = $1`, oldPair.machineID); err != nil {
-		t.Fatalf("reject paired machine: %v", err)
+	if tag, err := f.pool.Exec(context.Background(), `UPDATE credentials SET status = 'failed' WHERE machine_id = $1`, oldPair.machineID); err != nil {
+		t.Fatalf("reject paired credential: %v", err)
 	} else if tag.RowsAffected() != 1 {
-		t.Fatalf("rejected %d machine rows, want 1", tag.RowsAffected())
+		t.Fatalf("rejected %d credential rows, want 1", tag.RowsAffected())
 	}
 	f.stopServer()
 	waitFor(t, f.daemonLogs, "✗ Connection lost: the server is stopping", connectionWait)

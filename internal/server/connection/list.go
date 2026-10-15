@@ -136,6 +136,23 @@ func (list *List) OnlineIDs() map[string]bool {
 	return ids
 }
 
+// CloseRevoked closes the machine's connection with close code 4002, if it has
+// one, and removes it from the Online list immediately.
+func (list *List) CloseRevoked(machineID string) {
+	list.mu.Lock()
+	current, exists := list.entries[machineID]
+	if !exists {
+		list.mu.Unlock()
+		return
+	}
+	delete(list.entries, machineID)
+	list.closePending[current.conn] = struct{}{}
+	list.notifyLocked()
+	list.mu.Unlock()
+
+	list.finishTrackedClose(current.conn, websocket.StatusCode(protocol.CloseRevoked), "credential revoked")
+}
+
 // CloseAll permanently closes the list, closes every stored connection, and
 // waits up to five seconds for tracked handlers to finish their final writes.
 func (list *List) CloseAll() {
