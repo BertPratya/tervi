@@ -54,6 +54,9 @@ type Service struct{ options Options }
 // New creates a service manager with the supplied command runner and paths.
 func New(options Options) *Service { return &Service{options: options} }
 
+// ServiceFilePath returns the path to the user's tervi service file.
+func ServiceFilePath(dir string) string { return filepath.Join(dir, serviceFile) }
+
 // EnsureRunning writes or refreshes the systemd user service, enables and
 // starts it, and waits for the daemon control socket to answer. It reports
 // whether it restarted the daemon after rewriting the service file or started
@@ -120,7 +123,7 @@ func (service *Service) EnsureRunning(ctx context.Context) (bool, error) {
 
 func enableLinger(ctx context.Context, runner Runner) error {
 	output, err := runner.Run(ctx, "loginctl", "enable-linger")
-	return removalCommandError(output, err)
+	return commandError(output, err)
 }
 
 func (service *Service) waitForDaemon(ctx context.Context, options Options) error {
@@ -166,7 +169,17 @@ func (service *Service) waitForDaemon(ctx context.Context, options Options) erro
 func runSystemctl(ctx context.Context, runner Runner, args ...string) error {
 	commandArgs := append([]string{"--user"}, args...)
 	output, err := runner.Run(ctx, "systemctl", commandArgs...)
-	return removalCommandError(output, err)
+	return commandError(output, err)
+}
+
+func commandError(output string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if message := strings.TrimSpace(output); message != "" {
+		return errors.New(message)
+	}
+	return err
 }
 
 func serviceContents(programPath string) []byte {

@@ -79,7 +79,7 @@ func (worker *unpairer) RemoveLocal(ctx context.Context, env cli.Env) *cli.Remov
 	}
 	manager := service.New(service.Options{Runner: env.Runner, ServiceDir: env.ServiceDir})
 	if err := manager.Stop(ctx); err != nil {
-		return &cli.RemoveFailure{Background: true, Reason: removalReason(err)}
+		return &cli.RemoveFailure{Background: true, Reason: err.Error()}
 	}
 	runtimeDir, err := control.RuntimeDir()
 	if err != nil {
@@ -131,7 +131,7 @@ func removeLocked(ctx context.Context, manager *service.Service, env cli.Env) *c
 			}
 			return &cli.RemoveFailure{Path: fileFailure.Path, Reason: reason}
 		}
-		return &cli.RemoveFailure{Background: true, Reason: removalReason(err)}
+		return &cli.RemoveFailure{Background: true, Reason: err.Error()}
 	}
 	if env.Store == nil {
 		return &cli.RemoveFailure{Path: credential.Path(env.StateDir), Reason: "credential store is unavailable"}

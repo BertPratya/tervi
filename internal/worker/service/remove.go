@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -24,9 +23,6 @@ func (err *FileRemovalError) Error() string {
 	return message
 }
 func (err *FileRemovalError) Unwrap() error { return err.Err }
-
-// ServiceFilePath returns the path to the user's tervi service file.
-func ServiceFilePath(dir string) string { return filepath.Join(dir, serviceFile) }
 
 // Stop stops the service and keeps it from starting at boot. A service that is
 // already gone counts as stopped.
@@ -48,7 +44,7 @@ func (manager *Service) Stop(ctx context.Context) error {
 	_, statErr := os.Lstat(path)
 	if statErr == nil {
 		output, err := options.Runner.Run(ctx, "systemctl", "--user", "disable", "--now", serviceName)
-		return removalCommandError(output, err)
+		return commandError(output, err)
 	}
 	if !errors.Is(statErr, os.ErrNotExist) {
 		return fmt.Errorf("inspect %s: %w", path, statErr)
@@ -61,7 +57,7 @@ func (manager *Service) Stop(ctx context.Context) error {
 	if errors.As(err, &coded) && coded.ExitCode() == 5 {
 		return nil
 	}
-	return removalCommandError(output, err)
+	return commandError(output, err)
 }
 
 // RemoveFile removes the service file and reloads systemd. A file that is
@@ -88,7 +84,7 @@ func (manager *Service) RemoveFile(ctx context.Context) error {
 		removeErr = &FileRemovalError{Path: path, Err: removeErr}
 	}
 	output, reloadErr := options.Runner.Run(ctx, "systemctl", "--user", "daemon-reload")
-	reloadErr = removalCommandError(output, reloadErr)
+	reloadErr = commandError(output, reloadErr)
 	if removeErr != nil {
 		var fileFailure *FileRemovalError
 		if reloadErr != nil && errors.As(removeErr, &fileFailure) {
@@ -112,7 +108,7 @@ func LingerOn(ctx context.Context, runner Runner) (bool, error) {
 	}
 	output, err := runner.Run(ctx, "loginctl", "show-user", "--property=Linger", "--value")
 	if err != nil {
-		return false, removalCommandError(output, err)
+		return false, commandError(output, err)
 	}
 	switch strings.TrimSpace(output) {
 	case "yes":
@@ -122,14 +118,4 @@ func LingerOn(ctx context.Context, runner Runner) (bool, error) {
 	default:
 		return false, errors.New("loginctl returned an unexpected Linger value")
 	}
-}
-
-func removalCommandError(output string, err error) error {
-	if err == nil {
-		return nil
-	}
-	if message := strings.TrimSpace(output); message != "" {
-		return errors.New(message)
-	}
-	return err
 }

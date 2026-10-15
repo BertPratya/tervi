@@ -642,6 +642,48 @@ func TestUnpairServiceFailure(t *testing.T) {
 	}
 }
 
+func TestUnpairBackgroundFailuresKeepPath(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		call  string
+		path  string
+		setup func(*testing.T, *unpairFixture)
+	}{
+		{
+			name: "stop",
+			call: "systemctl --user disable --now tervi",
+			path: "/var/lib/tervi/systemctl-stop",
+			setup: func(t *testing.T, fixture *unpairFixture) {
+				fixture.serviceFile(t)
+			},
+		},
+		{
+			name: "daemon-reload",
+			call: "systemctl --user daemon-reload",
+			path: "/var/lib/tervi/systemctl-reload",
+			setup: func(t *testing.T, fixture *unpairFixture) {
+				fixture.serviceFile(t)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newUnpairFixture(t, nil)
+			fixture.pair(t, true, true)
+			tc.setup(t, fixture)
+			commandErr := &os.PathError{Op: "open", Path: tc.path, Err: syscall.EACCES}
+			fixture.runner.fail = map[string]error{tc.call: commandErr}
+
+			want := "✗ Can't stop tervi in the background: " + commandErr.Error() + "\n  Finish with: tervi unpair --local-only\n"
+			if code := fixture.run("unpair", "--yes"); code != 1 || fixture.stdout.String() != want {
+				t.Errorf("Run(%s failure) = %d, stdout=%q, want %q", tc.name, code, fixture.stdout.String(), want)
+			}
+			if _, err := os.Stat(credential.Path(fixture.stateDir)); err != nil {
+				t.Errorf("credential was removed on %s failure: %v", tc.name, err)
+			}
+		})
+	}
+}
+
 func TestUnpairServiceFileDeleteFailure(t *testing.T) {
 	fixture := newUnpairFixture(t, nil)
 	fixture.pair(t, true, true)
