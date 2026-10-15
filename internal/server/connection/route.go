@@ -93,7 +93,7 @@ func (handler connectionHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if status != credential.StatusActive {
-			handler.deps.List.CloseRevoked(machineID)
+			handler.deps.List.closeRevokedConn(machineID, conn)
 			return
 		}
 	}

@@ -139,9 +139,13 @@ func (list *List) OnlineIDs() map[string]bool {
 // CloseRevoked closes the machine's connection with close code 4002, if it has
 // one, and removes it from the Online list immediately.
 func (list *List) CloseRevoked(machineID string) {
+	list.closeRevokedConn(machineID, nil)
+}
+
+func (list *List) closeRevokedConn(machineID string, expected closeable) {
 	list.mu.Lock()
 	current, exists := list.entries[machineID]
-	if !exists {
+	if !exists || (expected != nil && current.conn != expected) {
 		list.mu.Unlock()
 		return
 	}
