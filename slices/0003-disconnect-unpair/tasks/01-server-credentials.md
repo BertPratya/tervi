@@ -238,6 +238,7 @@ with a revoked credential (set its row to `revoked` in the test) and checks
 | `TestAcknowledgeRevoked` — the acknowledgment and save-failure routes answer `401 credential_revoked` for a `revoked` credential | R20, R22 |
 | `TestFindCredential` — finds `active`, `revoked`, `failed`, and `expired` rows by proof; a `pending` row past its expiry reads as `expired`; an unknown proof is not found | R18, R20 |
 | `TestRevokeCredential` — an `active` credential becomes `revoked` with `ended_at` set; a machine with none changes nothing and reports so | R18 |
+| `TestRevokeCredentialDoesNotRevokeReplacement` — `RevokeCredential` ends only the credential it names; a newer `active` credential on the same machine stays `active` (fix 1) | R11 |
 | `TestRevokedWhileOpening` — a credential revoked between the route's check and adding the connection (through the test hook) is closed with `4002` right after it is added, and the machine is Offline | R18, R20 |
 | `TestMigrationVersion` — `go run ./cmd/server migrate` reports version 3; the existing version tests expect 3, and 4 counts as newer than this program | R19 |
 | `TestConnectionRefusesRevoked` — a revoked credential gets `401 credential_revoked` and no WebSocket; unknown, `pending`, `failed`, and `expired` get `401 unknown_credential` | R20 |
