@@ -2,6 +2,33 @@ export function shown(value) {
   return typeof value === 'string' && value.length > 0 ? value : 'unknown';
 }
 
+const englishMonths = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+function localDayAndMonth(timestamp) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return 'unknown';
+  return `${date.getDate()} ${englishMonths[date.getMonth()]}`;
+}
+
+function earlierMachineView(machine) {
+  if (!machine || typeof machine !== 'object') {
+    return { matchHeading: '', matchDescription: '', buttonResults: [] };
+  }
+
+  const name = shown(machine.display_name);
+  const description = machine.still_paired
+    ? `${name}, still paired.`
+    : `${name}, unpaired on ${localDayAndMonth(machine.unpaired_at)}.`;
+  return {
+    matchHeading: 'This looks like a computer that was paired before:',
+    matchDescription: description,
+    buttonResults: [`brings back ${name}, with its history`, "doesn't pair it"],
+  };
+}
+
 export function view(state) {
   const answer = typeof state === 'string' ? { status: state } : (state ?? {});
   if (answer.error === 'invalid_link' || answer.status === 'invalid_link') {
@@ -26,6 +53,9 @@ export function view(state) {
     os: `${osName} ${osVersion}`,
     notice: '',
     buttons: [],
+    matchHeading: '',
+    matchDescription: '',
+    buttonResults: [],
     code: '',
     poll: true,
     error: false,
@@ -35,6 +65,7 @@ export function view(state) {
     case 'waiting_for_approval':
       result.message = 'Pair a computer?';
       result.buttons = ['Accept', 'Reject'];
+      Object.assign(result, earlierMachineView(answer.earlier_machine));
       break;
     case 'waiting_for_code':
       result.message = `Type this code into the terminal of ${hostname}:`;

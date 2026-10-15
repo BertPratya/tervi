@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/bertpratya/tervi/internal/server/connection"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -18,6 +19,7 @@ type Deps struct {
 	Pool      *pgxpool.Pool
 	PublicURL string
 	Logger    *slog.Logger
+	List      *connection.List
 }
 
 // Register registers pairing routes.

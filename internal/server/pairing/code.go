@@ -109,11 +109,12 @@ func (deps Deps) issueCredential(w http.ResponseWriter, r *http.Request, request
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	var hostname, osName, osVersion string
+	var hostname, osName, osVersion, matchedMachineID string
+	var identityHash []byte
 	err = tx.QueryRow(r.Context(), `UPDATE pairing_requests SET status = 'finishing'
 		WHERE id = $1 AND status = 'waiting_for_code' AND expires_at > now()
-		RETURNING hostname, os_name, os_version`, requestID).
-		Scan(&hostname, &osName, &osVersion)
+		RETURNING hostname, os_name, os_version, coalesce(matched_machine_id::text, ''), identity_hash`, requestID).
+		Scan(&hostname, &osName, &osVersion, &matchedMachineID, &identityHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(r.Context())
 		deps.writeCodeUnavailable(w, r, requestID)
@@ -132,13 +133,15 @@ func (deps Deps) issueCredential(w http.ResponseWriter, r *http.Request, request
 	if displayName == "" {
 		displayName = "unknown"
 	}
-	var machineID string
-	err = tx.QueryRow(r.Context(), `INSERT INTO machines
-		(hostname, os_name, os_version, display_name)
-		VALUES ($1, $2, $3, $4) RETURNING machine_id::text`, hostname, osName, osVersion, displayName).Scan(&machineID)
-	if err != nil {
-		httpapi.WriteInternalError(w, deps.Logger, "submit code", err)
-		return
+	machineID := matchedMachineID
+	if machineID == "" {
+		err = tx.QueryRow(r.Context(), `INSERT INTO machines
+			(hostname, os_name, os_version, display_name, identity_hash)
+			VALUES ($1, $2, $3, $4, $5) RETURNING machine_id::text`, hostname, osName, osVersion, displayName, identityHash).Scan(&machineID)
+		if err != nil {
+			httpapi.WriteInternalError(w, deps.Logger, "submit code", err)
+			return
+		}
 	}
 	if _, err := tx.Exec(r.Context(), `INSERT INTO credentials
 		(machine_id, pairing_request_id, credential_hash, status, expires_at)

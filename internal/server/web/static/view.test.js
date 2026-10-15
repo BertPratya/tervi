@@ -138,3 +138,67 @@ test('invalid_link gives an error result without polling', () => {
   assert.equal(actual.code, '');
   assert.equal(actual.error, true);
 });
+
+test('matched unpaired machine shows its name, local date, and button results', () => {
+  const actual = view({
+    status: 'waiting_for_approval',
+    hostname: 'new-name',
+    os_name: 'Linux',
+    os_version: '9.1',
+    earlier_machine: {
+      display_name: 'bert-desktop',
+      still_paired: false,
+      unpaired_at: '2026-10-13T09:12:44Z',
+    },
+  });
+  assert.equal(actual.matchHeading, 'This looks like a computer that was paired before:');
+  assert.equal(actual.matchDescription, 'bert-desktop, unpaired on 13 October.');
+  assert.deepEqual(actual.buttons, ['Accept', 'Reject']);
+  assert.deepEqual(actual.buttonResults, [
+    'brings back bert-desktop, with its history',
+    "doesn't pair it",
+  ]);
+});
+
+test('matched date uses browser time zone and fixed English month names', () => {
+  const originalTZ = process.env.TZ;
+  try {
+    process.env.TZ = 'America/Los_Angeles';
+    const actual = view({
+      status: 'waiting_for_approval',
+      earlier_machine: {
+        display_name: 'travel computer',
+        still_paired: false,
+        unpaired_at: '2026-10-13T00:30:00Z',
+      },
+    });
+    assert.equal(actual.matchDescription, 'travel computer, unpaired on 12 October.');
+  } finally {
+    if (originalTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTZ;
+  }
+});
+
+test('matched machine that is still paired omits its unpair date', () => {
+  const actual = view({
+    status: 'waiting_for_approval',
+    earlier_machine: {
+      display_name: 'bert-desktop',
+      still_paired: true,
+      unpaired_at: null,
+    },
+  });
+  assert.equal(actual.matchDescription, 'bert-desktop, still paired.');
+  assert.deepEqual(actual.buttonResults, [
+    'brings back bert-desktop, with its history',
+    "doesn't pair it",
+  ]);
+});
+
+test('page without a match keeps the original approval buttons without results', () => {
+  const actual = view({ status: 'waiting_for_approval', hostname: 'workstation' });
+  assert.equal(actual.matchHeading, '');
+  assert.equal(actual.matchDescription, '');
+  assert.deepEqual(actual.buttons, ['Accept', 'Reject']);
+  assert.deepEqual(actual.buttonResults, []);
+});
