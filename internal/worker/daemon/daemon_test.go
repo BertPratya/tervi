@@ -594,12 +594,45 @@ func TestStatusWhileTrying(t *testing.T) {
 func TestRefreshStateKeepsLastServer(t *testing.T) {
 	f := newDaemonFixture(t, true, 10, 30, nil)
 	d := f.newDaemon(t, Options{})
-	d.setTrying(1, f.server.URL, time.Now())
+	d.mu.Lock()
+	d.status.Server = f.server.URL
+	d.mu.Unlock()
 	d.refreshState()
 
 	status := d.Status()
 	if status.State != StateReconnecting || status.Server != f.server.URL {
 		t.Fatalf("Status() = %+v, want reconnecting with server %q", status, f.server.URL)
+	}
+}
+
+func TestStatusShowsCredentialServerDuringFirstAttempt(t *testing.T) {
+	f := newDaemonFixture(t, true, 10, 30, nil)
+	dialStarted := make(chan struct{})
+	releaseDial := make(chan struct{})
+	d := f.newDaemon(t, Options{Dial: func(context.Context, string, *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+		close(dialStarted)
+		<-releaseDial
+		return nil, nil, errors.New("test dial finished")
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+
+	select {
+	case <-dialStarted:
+	case <-time.After(time.Second):
+		cancel()
+		close(releaseDial)
+		t.Fatal("daemon did not start the first connection attempt")
+	}
+	status := d.Status()
+	close(releaseDial)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	if status.State != StateReconnecting || status.Server != f.server.URL {
+		t.Fatalf("Status() during first attempt = %+v, want reconnecting with server %q", status, f.server.URL)
 	}
 }
 

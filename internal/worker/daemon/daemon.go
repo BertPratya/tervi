@@ -108,7 +108,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		if !started {
 			continue
 		}
-		result := d.tryConnection(attemptCtx, try)
+		result := d.tryConnection(attemptCtx, try, sequence)
 		d.finishAttempt(cancelAttempt)
 		if ctx.Err() != nil {
 			return nil

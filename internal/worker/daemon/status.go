@@ -76,13 +76,6 @@ func (d *Daemon) knownServerLocked(server string) string {
 	return d.status.Server
 }
 
-func (d *Daemon) setTrying(try int, server string, now time.Time) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	server = d.knownServerLocked(server)
-	d.setStatusLocked(Status{State: StateReconnecting, Server: server, Try: try, NextTry: now, LastError: d.status.LastError})
-}
-
 func (d *Daemon) currentServer() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()

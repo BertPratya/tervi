@@ -51,32 +51,7 @@ func runDisconnect(ctx context.Context, args []string, env Env) int {
 		printStatusControlFailure(env.Stdout, err, entry)
 		return 1
 	}
-	switch result.Result {
-	case daemon.ResultDisconnected:
-		printDisconnectedWithoutDaemon(env.Stdout)
-		return 0
-	case daemon.ResultAlreadyDisconnected:
-		fmt.Fprintln(env.Stdout, "Already disconnected.")
-		return 0
-	case daemon.ResultRejected:
-		printRejectedStatus(env.Stdout, entry.Server)
-		return 0
-	case daemon.ResultRevoked:
-		printUnpaired(env.Stdout, entry.Server)
-		return 0
-	case daemon.ResultNotPaired:
-		printConnectNotPaired(env.Stdout)
-		return 1
-	case daemon.ResultFailed:
-		printConnectWriteFailure(env.Stdout, result.Path, entry)
-		return 1
-	case daemon.ResultUnreadable:
-		printDisconnectReadFailure(env.Stdout, result.Path)
-		return 1
-	default:
-		printStatusControlFailure(env.Stdout, errors.New("unexpected lock result"), entry)
-		return 1
-	}
+	return printDisconnectResult(env.Stdout, result, false, entry)
 }
 
 func handleDisconnectAnswer(ctx context.Context, output io.Writer, answer control.DisconnectAnswer, err error, entry credential.Entry) int {
@@ -87,9 +62,17 @@ func handleDisconnectAnswer(ctx context.Context, output io.Writer, answer contro
 		printStatusControlFailure(output, err, entry)
 		return 1
 	}
-	switch answer.Result {
+	return printDisconnectResult(output, daemon.DisconnectResult{Result: answer.Result, Path: answer.Path}, true, entry)
+}
+
+func printDisconnectResult(output io.Writer, result daemon.DisconnectResult, daemonRunning bool, entry credential.Entry) int {
+	switch result.Result {
 	case daemon.ResultDisconnected:
-		fmt.Fprintln(output, "✓ Disconnected. tervi stays in the background but won't connect.")
+		if daemonRunning {
+			fmt.Fprintln(output, "✓ Disconnected. tervi stays in the background but won't connect.")
+		} else {
+			fmt.Fprintln(output, "✓ Disconnected. tervi won't connect, including after the computer restarts.")
+		}
 		fmt.Fprintln(output, "  Connect again with: tervi connect")
 		return 0
 	case daemon.ResultAlreadyDisconnected:
@@ -105,22 +88,17 @@ func handleDisconnectAnswer(ctx context.Context, output io.Writer, answer contro
 		printConnectNotPaired(output)
 		return 1
 	case daemon.ResultFailed:
-		printConnectWriteFailure(output, answer.Path, entry)
+		printConnectWriteFailure(output, result.Path, entry)
 		return 1
 	case daemon.ResultUnreadable:
-		printDisconnectReadFailure(output, answer.Path)
+		printStoreReadFailure(output, result.Path)
 		return 1
 	default:
-		printStatusControlFailure(output, errors.New("unexpected daemon response"), entry)
+		message := "unexpected lock result"
+		if daemonRunning {
+			message = "unexpected daemon response"
+		}
+		printStatusControlFailure(output, errors.New(message), entry)
 		return 1
 	}
-}
-
-func printDisconnectedWithoutDaemon(output io.Writer) {
-	fmt.Fprintln(output, "✓ Disconnected. tervi won't connect, including after the computer restarts.")
-	fmt.Fprintln(output, "  Connect again with: tervi connect")
-}
-
-func printDisconnectReadFailure(output io.Writer, path string) {
-	fmt.Fprintf(output, "✗ Can't read %s.\n", path)
 }

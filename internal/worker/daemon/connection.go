@@ -39,7 +39,7 @@ type lostResult struct {
 	revoked      bool
 }
 
-func (d *Daemon) tryConnection(parent context.Context, try int) attemptResult {
+func (d *Daemon) tryConnection(parent context.Context, try int, sequence uint64) attemptResult {
 	entry, record, paired, err := credential.Paired(d.opts.StateDir, d.opts.Store)
 	if isStateReadError(err) {
 		d.refreshState()
@@ -63,6 +63,9 @@ func (d *Daemon) tryConnection(parent context.Context, try int) attemptResult {
 		return d.failedAttempt("", credential.ErrNotFound, nil, "")
 	}
 	server := entry.Server
+	if !d.setServerForSequence(sequence, server) {
+		return attemptResult{kind: attemptIdle}
+	}
 
 	connectionURL, urlErr := connectionAddress(server)
 	if urlErr != nil {

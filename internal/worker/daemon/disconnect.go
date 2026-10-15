@@ -109,6 +109,18 @@ func (d *Daemon) wasDisconnected(sequence uint64) bool {
 	return d.disconnectSeq != sequence
 }
 
+func (d *Daemon) setServerForSequence(sequence uint64, server string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.disconnectSeq != sequence || !d.enabled {
+		return false
+	}
+	status := d.status
+	status.Server = d.knownServerLocked(server)
+	d.setStatusLocked(status)
+	return true
+}
+
 func (d *Daemon) finishAttemptIfDisconnected(sequence uint64, result attemptResult) bool {
 	if !d.wasDisconnected(sequence) {
 		return false

@@ -263,14 +263,19 @@ func TestDisconnectDoesNotRestoreTryingStatusAfterDisconnect(t *testing.T) {
 		cancel()
 		t.Fatalf("Disconnect() = %+v, want disconnected", got)
 	}
+	d.mu.Lock()
+	changed := d.changed
+	d.mu.Unlock()
 	close(blocked.releaseFirstRead)
 	select {
-	case got := <-dialStatus:
-		if got.State != StateNotConnecting {
-			t.Errorf("status immediately before dial = %+v, want not connecting", got)
-		}
+	case <-changed:
 	case <-time.After(time.Second):
-		t.Fatal("cancelled connection attempt did not reach dial")
+		t.Fatal("cancelled connection attempt did not refresh its state")
+	}
+	select {
+	case got := <-dialStatus:
+		t.Errorf("cancelled connection attempt reached dial with status %+v", got)
+	default:
 	}
 	cancel()
 	if err := <-done; err != nil {
