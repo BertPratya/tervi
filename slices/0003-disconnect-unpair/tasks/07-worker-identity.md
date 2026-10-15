@@ -166,7 +166,9 @@ can only happen when `tervi pair` resumes that pairing
 newline or the end of input, so nothing typed after the answer (such as
 the pairing code) is taken; end of input after some bytes counts as the
 answer. Then it removes spaces around the answer and accepts `y` or `yes`
-in any case (R10).
+in any case (R10). Each question's last line ends with `[y/N] ` (one space)
+and no newline, so the answer is typed on the same line, as the spec's
+"What the user does" shows (fix 1).
 
 ## Boundaries
 

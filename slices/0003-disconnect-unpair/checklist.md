@@ -44,7 +44,7 @@ Do the rows in order: each one can depend on the state the row before left.
 | # | Requirement | Do this | You should see | Result |
 | --- | --- | --- | --- | --- |
 | 1 | R1, R8 | `tervi disconnect`, and watch the Machines page | `✓ Disconnected. tervi stays in the background but won't connect.` / `  Connect again with: tervi connect`; within about 5 seconds the page shows `Offline · last seen less than a minute ago` | ⬜ |
-| 2 | R1 | `tervi logs` | The last line is `○ Disconnected.` | ⬜ |
+| 2 | R1 | `tervi logs` | The last line is `<time> ○ Disconnected.` | ⬜ |
 | 3 | R7 | `tervi status` | `○ Disconnected.` / `  Connect with: tervi connect` | ⬜ |
 | 4 | R4 | `tervi disconnect` again | `Already disconnected.` | ⬜ |
 | 5 | — | Restart the computer and log in. In terminal 1 (over SSH, reconnect with the `-L 8080:localhost:8080` forward), from the project folder: `docker compose up -d`, then `go run ./cmd/server` | The server starts | ⬜ |
@@ -76,7 +76,7 @@ Do the rows in order: each one can depend on the state the row before left.
 | 31 | R18 | On the still-open page, click **Revoke**, then **Revoke** | The row stays, and the page shows `Couldn't revoke <name>. Try again.` (after the next refresh, `Can't reach the server. Trying again…`) | ⬜ |
 | 32 | — | Start the server again | Within 40 seconds the page shows this computer `Online` again | ⬜ |
 | 33 | R18 | Click **Revoke**, then **Revoke** | The row disappears at once | ⬜ |
-| 34 | R20 | `tervi logs` | The last line is `✗ This computer was unpaired on the server. Pair it again with: tervi pair --server http://localhost:8080` | ⬜ |
+| 34 | R20 | `tervi logs` | The last line is `<time> ✗ This computer was unpaired on the server. Pair it again with: tervi pair --server http://localhost:8080` | ⬜ |
 | 35 | R21 | `tervi status; echo $?` | `✗ This computer was unpaired on the server.` / `  Pair it again with: tervi pair --server http://localhost:8080`, then `1` | ⬜ |
 | 36 | R21 | `tervi connect; echo $?` | The same two lines, then `1` | ⬜ |
 | 37 | R21 | `tervi disconnect; echo $?` | The same two lines, then `0` | ⬜ |

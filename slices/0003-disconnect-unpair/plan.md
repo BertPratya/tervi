@@ -1,6 +1,6 @@
 # 0003 Disconnect and unpair — plan
 
-Status: draft
+Status: approved
 Spec: [spec.md](spec.md)
 
 This slice has 13 design decisions, more than the 10 that `AGENTS.md`

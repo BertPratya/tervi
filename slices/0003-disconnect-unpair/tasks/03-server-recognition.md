@@ -105,7 +105,7 @@ request has a `matched_machine_id`, the answer includes `earlier_machine`
 | Field | Value |
 | --- | --- |
 | `display_name` | The matched machine's `display_name` |
-| `still_paired` | `true` while it has an `active` credential |
+| `still_paired` | `true` while it has an `active` credential (the SQL condition from `internal/server/credential`, fix 1) |
 | `unpaired_at` | `null` while `still_paired`; otherwise the `ended_at` of its most recently ended credential, as RFC 3339 in UTC |
 
 Read live each time, so the page shows the machine's state now. With no

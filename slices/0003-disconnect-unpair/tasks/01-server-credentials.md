@@ -127,7 +127,24 @@ than one row. A `pending` credential past `expires_at` is returned as
 // ended_at = now(), inside the caller's transaction. It reports whether a
 // credential changed; a machine with no active credential changes nothing.
 func Revoke(ctx context.Context, tx pgx.Tx, machineID string) (changed bool, err error)
+
+// RevokeCredential sets this one credential to revoked with ended_at =
+// now() if it is still active, inside the caller's transaction, and reports
+// whether it changed.
+func RevokeCredential(ctx context.Context, tx pgx.Tx, credentialID string) (changed bool, err error)
 ```
+
+`RevokeCredential` was added in the slice review (fix 1): the unpair route
+(task 02) uses it, so a request ends only the credential that proved it,
+never a newer one the same machine got in the meantime.
+
+Also in `internal/server/credential` (fix 1): the one SQL condition for
+"this machine has an `active` credential", built by a function that takes
+the caller's machine ID column (for example
+`credential.HasActiveSQL("m.machine_id")`), used by the machines list and
+the approval answer's `still_paired`; and the two error codes as constants
+(`unknown_credential`, `credential_revoked`), used by every server route
+that answers them.
 
 Tasks 02 and 03 call it. The caller closes the machine's connection after
 its transaction commits (next part), so a worker that reconnects at once is

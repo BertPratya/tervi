@@ -74,7 +74,7 @@ shows only machines with an `active` credential. `httpapi` has
 
 | Credential found by `credential.Find` | Answer |
 | --- | --- |
-| `active` | In one transaction, `credential.Revoke` on its machine; after commit, `List.CloseRevoked(machineID)`; `204` with no body |
+| `active` | In one transaction, `credential.RevokeCredential` on this credential; after commit, `List.CloseRevoked(machineID)` if it changed; `204` with no body |
 | `revoked` | `204`, nothing changes (R12: repeating finishes) |
 | no proof, no row, `pending`, `failed`, `expired` | `401 {"error": "unknown_credential"}` |
 | a database failure | `500 internal_error`, logged with the kind `unpair machine` |
@@ -89,6 +89,10 @@ shows only machines with an `active` credential. `httpapi` has
 | The machine has an `active` credential | In one transaction, `credential.Revoke`; after commit, `List.CloseRevoked(machineID)`; `204` |
 | The machine has no `active` credential | `204`, nothing changes |
 | A database failure | `500 internal_error`, kind `revoke machine` |
+
+The route checks only that the machine exists; whether it had an `active`
+credential comes from `credential.Revoke`'s `changed`, and the connection is
+closed only when it changed (fix 1).
 
 The route checks no `Origin` header and no proof: that was the user's
 decision for this slice (plan, "Technical decisions"). The global `Host`

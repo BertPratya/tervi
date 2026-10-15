@@ -236,6 +236,11 @@ because none can be read. Hint lines are indented two spaces
 (slice 2, fix 6). No output may contain the credential; reuse the
 redaction used by `tervi connect`.
 
+**The questions.** Each question's last line ends with `[y/N] ` (one
+space) and no newline, so the answer is typed on the same line, as the
+spec's "What the user does" shows (fix 1). The answer is read by the
+shared reader in `internal/worker/cli/answer.go` (task 07).
+
 ## Boundaries
 
 - May create or change: `internal/worker/unpair/`,
