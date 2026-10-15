@@ -99,7 +99,7 @@ Unpaired message (R21), two lines, used by both commands:
 | --- | --- | --- |
 | `not_connecting`, reason `credential_revoked` | the unpaired message | `1` |
 | `not_connecting`, reason `credential_rejected` | as in slice 2 | `1` |
-| `not_connecting`, no reason | `○ Disconnected.` then `  Connect with: tervi connect` (replaces slice 2's `○ Not connecting.`) | `1` |
+| `not_connecting`, no reason, or a reason this version doesn't know | `○ Disconnected.` then `  Connect with: tervi connect` (replaces slice 2's `○ Not connecting.`) | `1` |
 | other states | as in slice 2 | as in slice 2 |
 
 When the socket does not answer (no daemon), `tervi status` reads
@@ -109,8 +109,12 @@ When the socket does not answer (no daemon), `tervi status` reads
 | --- | --- | --- |
 | `connect: false`, `stop_reason: "credential_revoked"` | the unpaired message | `1` |
 | `connect: false`, `stop_reason: "credential_rejected"` | slice 2's rejection message | `1` |
-| `connect: false`, no reason (also a missing `connect`) | `○ Disconnected.` / `  Connect with: tervi connect` | `1` |
+| `connect: false`, no reason, or a reason this version doesn't know (a missing `connect` counts as `false`) | `○ Disconnected.` / `  Connect with: tervi connect` | `1` |
 | `connect: true` | slice 2's `✗ tervi isn't running in the background.` / `  Start it with: tervi connect` | `1` |
+
+The message is chosen by `connect` first, then by the reason, in that
+order. `tervi status` uses the `state.json` record that the pairing check
+already read, instead of reading the file again.
 
 The pairing check before this (not paired, unreadable files) is unchanged.
 
@@ -121,7 +125,8 @@ with `1`. Everything else is as in slice 2.
 
 - May create or change: `internal/worker/daemon/`, `internal/worker/control/`
   (only passing `revoked` through), `internal/worker/cli/status.go`,
-  `internal/worker/cli/connect.go`, `internal/worker/state/state.go`, their
+  `internal/worker/cli/connect.go`, `internal/worker/cli/cli.go` (only to
+  hold the unpaired message, which both commands use), `internal/worker/state/state.go`, their
   tests.
 - Must not change: `internal/protocol/`, anything under `internal/server/`,
   `internal/worker/pair/`, `internal/worker/service/`, `api/`, `design/`,
