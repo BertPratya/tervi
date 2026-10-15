@@ -541,13 +541,20 @@ func runLostAcknowledgmentThenFinish(t *testing.T) secretAudit {
 }
 
 type approvalState struct {
-	Status        string `json:"status"`
-	Hostname      string `json:"hostname"`
-	OSName        string `json:"os_name"`
-	OSVersion     string `json:"os_version"`
-	PairingCode   string `json:"pairing_code"`
-	FailureReason string `json:"failure_reason"`
-	DisplayName   string `json:"display_name"`
+	Status         string               `json:"status"`
+	Hostname       string               `json:"hostname"`
+	OSName         string               `json:"os_name"`
+	OSVersion      string               `json:"os_version"`
+	PairingCode    string               `json:"pairing_code"`
+	FailureReason  string               `json:"failure_reason"`
+	DisplayName    string               `json:"display_name"`
+	EarlierMachine *earlierMachineState `json:"earlier_machine"`
+}
+
+type earlierMachineState struct {
+	DisplayName string     `json:"display_name"`
+	StillPaired *bool      `json:"still_paired"`
+	UnpairedAt  *time.Time `json:"unpaired_at"`
 }
 
 func approvalRequest(t *testing.T, serverURL, key, method, suffix string) approvalState {

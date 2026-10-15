@@ -24,6 +24,7 @@ import (
 	"github.com/bertpratya/tervi/internal/worker/credential"
 	"github.com/bertpratya/tervi/internal/worker/pair"
 	workerstate "github.com/bertpratya/tervi/internal/worker/state"
+	"github.com/bertpratya/tervi/internal/worker/unpair"
 	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -31,33 +32,38 @@ import (
 const connectionWait = 5 * time.Second
 
 type connectedFixture struct {
-	t              *testing.T
-	pool           *pgxpool.Pool
-	serverURL      string
-	serverAddress  string
-	server         *httptest.Server
-	connections    *connection.List
-	store          *credential.Store
-	stateDir       string
-	machineIDPath  string
-	serviceDir     string
-	daemonLogs     *safeBuffer
-	daemonStderr   *safeBuffer
-	serverLogs     *safeBuffer
-	daemonCtx      context.Context
-	cancelDaemon   context.CancelFunc
-	runner         *fakeBackgroundRunner
-	controlClient  control.Client
-	workerEnv      cli.Env
-	workerRuns     []*workerRun
-	machineAnswers []string
-	pageAnswers    []string
-	statusAnswers  []string
-	stateSnapshots []string
+	t               *testing.T
+	pool            *pgxpool.Pool
+	serverURL       string
+	serverAddress   string
+	server          *httptest.Server
+	connections     *connection.List
+	store           *credential.Store
+	stateDir        string
+	machineIDPath   string
+	lastMachineID   string
+	serviceDir      string
+	daemonLogs      *safeBuffer
+	daemonStderr    *safeBuffer
+	serverLogs      *safeBuffer
+	daemonCtx       context.Context
+	cancelDaemon    context.CancelFunc
+	runner          *fakeBackgroundRunner
+	controlClient   control.Client
+	workerEnv       cli.Env
+	workerRuns      []*workerRun
+	commandRuns     []*workerRun
+	machineAnswers  []string
+	pageAnswers     []string
+	statusAnswers   []string
+	stateSnapshots  []string
+	apiAnswers      []string
+	approvalAnswers []string
 }
 
 type backgroundDaemon struct {
 	finished chan struct{}
+	cancel   context.CancelFunc
 	exitCode int
 }
 
@@ -84,16 +90,68 @@ func (runner *fakeBackgroundRunner) Run(ctx context.Context, name string, args .
 		return "", ctx.Err()
 	}
 	if startDaemon {
-		daemon := &backgroundDaemon{finished: make(chan struct{})}
+		daemonCtx, cancel := context.WithCancel(runner.ctx)
+		daemon := &backgroundDaemon{finished: make(chan struct{}), cancel: cancel}
 		runner.mu.Lock()
 		runner.daemons = append(runner.daemons, daemon)
 		runner.mu.Unlock()
 		go func() {
-			daemon.exitCode = cli.Run(runner.ctx, []string{"daemon"}, runner.env, nil)
+			daemon.exitCode = cli.Run(daemonCtx, []string{"daemon"}, runner.env, nil)
 			close(daemon.finished)
 		}()
 	}
+	if name == "systemctl" && (strings.Join(args, " ") == "--user stop tervi" || strings.Join(args, " ") == "--user disable --now tervi") {
+		if err := runner.stopRunningDaemon(); err != nil {
+			return "", err
+		}
+	}
+	if name == "systemctl" && strings.Join(args, " ") == "--user daemon-reload" {
+		return "", nil
+	}
+	if name == "loginctl" && strings.Join(args, " ") == "show-user --property=Linger --value" {
+		return "no", nil
+	}
 	return "", nil
+}
+
+func (runner *fakeBackgroundRunner) stopRunningDaemon() error {
+	runner.mu.Lock()
+	var active *backgroundDaemon
+	for i := len(runner.daemons) - 1; i >= 0; i-- {
+		select {
+		case <-runner.daemons[i].finished:
+		default:
+			active = runner.daemons[i]
+		}
+		if active != nil {
+			break
+		}
+	}
+	runner.mu.Unlock()
+	if active == nil {
+		return nil
+	}
+	active.cancel()
+	select {
+	case <-active.finished:
+		return nil
+	case <-time.After(connectionWait):
+		return fmt.Errorf("fake service daemon did not exit after stop")
+	}
+}
+
+func (runner *fakeBackgroundRunner) stop(t *testing.T) {
+	t.Helper()
+	if _, err := runner.Run(context.Background(), "systemctl", "--user", "stop", "tervi"); err != nil {
+		t.Fatalf("stop fake service: %v", err)
+	}
+}
+
+func (runner *fakeBackgroundRunner) startDaemon(t *testing.T) {
+	t.Helper()
+	if _, err := runner.Run(context.Background(), "systemctl", "--user", "restart", "tervi"); err != nil {
+		t.Fatalf("start fake service daemon: %v", err)
+	}
 }
 
 func (runner *fakeBackgroundRunner) Stream(context.Context, io.Writer, string, ...string) error {
@@ -194,6 +252,7 @@ func newConnectedFixture(t *testing.T) *connectedFixture {
 		Stdout: &safeBuffer{}, Stderr: &safeBuffer{}, Store: store, StateDir: stateDir,
 		ProgramPath: "/usr/bin/true", Runner: f.runner, ServiceDir: f.serviceDir,
 		ControlClient: f.controlClient,
+		Unpairer:      unpair.New(unpair.Options{RequestTimeout: 2 * time.Second, LockWait: 2 * time.Second}),
 	}
 	t.Cleanup(f.close)
 	return f
@@ -252,15 +311,23 @@ func (f *connectedFixture) startPair(parent context.Context) *workerRun {
 
 func (f *connectedFixture) status(t *testing.T) (int, string) {
 	t.Helper()
-	stdout, stderr := &safeBuffer{}, &safeBuffer{}
-	env := f.workerEnv
-	env.Stdout, env.Stderr = stdout, stderr
-	code := cli.Run(context.Background(), []string{"status"}, env, nil)
-	if stderr.String() != "" {
-		t.Errorf("tervi status wrote to stderr: %q", stderr.String())
+	run, code := f.runCommand(t, "status")
+	if run.stderr.String() != "" {
+		t.Errorf("tervi status wrote to stderr: %q", run.stderr.String())
 	}
-	f.statusAnswers = append(f.statusAnswers, stdout.String())
-	return code, stdout.String()
+	f.statusAnswers = append(f.statusAnswers, run.stdout.String())
+	return code, run.stdout.String()
+}
+
+func (f *connectedFixture) runCommand(t *testing.T, args ...string) (*workerRun, int) {
+	t.Helper()
+	run := &workerRun{stdout: &safeBuffer{}, stderr: &safeBuffer{}, done: make(chan int, 1)}
+	env := f.workerEnv
+	env.Stdout, env.Stderr = run.stdout, run.stderr
+	code := cli.Run(context.Background(), args, env, nil)
+	run.done <- code
+	f.commandRuns = append(f.commandRuns, run)
+	return run, code
 }
 
 func (f *connectedFixture) machineList(t *testing.T) []byte {
@@ -275,6 +342,7 @@ func (f *connectedFixture) machineList(t *testing.T) []byte {
 		t.Fatalf("read machines list: %v", err)
 	}
 	f.machineAnswers = append(f.machineAnswers, string(body))
+	f.apiAnswers = append(f.apiAnswers, string(body))
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("GET machines list returned HTTP %d", response.StatusCode)
 	}
@@ -319,11 +387,17 @@ func (f *connectedFixture) audit(credentials ...string) connectionAudit {
 		stdout.WriteString(run.stdout.String())
 		stderr.WriteString(run.stderr.String())
 	}
+	for _, run := range f.commandRuns {
+		stdout.WriteString(run.stdout.String())
+		stderr.WriteString(run.stderr.String())
+	}
 	parts := []string{stdout.String(), stderr.String(), f.daemonLogs.String(), f.daemonStderr.String(), f.serverLogs.String()}
 	parts = append(parts, f.machineAnswers...)
 	parts = append(parts, f.pageAnswers...)
 	parts = append(parts, f.statusAnswers...)
 	parts = append(parts, f.stateSnapshots...)
+	parts = append(parts, f.apiAnswers...)
+	parts = append(parts, f.approvalAnswers...)
 	return connectionAudit{credentials: append([]string(nil), credentials...), contents: strings.Join(parts, "\n")}
 }
 
@@ -372,22 +446,37 @@ func pairLiveMachine(t *testing.T, f *connectedFixture) livePair {
 }
 
 func completeLivePair(t *testing.T, f *connectedFixture, run *workerRun) livePair {
+	return completeLivePairObserved(t, f, run, nil)
+}
+
+func completeLivePairObserved(t *testing.T, f *connectedFixture, run *workerRun, observe func(approvalState)) livePair {
 	t.Helper()
 	approvalKey := waitForApprovalKey(t, run.stdout)
 	pageResponse, err := http.Get(f.serverURL + "/pair/" + approvalKey)
 	if err != nil {
 		t.Fatalf("GET approval page: %v", err)
 	}
+	pageBody, err := io.ReadAll(pageResponse.Body)
 	_ = pageResponse.Body.Close()
+	if err != nil {
+		t.Fatalf("read approval page: %v", err)
+	}
+	f.pageAnswers = append(f.pageAnswers, string(pageBody))
 	if pageResponse.StatusCode != http.StatusOK {
 		t.Fatalf("approval page returned HTTP %d", pageResponse.StatusCode)
 	}
 	approval := approvalRequest(t, f.serverURL, approvalKey, http.MethodGet, "")
+	f.recordApproval(approval)
 	if approval.Status != "waiting_for_approval" {
 		t.Fatalf("initial approval status = %q, want waiting_for_approval", approval.Status)
 	}
-	_ = approvalRequest(t, f.serverURL, approvalKey, http.MethodPost, "/accept")
+	if observe != nil {
+		observe(approval)
+	}
+	accepted := approvalRequest(t, f.serverURL, approvalKey, http.MethodPost, "/accept")
+	f.recordApproval(accepted)
 	approval = waitForApprovalStatus(t, f.serverURL, approvalKey, "waiting_for_code")
+	f.recordApproval(approval)
 	if approval.PairingCode == "" {
 		t.Fatal("approval API omitted pairing code")
 	}
@@ -402,6 +491,7 @@ func completeLivePair(t *testing.T, f *connectedFixture, run *workerRun) livePai
 	}
 	waitForLogCount(t, f.daemonLogs, "✓ Connected to "+f.serverURL, len(f.workerRuns), connectionWait)
 	state := f.stateSnapshot(t)
+	f.lastMachineID = state.MachineID
 	if !state.CredentialSaved || !state.Confirmed || state.MachineID == "" || !state.Connect || state.StopReason != nil {
 		t.Errorf("state after connect = %+v, want saved confirmed pairing, non-empty machine ID, connect true, and no stop reason", state)
 	}
@@ -417,6 +507,13 @@ func completeLivePair(t *testing.T, f *connectedFixture, run *workerRun) livePai
 		t.Errorf("machines list omitted machine details: %+v", machine)
 	}
 	return livePair{approvalKey: approvalKey, pairingCode: approval.PairingCode, credential: entry.Credential.Reveal(), machineID: state.MachineID, run: run}
+}
+
+func (f *connectedFixture) recordApproval(answer approvalState) {
+	data, err := json.Marshal(answer)
+	if err == nil {
+		f.approvalAnswers = append(f.approvalAnswers, string(data))
+	}
 }
 
 type livePair struct {
