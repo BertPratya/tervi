@@ -66,6 +66,33 @@ func serviceTestOptions(dir, program string, runner Runner, client *serviceTestC
 	}
 }
 
+func TestCommandError(t *testing.T) {
+	fallback := errors.New("command failed")
+	for _, tc := range []struct {
+		name   string
+		output string
+		err    error
+		want   string
+	}{
+		{name: "trimmed output", output: " systemd says no\n", err: fallback, want: "systemd says no"},
+		{name: "fallback error", err: fallback, want: "command failed"},
+		{name: "no error", output: "ignored"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := commandError(tc.output, tc.err)
+			if tc.want == "" {
+				if got != nil {
+					t.Fatalf("commandError() = %v, want nil", got)
+				}
+				return
+			}
+			if got == nil || got.Error() != tc.want {
+				t.Fatalf("commandError() = %v, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestServiceFileContents(t *testing.T) {
 	for _, name := range []string{"tervi program", `tervi\path`, `tervi"quote`, "tervi%percent", "tervi$dollar"} {
 		t.Run(name, func(t *testing.T) {

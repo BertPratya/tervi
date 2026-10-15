@@ -14,6 +14,7 @@ import (
 	"github.com/bertpratya/tervi/internal/worker/credential"
 	"github.com/bertpratya/tervi/internal/worker/pair"
 	"github.com/bertpratya/tervi/internal/worker/service"
+	"github.com/bertpratya/tervi/internal/worker/unpair"
 )
 
 func main() {
@@ -42,6 +43,7 @@ func main() {
 		ProgramPath:   programPath,
 		ServiceDir:    filepath.Join(configDir, "systemd", "user"),
 		ControlClient: control.Client{RuntimeDir: runtimeDir},
+		Unpairer:      unpair.New(unpair.Options{RequestTimeout: 10 * time.Second, LockWait: 10 * time.Second}),
 	}
 	workerFlow := pair.New(pair.Options{
 		RequestTimeout: 10 * time.Second,

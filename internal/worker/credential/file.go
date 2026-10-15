@@ -6,12 +6,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
 const (
 	workerCredentialUser = "worker"
 	checkCredentialUser  = "worker-check"
+	credentialCheckFile  = "credential-check.json"
+	credentialTempPrefix = ".credential-"
 )
 
 type fileBackend struct {
@@ -32,7 +35,7 @@ func (backend fileBackend) pathFor(user string) (string, error) {
 	case workerCredentialUser:
 		return Path(backend.dir), nil
 	case checkCredentialUser:
-		return filepath.Join(backend.dir, "credential-check.json"), nil
+		return filepath.Join(backend.dir, credentialCheckFile), nil
 	default:
 		return "", fmt.Errorf("unsupported credential file user %q", user)
 	}
@@ -78,7 +81,7 @@ func (backend fileBackend) Set(user, value string) error {
 	if err := os.MkdirAll(backend.dir, 0700); err != nil {
 		return fmt.Errorf("create credential folder: %w", err)
 	}
-	temporary, err := os.CreateTemp(backend.dir, ".credential-*")
+	temporary, err := os.CreateTemp(backend.dir, credentialTempPrefix+"*")
 	if err != nil {
 		return fmt.Errorf("write credential file: %w", err)
 	}
@@ -118,4 +121,62 @@ func (backend fileBackend) Delete(user string) error {
 		return fmt.Errorf("delete credential file: %w", err)
 	}
 	return nil
+}
+
+// LeftoverRemovalError reports the path that could not be removed.
+type LeftoverRemovalError struct {
+	Path string
+	Err  error
+}
+
+func (err *LeftoverRemovalError) Error() string {
+	return fmt.Sprintf("delete %s: %v", err.Path, err.Err)
+}
+func (err *LeftoverRemovalError) Unwrap() error { return err.Err }
+
+// HasLeftovers reports whether a file named credential-check.json or matching
+// the credential temp-file prefix remains under dir.
+func HasLeftovers(dir string) (bool, error) {
+	paths, err := listLeftoverFiles(dir)
+	if err != nil {
+		return false, err
+	}
+	return len(paths) != 0, nil
+}
+
+// DeleteLeftovers removes the credential check file and temporary credential
+// files, treating missing files as already removed. It leaves the directory
+// and every other name untouched.
+func DeleteLeftovers(dir string) error {
+	paths, err := listLeftoverFiles(dir)
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return &LeftoverRemovalError{Path: path, Err: err}
+		}
+	}
+	return nil
+}
+
+func listLeftoverFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read credential folder: %w", err)
+	}
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if isCredentialLeftover(entry.Name()) {
+			paths = append(paths, filepath.Join(dir, entry.Name()))
+		}
+	}
+	return paths, nil
+}
+
+func isCredentialLeftover(name string) bool {
+	return name == credentialCheckFile || strings.HasPrefix(name, credentialTempPrefix)
 }
