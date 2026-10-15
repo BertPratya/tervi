@@ -79,6 +79,9 @@ shows only machines with an `active` credential. `httpapi` has
 | no proof, no row, `pending`, `failed`, `expired` | `401 {"error": "unknown_credential"}` |
 | a database failure | `500 internal_error`, logged with the kind `unpair machine` |
 
+The route writes the error code with the constant from `internal/protocol`
+(fix 2), like every server route that answers it.
+
 ### Revoke: `internal/server/machines/revoke.go` (new)
 
 `POST /api/v1/machines/{machine_id}/revoke`, no body, no proof (R30).
