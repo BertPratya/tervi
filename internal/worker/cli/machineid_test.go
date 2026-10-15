@@ -19,7 +19,7 @@ const machineIDQuestion = "! tervi can't read this computer's machine ID (/etc/m
 	"  Without it, the server won't recognize this computer if you pair it\n" +
 	"  again later: it will come back as a new computer, without its history.\n" +
 	"  To fix this, create a machine ID first: sudo systemd-machine-id-setup\n" +
-	"Pair without it? [y/N]\n"
+	"Pair without it? [y/N] "
 
 type machineIDTestFlow struct {
 	hasMachineID bool

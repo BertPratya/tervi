@@ -41,7 +41,7 @@ func (deps Deps) changeMachine(w http.ResponseWriter, r *http.Request, acknowled
 	}
 	proof, ok := httpapi.BearerProof(r)
 	if !ok {
-		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_credential")
+		httpapi.WriteError(w, http.StatusUnauthorized, credential.ErrorUnknownCredential)
 		return
 	}
 	tx, err := deps.Pool.Begin(r.Context())
@@ -69,12 +69,12 @@ func (deps Deps) changeMachine(w http.ResponseWriter, r *http.Request, acknowled
 	}
 	if !found {
 		_ = tx.Rollback(r.Context())
-		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_credential")
+		httpapi.WriteError(w, http.StatusUnauthorized, credential.ErrorUnknownCredential)
 		return
 	}
 	if credentialRow.Status == credential.StatusRevoked {
 		_ = tx.Rollback(r.Context())
-		httpapi.WriteError(w, http.StatusUnauthorized, "credential_revoked")
+		httpapi.WriteError(w, http.StatusUnauthorized, credential.ErrorCredentialRevoked)
 		return
 	}
 	if credentialRow.Status != credential.StatusPending {
@@ -170,12 +170,12 @@ func (deps Deps) writeExistingCredentialResult(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if !found {
-		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_credential")
+		httpapi.WriteError(w, http.StatusUnauthorized, credential.ErrorUnknownCredential)
 		return
 	}
 	switch credentialRow.Status {
 	case credential.StatusRevoked:
-		httpapi.WriteError(w, http.StatusUnauthorized, "credential_revoked")
+		httpapi.WriteError(w, http.StatusUnauthorized, credential.ErrorCredentialRevoked)
 	case credential.StatusActive:
 		result := "active"
 		if acknowledgment {

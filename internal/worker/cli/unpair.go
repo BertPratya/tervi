@@ -104,7 +104,7 @@ func runUnpair(ctx context.Context, args []string, env Env) int {
 			return 1
 		}
 		if !options.yes {
-			fmt.Fprintln(env.Stdout, "This removes what is left of an earlier pairing on this computer. Continue? [y/N]")
+			fmt.Fprint(env.Stdout, "This removes what is left of an earlier pairing on this computer. Continue? [y/N] ")
 			if !confirmUnpair(env.Stdin) {
 				fmt.Fprintln(env.Stdout, "Nothing was changed.")
 				return 1
@@ -121,10 +121,10 @@ func runUnpair(ctx context.Context, args []string, env Env) int {
 	if !options.yes {
 		if options.localOnly {
 			fmt.Fprintf(env.Stdout, "This removes this computer's pairing without telling %s.\n", entry.Server)
-			fmt.Fprintf(env.Stdout, "If that server still exists, it will keep listing this computer until you revoke it on its Machines page. Continue? [y/N]\n")
+			fmt.Fprintf(env.Stdout, "If that server still exists, it will keep listing this computer until you revoke it on its Machines page. Continue? [y/N] ")
 		} else {
 			fmt.Fprintf(env.Stdout, "This removes this computer's pairing with %s.\n", entry.Server)
-			fmt.Fprintln(env.Stdout, "tervi will stop running in the background. Continue? [y/N]")
+			fmt.Fprint(env.Stdout, "tervi will stop running in the background. Continue? [y/N] ")
 		}
 		if !confirmUnpair(env.Stdin) {
 			fmt.Fprintln(env.Stdout, "Nothing was changed.")

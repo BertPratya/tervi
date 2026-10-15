@@ -10,7 +10,7 @@ func confirmMachineID(env Env, flow Flow, yes bool) bool {
 	fmt.Fprintln(env.Stdout, "  Without it, the server won't recognize this computer if you pair it")
 	fmt.Fprintln(env.Stdout, "  again later: it will come back as a new computer, without its history.")
 	fmt.Fprintln(env.Stdout, "  To fix this, create a machine ID first: sudo systemd-machine-id-setup")
-	fmt.Fprintln(env.Stdout, "Pair without it? [y/N]")
+	fmt.Fprint(env.Stdout, "Pair without it? [y/N] ")
 	if env.Stdin == nil {
 		fmt.Fprintln(env.Stdout, "Nothing was changed.")
 		return false

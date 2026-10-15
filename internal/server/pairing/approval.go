@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bertpratya/tervi/internal/secret"
+	"github.com/bertpratya/tervi/internal/server/credential"
 	"github.com/bertpratya/tervi/internal/server/httpapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -124,8 +125,7 @@ func queryApproval(ctx context.Context, pool *pgxpool.Pool, approvalHash []byte)
 		coalesce(m.display_name, ''),
 		earlier.machine_id IS NOT NULL,
 		coalesce(earlier.display_name, ''),
-		EXISTS (SELECT 1 FROM credentials AS active
-			WHERE active.machine_id = earlier.machine_id AND active.status = 'active'),
+		`+credential.HasActiveSQL("earlier.machine_id")+`,
 		(SELECT ended.ended_at FROM credentials AS ended
 			WHERE ended.machine_id = earlier.machine_id AND ended.ended_at IS NOT NULL
 			ORDER BY ended.ended_at DESC, ended.credential_id DESC LIMIT 1)
