@@ -21,7 +21,7 @@ decisions for recognizing a computer are too few for a slice of their own.
 | Recognizing a computer | `internal/server/pairing/match.go` (new) | Finds the earlier machine for an identity, when the pairing starts (R24, R25) |
 | Pairing | `internal/server/pairing` | Start stores the identity and the match; the approval answer shows the match; the correct code attaches the new credential to the matched machine; the acknowledgment ends the earlier credential and updates the name (R23–R28); every machine query uses `credentials` |
 | Pages | `internal/server/web` | The Machines page gets Revoke and its question (R17, R18); the approval page shows the match with Accept and Reject (R24) |
-| Close codes | `internal/protocol` | Adds `4002` |
+| Close codes and error codes | `internal/protocol` | Adds `4002`, and the error codes `unknown_credential` and `credential_revoked` that the server and the worker share (fix 2) |
 | Computer identity | `internal/worker/pair/identity.go` (new) | Reads `/etc/machine-id` and computes the identity with tervi's app ID (R23) |
 | Pairing on the worker | `internal/worker/pair` | Sends the identity; without a machine ID, asks first (R23); after `credential_revoked`, starts a new pairing (R22) |
 | `tervi disconnect` | `internal/worker/cli/disconnect.go` (new) | Asks the daemon, or writes `state.json` under the lock when no daemon runs (R1–R6) |

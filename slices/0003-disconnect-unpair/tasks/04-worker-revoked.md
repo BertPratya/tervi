@@ -43,8 +43,6 @@ no daemon is running.
   `401 {"error": "unknown_credential"}` as a rejection
   (`isUnknownCredentialBody`). On it, `reject` writes `connect: false` and
   `stop_reason: "credential_rejected"`, sets the status, and logs one line.
-  The daemon compares against the error-code constants in
-  `internal/protocol` (fix 2).
 - `waitForConnect` answers `rejected` when the status stops with
   `credential_rejected`.
 - `tervi status` prints `✗ tervi isn't running in the background.` and
@@ -58,7 +56,9 @@ Add `StopReasonCredentialRevoked = "credential_revoked"` next to
 ### The daemon: `internal/worker/daemon/revoked.go` (new)
 
 Put the revocation handling in the new file `daemon/revoked.go`; `Run` and
-`tryConnection` only call it, so `daemon.go` stays under 300 lines.
+`tryConnection` only call it, so `daemon.go` stays under 300 lines. The
+daemon compares against the error-code constants in `internal/protocol`
+(fix 2).
 
 - **Recognizing it.** A `401` whose body is exactly
   `{"error": "credential_revoked"}` (same strict parsing as today) is a
