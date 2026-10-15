@@ -18,11 +18,9 @@ func (handler revokeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var exists, active bool
-	err := handler.deps.Pool.QueryRow(r.Context(), `SELECT
-		EXISTS (SELECT 1 FROM machines WHERE machine_id = $1),
-		EXISTS (SELECT 1 FROM credentials WHERE machine_id = $1 AND status = 'active')`, machineID).
-		Scan(&exists, &active)
+	var exists bool
+	err := handler.deps.Pool.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM machines WHERE machine_id = $1)`, machineID).
+		Scan(&exists)
 	if err != nil {
 		httpapi.WriteInternalError(w, handler.deps.Logger, "revoke machine", err)
 		return
@@ -31,11 +29,6 @@ func (handler revokeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, http.StatusNotFound, "unknown_machine")
 		return
 	}
-	if !active {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
 	if err := revokeMachineCredential(r.Context(), handler.deps, machineID.String()); err != nil {
 		httpapi.WriteInternalError(w, handler.deps.Logger, "revoke machine", err)
 		return

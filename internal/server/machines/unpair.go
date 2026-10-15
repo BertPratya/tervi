@@ -15,7 +15,7 @@ type unpairHandler struct {
 func (handler unpairHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proof, ok := httpapi.BearerProof(r)
 	if !ok {
-		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_credential")
+		httpapi.WriteError(w, http.StatusUnauthorized, credential.ErrorUnknownCredential)
 		return
 	}
 
@@ -25,7 +25,7 @@ func (handler unpairHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !found || (row.Status != credential.StatusActive && row.Status != credential.StatusRevoked) {
-		httpapi.WriteError(w, http.StatusUnauthorized, "unknown_credential")
+		httpapi.WriteError(w, http.StatusUnauthorized, credential.ErrorUnknownCredential)
 		return
 	}
 	if row.Status == credential.StatusRevoked {
@@ -33,7 +33,7 @@ func (handler unpairHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := revokeMachineCredential(r.Context(), handler.deps, row.MachineID); err != nil {
+	if err := revokeCredential(r.Context(), handler.deps, row); err != nil {
 		httpapi.WriteInternalError(w, handler.deps.Logger, "unpair machine", err)
 		return
 	}

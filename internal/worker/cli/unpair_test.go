@@ -70,7 +70,7 @@ func TestUnpairAsks(t *testing.T) {
 			env, stdout, stderr := unpairCommandEnv(t, input, recorder)
 			code := Run(context.Background(), []string{"unpair"}, env, nil)
 			if tc.continueRun {
-				want := "This removes this computer's pairing with http://localhost:8080.\ntervi will stop running in the background. Continue? [y/N]\n✓ Unpaired. This computer is no longer paired with http://localhost:8080.\n"
+				want := "This removes this computer's pairing with http://localhost:8080.\ntervi will stop running in the background. Continue? [y/N] ✓ Unpaired. This computer is no longer paired with http://localhost:8080.\n"
 				if code != 0 || stdout.String() != want || stderr.Len() != 0 {
 					t.Errorf("Run(unpair) = %d, stdout=%q stderr=%q; want %q", code, stdout.String(), stderr.String(), want)
 				}
@@ -78,7 +78,7 @@ func TestUnpairAsks(t *testing.T) {
 					t.Errorf("confirmed unpair calls = (server %d, remove %d), want (1, 1)", recorder.tellCalls, recorder.removeCalls)
 				}
 			} else {
-				want := "This removes this computer's pairing with http://localhost:8080.\ntervi will stop running in the background. Continue? [y/N]\nNothing was changed.\n"
+				want := "This removes this computer's pairing with http://localhost:8080.\ntervi will stop running in the background. Continue? [y/N] Nothing was changed.\n"
 				if code != 1 || stdout.String() != want || stderr.Len() != 0 {
 					t.Errorf("Run(unpair) = %d, stdout=%q stderr=%q; want %q", code, stdout.String(), stderr.String(), want)
 				}
@@ -114,7 +114,7 @@ func TestUnpairLocalOnlyQuestion(t *testing.T) {
 	recorder := &unpairRecorder{}
 	env, stdout, stderr := unpairCommandEnv(t, strings.NewReader("YES\n"), recorder)
 	code := Run(context.Background(), []string{"unpair", "--local-only"}, env, nil)
-	want := "This removes this computer's pairing without telling http://localhost:8080.\nIf that server still exists, it will keep listing this computer until you revoke it on its Machines page. Continue? [y/N]\n✓ Unpaired on this computer only.\n"
+	want := "This removes this computer's pairing without telling http://localhost:8080.\nIf that server still exists, it will keep listing this computer until you revoke it on its Machines page. Continue? [y/N] ✓ Unpaired on this computer only.\n"
 	if code != 0 || stdout.String() != want || stderr.Len() != 0 {
 		t.Errorf("Run(unpair --local-only) = %d, stdout=%q stderr=%q; want %q", code, stdout.String(), stderr.String(), want)
 	}

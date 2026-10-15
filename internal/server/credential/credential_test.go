@@ -105,6 +105,72 @@ func TestRevokeCredential(t *testing.T) {
 	}
 }
 
+func TestRevokeCredentialDoesNotRevokeReplacement(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	_, machineID := insertCredentialMachine(t, pool, "credential-revoke-stale-proof", credential.StatusActive)
+	var oldCredentialID string
+	if err := pool.QueryRow(ctx, `SELECT credential_id::text FROM credentials WHERE machine_id = $1`, machineID).
+		Scan(&oldCredentialID); err != nil {
+		t.Fatalf("read old credential ID: %v", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin replacement credential setup: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `UPDATE credentials SET status = 'revoked', ended_at = now() WHERE credential_id = $1`, oldCredentialID); err != nil {
+		t.Fatalf("revoke old credential: %v", err)
+	}
+	var requestID string
+	if err := tx.QueryRow(ctx, `INSERT INTO pairing_requests
+		(status, polling_key_hash, approval_key_hash, expires_at)
+		VALUES ('paired', $1, $2, now() + interval '10 minutes') RETURNING id::text`,
+		[]byte("replacement-polling"), []byte("replacement-approval")).Scan(&requestID); err != nil {
+		t.Fatalf("insert replacement request: %v", err)
+	}
+	var newCredentialID string
+	if err := tx.QueryRow(ctx, `INSERT INTO credentials
+		(machine_id, pairing_request_id, credential_hash, status, expires_at)
+		VALUES ($1, $2, $3, 'active', now() + interval '10 minutes') RETURNING credential_id::text`,
+		machineID, requestID, secret.Hash(secret.FromString("credential-replacement-proof"))).Scan(&newCredentialID); err != nil {
+		t.Fatalf("insert replacement credential: %v", err)
+	}
+
+	changed, err := credential.RevokeCredential(ctx, tx, oldCredentialID)
+	if err != nil || changed {
+		t.Fatalf("RevokeCredential(old) = (%t, %v), want (false, nil)", changed, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit replacement credential setup: %v", err)
+	}
+	var newStatus string
+	if err := pool.QueryRow(ctx, `SELECT status FROM credentials WHERE credential_id = $1`, newCredentialID).Scan(&newStatus); err != nil {
+		t.Fatalf("read replacement status: %v", err)
+	}
+	if newStatus != credential.StatusActive {
+		t.Fatalf("replacement credential status = %q, want active", newStatus)
+	}
+}
+
+func TestHasActiveSQL(t *testing.T) {
+	got := credential.HasActiveSQL("m.machine_id")
+	want := "EXISTS (SELECT 1 FROM credentials WHERE machine_id = m.machine_id AND status = 'active')"
+	if got != want {
+		t.Fatalf("HasActiveSQL() = %q, want %q", got, want)
+	}
+}
+
+func TestCredentialErrorCodes(t *testing.T) {
+	if credential.ErrorUnknownCredential != "unknown_credential" {
+		t.Errorf("unknown credential code = %q", credential.ErrorUnknownCredential)
+	}
+	if credential.ErrorCredentialRevoked != "credential_revoked" {
+		t.Errorf("credential revoked code = %q", credential.ErrorCredentialRevoked)
+	}
+}
+
 func insertCredentialMachine(t *testing.T, pool *pgxpool.Pool, proof, status string) (string, string) {
 	t.Helper()
 	machineID, requestID := dbtest.InsertMachineCredential(t, pool, dbtest.MachineCredential{

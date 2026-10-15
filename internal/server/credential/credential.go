@@ -15,7 +15,16 @@ const (
 	StatusFailed  = "failed"
 	StatusExpired = "expired"
 	StatusRevoked = "revoked"
+
+	ErrorUnknownCredential = "unknown_credential"
+	ErrorCredentialRevoked = "credential_revoked"
 )
+
+// HasActiveSQL returns the EXISTS predicate for a machine ID column that has
+// an active credential.
+func HasActiveSQL(machineIDColumn string) string {
+	return "EXISTS (SELECT 1 FROM credentials WHERE machine_id = " + machineIDColumn + " AND status = 'active')"
+}
 
 // Row is a credential found by its hash.
 type Row struct {

@@ -399,7 +399,7 @@ func TestUnpairLocalOnly(t *testing.T) {
 	if code := fixture.run("unpair", "--local-only"); code != 0 {
 		t.Fatalf("Run(local-only) = %d, stdout=%q", code, fixture.stdout.String())
 	}
-	want := "This removes this computer's pairing without telling " + fixture.server.URL + ".\nIf that server still exists, it will keep listing this computer until you revoke it on its Machines page. Continue? [y/N]\n✓ Unpaired on this computer only.\n"
+	want := "This removes this computer's pairing without telling " + fixture.server.URL + ".\nIf that server still exists, it will keep listing this computer until you revoke it on its Machines page. Continue? [y/N] ✓ Unpaired on this computer only.\n"
 	if fixture.stdout.String() != want || fixture.requests.Load() != 0 {
 		t.Errorf("local-only output=%q requests=%d", fixture.stdout.String(), fixture.requests.Load())
 	}
@@ -559,7 +559,7 @@ func TestUnpairLeftovers(t *testing.T) {
 			}
 			code := fixture.runWithInput(input, args...)
 			if tc.cancel {
-				question := "This removes what is left of an earlier pairing on this computer. Continue? [y/N]\n"
+				question := "This removes what is left of an earlier pairing on this computer. Continue? [y/N] "
 				if code != 1 || fixture.stdout.String() != question+"Nothing was changed.\n" {
 					t.Errorf("Run(cancel leftovers) = %d, stdout=%q", code, fixture.stdout.String())
 				}
@@ -582,7 +582,7 @@ func TestUnpairLeftovers(t *testing.T) {
 				t.Fatalf("Run(leftovers) = %d, stdout=%q", code, fixture.stdout.String())
 			}
 			if tc.ask {
-				question := "This removes what is left of an earlier pairing on this computer. Continue? [y/N]\n"
+				question := "This removes what is left of an earlier pairing on this computer. Continue? [y/N] "
 				success := "✓ Removed what was left of the earlier pairing.\n"
 				if fixture.stdout.String() != question+success {
 					t.Errorf("leftovers question/success order missing: %q", fixture.stdout.String())

@@ -16,3 +16,14 @@ func Revoke(ctx context.Context, tx pgx.Tx, machineID string) (bool, error) {
 	}
 	return tag.RowsAffected() != 0, nil
 }
+
+// RevokeCredential marks one active credential revoked within the caller's
+// transaction. It reports whether the credential changed.
+func RevokeCredential(ctx context.Context, tx pgx.Tx, credentialID string) (bool, error) {
+	tag, err := tx.Exec(ctx, `UPDATE credentials SET status = 'revoked', ended_at = now()
+		WHERE credential_id = $1 AND status = 'active'`, credentialID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() != 0, nil
+}
