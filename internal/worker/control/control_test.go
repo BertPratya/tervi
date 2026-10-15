@@ -217,6 +217,7 @@ func TestStatusOverSocket(t *testing.T) {
 		{"reconnecting without error", daemon.Status{State: "reconnecting", Server: "https://example.test", Try: 1, NextTry: next, NextTryInSeconds: 4}, `{"state":"reconnecting","server":"https://example.test","try":1,"next_try_in_seconds":4,"last_error":null}`},
 		{"not connecting", daemon.Status{State: "not_connecting"}, `{"state":"not_connecting","stop_reason":null}`},
 		{"credential rejected", daemon.Status{State: "not_connecting", StopReason: stringPointer("credential_rejected")}, `{"state":"not_connecting","stop_reason":"credential_rejected"}`},
+		{"credential revoked", daemon.Status{State: "not_connecting", StopReason: stringPointer("credential_revoked")}, `{"state":"not_connecting","stop_reason":"credential_revoked"}`},
 		{"not paired", daemon.Status{State: "not_paired"}, `{"state":"not_paired"}`},
 	}
 	for _, tc := range cases {
@@ -254,6 +255,7 @@ func TestConnectOverSocket(t *testing.T) {
 		{"connected", daemon.ConnectResult{Result: "connected"}, `{"result":"connected"}`},
 		{"already connected", daemon.ConnectResult{Result: "already_connected"}, `{"result":"already_connected"}`},
 		{"rejected", daemon.ConnectResult{Result: "rejected"}, `{"result":"rejected"}`},
+		{"revoked", daemon.ConnectResult{Result: "revoked"}, `{"result":"revoked"}`},
 		{"not paired", daemon.ConnectResult{Result: "not_paired"}, `{"result":"not_paired"}`},
 		{"still trying", daemon.ConnectResult{Result: "still_trying", LastError: "connection refused"}, `{"result":"still_trying","last_error":"connection refused"}`},
 		{"still trying without error", daemon.ConnectResult{Result: "still_trying"}, `{"result":"still_trying","last_error":null}`},

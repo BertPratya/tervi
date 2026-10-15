@@ -35,6 +35,11 @@ type ControlClient interface {
 	Connect(ctx context.Context) (control.ConnectAnswer, error)
 }
 
+func printUnpaired(output io.Writer, server string) {
+	fmt.Fprintln(output, "✗ This computer was unpaired on the server.")
+	fmt.Fprintf(output, "  Pair it again with: tervi pair --server %s\n", server)
+}
+
 // Flow runs the network portion of a new or resumed pairing.
 type Flow interface {
 	StartNew(ctx context.Context, env Env, server string) int

@@ -20,6 +20,7 @@ const (
 	attemptIdle attemptKind = iota
 	attemptFailed
 	attemptRejected
+	attemptRevoked
 	attemptConnected
 )
 
@@ -35,6 +36,7 @@ type attemptResult struct {
 type lostResult struct {
 	reason       string
 	closeStarted bool
+	revoked      bool
 }
 
 func (d *Daemon) tryConnection(parent context.Context, try int) attemptResult {
@@ -78,12 +80,19 @@ func (d *Daemon) tryConnection(parent context.Context, try int) attemptResult {
 		}
 		return attemptResult{kind: attemptIdle}
 	}
-	if unknownCredential(response) {
+	switch credentialRefusal(response) {
+	case credentialErrorUnknown:
 		closeResponse(response)
 		if conn != nil {
 			_ = conn.CloseNow()
 		}
 		return attemptResult{kind: attemptRejected, server: server}
+	case credentialErrorRevoked:
+		closeResponse(response)
+		if conn != nil {
+			_ = conn.CloseNow()
+		}
+		return attemptResult{kind: attemptRevoked, server: server}
 	}
 	if dialErr != nil || conn == nil {
 		if conn != nil {
@@ -111,6 +120,10 @@ func (d *Daemon) tryConnection(parent context.Context, try int) attemptResult {
 		if parent.Err() != nil {
 			_ = conn.Close(websocket.StatusCode(protocol.CloseNormal), "daemon stopped")
 			return attemptResult{kind: attemptIdle}
+		}
+		if websocket.CloseStatus(helloErr) == websocket.StatusCode(protocol.CloseRevoked) {
+			_ = conn.CloseNow()
+			return attemptResult{kind: attemptRevoked, server: server}
 		}
 		if isTimeoutError(helloErr) {
 			go func() {
@@ -215,6 +228,8 @@ func closeForTimeout(conn *websocket.Conn, seconds int) lostResult {
 func connectionLost(err error) lostResult {
 	code := websocket.CloseStatus(err)
 	switch code {
+	case websocket.StatusCode(protocol.CloseRevoked):
+		return lostResult{revoked: true}
 	case websocket.StatusCode(protocol.CloseServerStopping):
 		return lostResult{reason: "the server is stopping"}
 	case websocket.StatusCode(protocol.CloseReplaced):
