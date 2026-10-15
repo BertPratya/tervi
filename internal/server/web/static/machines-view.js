@@ -17,12 +17,24 @@ export function afterRevoke(state, machineId, status) {
   }
 
   const listedMachine = machines.find((item) => item.machine_id === machineId);
-  const machine = listedMachine
-    ?? (state.revokeMachine?.machine_id === machineId ? state.revokeMachine : null);
+  const openedMachine = state.revokeMachine?.machine_id === machineId ? state.revokeMachine : null;
+  const machine = openedMachine ?? listedMachine;
   return {
     ...state,
-    machines: listedMachine || !machine ? machines : [...machines, machine],
+    machines,
     revokeFailure: shown(machine?.display_name),
+  };
+}
+
+export function afterRefresh(state, answerMachines, revokedSince, failedSince) {
+  const machines = Array.isArray(state.machines) ? state.machines : [];
+  const revokedIDs = new Set(revokedSince ?? []);
+  return {
+    ...state,
+    machines: Array.isArray(answerMachines)
+      ? answerMachines.filter((machine) => !revokedIDs.has(machine.machine_id))
+      : machines,
+    revokeFailure: failedSince ? state.revokeFailure ?? null : null,
   };
 }
 

@@ -115,6 +115,18 @@ func TestMachinesPageHasRevokeDialog(t *testing.T) {
 	}
 }
 
+func TestMachinesRevokeButtonUsesShownName(t *testing.T) {
+	script, err := staticFiles.ReadFile("static/machines.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scriptText := string(script)
+	if !strings.Contains(scriptText, `import { shown } from '/static/view.js';`) ||
+		!strings.Contains(scriptText, "button.setAttribute('aria-label', `Revoke ${shown(machine.display_name)}`)") {
+		t.Fatal("Revoke button aria-label must use shown() so an empty name is announced as unknown")
+	}
+}
+
 func TestMachinesPageAnnouncesOnlyFailureLineAndPreservesRowSpacing(t *testing.T) {
 	page, err := staticFiles.ReadFile("static/machines.html")
 	if err != nil {

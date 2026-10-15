@@ -1,10 +1,8 @@
 package machines
 
 import (
-	"context"
 	"net/http"
 
-	"github.com/bertpratya/tervi/internal/server/credential"
 	"github.com/bertpratya/tervi/internal/server/httpapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -43,23 +41,4 @@ func (handler revokeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func revokeMachineCredential(ctx context.Context, deps Deps, machineID string) error {
-	tx, err := deps.Pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
-
-	if _, err := credential.Revoke(ctx, tx, machineID); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-	if deps.List != nil {
-		deps.List.CloseRevoked(machineID)
-	}
-	return nil
 }

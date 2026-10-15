@@ -233,10 +233,6 @@ func TestServerMatchesContract(t *testing.T) {
 	expectStatus(t, response, http.StatusNotFound)
 	expectJSONField(t, response, "error", "invalid_link")
 
-	if _, err := pool.Exec(context.Background(), `UPDATE credentials
-		SET status = 'revoked', ended_at = now() WHERE credential_hash = $1`, secret.Hash(secret.FromString(credentialA))); err != nil {
-		t.Fatalf("revoke contract credential: %v", err)
-	}
 	client.openConnectionRefused(t, credentialA, "credential_revoked")
 	for _, route := range []struct {
 		operation string

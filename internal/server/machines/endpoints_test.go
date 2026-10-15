@@ -130,10 +130,11 @@ func TestUnpairClosesConnection(t *testing.T) {
 	if status != http.StatusNoContent || len(body) != 0 {
 		t.Fatalf("unpair response = (%d, %q), want 204 with no body", status, body)
 	}
+	assertEndpointConnectionClosed(t, conn)
+	assertCredentialRevoked(t, f, machineID)
 	if f.list.Online(machineID) {
 		t.Fatal("machine remains Online after unpair")
 	}
-	assertEndpointConnectionClosed(t, conn)
 	status, body = f.listMachines(t)
 	if status != http.StatusOK {
 		t.Fatalf("GET /api/v1/machines status = %d, want %d; body = %q", status, http.StatusOK, body)
