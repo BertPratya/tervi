@@ -81,7 +81,7 @@ func (backend fileBackend) Set(user, value string) error {
 	if err := os.MkdirAll(backend.dir, 0700); err != nil {
 		return fmt.Errorf("create credential folder: %w", err)
 	}
-	temporary, err := os.CreateTemp(backend.dir, ".credential-*")
+	temporary, err := os.CreateTemp(backend.dir, credentialTempPrefix+"*")
 	if err != nil {
 		return fmt.Errorf("write credential file: %w", err)
 	}
@@ -137,42 +137,44 @@ func (err *LeftoverRemovalError) Unwrap() error { return err.Err }
 // HasLeftovers reports whether a file named credential-check.json or matching
 // the credential temp-file prefix remains under dir.
 func HasLeftovers(dir string) (bool, error) {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
+	paths, err := listLeftoverFiles(dir)
 	if err != nil {
-		return false, fmt.Errorf("read credential folder: %w", err)
+		return false, err
 	}
-	for _, entry := range entries {
-		if isCredentialLeftover(entry.Name()) {
-			return true, nil
-		}
-	}
-	return false, nil
+	return len(paths) != 0, nil
 }
 
 // DeleteLeftovers removes the credential check file and temporary credential
 // files, treating missing files as already removed. It leaves the directory
 // and every other name untouched.
 func DeleteLeftovers(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
+	paths, err := listLeftoverFiles(dir)
 	if err != nil {
-		return fmt.Errorf("read credential folder: %w", err)
+		return err
 	}
-	for _, entry := range entries {
-		if !isCredentialLeftover(entry.Name()) {
-			continue
-		}
-		path := filepath.Join(dir, entry.Name())
+	for _, path := range paths {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return &LeftoverRemovalError{Path: path, Err: err}
 		}
 	}
 	return nil
+}
+
+func listLeftoverFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read credential folder: %w", err)
+	}
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if isCredentialLeftover(entry.Name()) {
+			paths = append(paths, filepath.Join(dir, entry.Name()))
+		}
+	}
+	return paths, nil
 }
 
 func isCredentialLeftover(name string) bool {

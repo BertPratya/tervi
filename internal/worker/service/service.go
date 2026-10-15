@@ -86,7 +86,7 @@ func (service *Service) EnsureRunning(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("resolve program path: %w", err)
 	}
-	path := filepath.Join(options.ServiceDir, serviceFile)
+	path := ServiceFilePath(options.ServiceDir)
 	contents, err := os.ReadFile(path)
 	rewrite := errors.Is(err, os.ErrNotExist)
 	if err != nil && !rewrite {
@@ -120,13 +120,7 @@ func (service *Service) EnsureRunning(ctx context.Context) (bool, error) {
 
 func enableLinger(ctx context.Context, runner Runner) error {
 	output, err := runner.Run(ctx, "loginctl", "enable-linger")
-	if err == nil {
-		return nil
-	}
-	if message := strings.TrimSpace(output); message != "" {
-		return errors.New(message)
-	}
-	return err
+	return removalCommandError(output, err)
 }
 
 func (service *Service) waitForDaemon(ctx context.Context, options Options) error {
@@ -172,13 +166,7 @@ func (service *Service) waitForDaemon(ctx context.Context, options Options) erro
 func runSystemctl(ctx context.Context, runner Runner, args ...string) error {
 	commandArgs := append([]string{"--user"}, args...)
 	output, err := runner.Run(ctx, "systemctl", commandArgs...)
-	if err == nil {
-		return nil
-	}
-	if message := strings.TrimSpace(output); message != "" {
-		return errors.New(message)
-	}
-	return err
+	return removalCommandError(output, err)
 }
 
 func serviceContents(programPath string) []byte {

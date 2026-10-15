@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/bertpratya/tervi/internal/worker/cli"
@@ -78,7 +79,7 @@ func (worker *unpairer) RemoveLocal(ctx context.Context, env cli.Env) *cli.Remov
 	}
 	manager := service.New(service.Options{Runner: env.Runner, ServiceDir: env.ServiceDir})
 	if err := manager.Stop(ctx); err != nil {
-		return &cli.RemoveFailure{Background: true, Reason: err.Error()}
+		return &cli.RemoveFailure{Background: true, Reason: removalReason(err)}
 	}
 	runtimeDir, err := control.RuntimeDir()
 	if err != nil {
@@ -124,31 +125,39 @@ func removeLocked(ctx context.Context, manager *service.Service, env cli.Env) *c
 	if err := manager.RemoveFile(ctx); err != nil {
 		var fileFailure *service.FileRemovalError
 		if errors.As(err, &fileFailure) {
-			reason := fileFailure.Err.Error()
+			reason := removalReason(fileFailure.Err)
 			if fileFailure.ReloadErr != nil {
-				reason += "; daemon-reload: " + fileFailure.ReloadErr.Error()
+				reason += "; daemon-reload: " + removalReason(fileFailure.ReloadErr)
 			}
 			return &cli.RemoveFailure{Path: fileFailure.Path, Reason: reason}
 		}
-		return &cli.RemoveFailure{Background: true, Reason: err.Error()}
+		return &cli.RemoveFailure{Background: true, Reason: removalReason(err)}
 	}
 	if env.Store == nil {
 		return &cli.RemoveFailure{Path: credential.Path(env.StateDir), Reason: "credential store is unavailable"}
 	}
 	if err := env.Store.Delete(); err != nil {
-		return &cli.RemoveFailure{Path: credential.Path(env.StateDir), Reason: err.Error()}
+		return &cli.RemoveFailure{Path: credential.Path(env.StateDir), Reason: removalReason(err)}
 	}
 	if err := credential.DeleteLeftovers(env.StateDir); err != nil {
 		var leftoverFailure *credential.LeftoverRemovalError
 		if errors.As(err, &leftoverFailure) {
-			return &cli.RemoveFailure{Path: leftoverFailure.Path, Reason: leftoverFailure.Err.Error()}
+			return &cli.RemoveFailure{Path: leftoverFailure.Path, Reason: removalReason(leftoverFailure.Err)}
 		}
-		return &cli.RemoveFailure{Path: env.StateDir, Reason: err.Error()}
+		return &cli.RemoveFailure{Path: env.StateDir, Reason: removalReason(err)}
 	}
 	if err := state.DeleteState(env.StateDir); err != nil {
-		return &cli.RemoveFailure{Path: state.StatePath(env.StateDir), Reason: err.Error()}
+		return &cli.RemoveFailure{Path: state.StatePath(env.StateDir), Reason: removalReason(err)}
 	}
 	return nil
+}
+
+func removalReason(err error) string {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err.Error()
+	}
+	return err.Error()
 }
 
 func (worker *unpairer) LingerOn(ctx context.Context, env cli.Env) bool {

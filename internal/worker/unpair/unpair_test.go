@@ -17,6 +17,7 @@ import (
 
 	"github.com/bertpratya/tervi/internal/secret"
 	"github.com/bertpratya/tervi/internal/worker/cli"
+	"github.com/bertpratya/tervi/internal/worker/control"
 	"github.com/bertpratya/tervi/internal/worker/credential"
 	"github.com/bertpratya/tervi/internal/worker/state"
 )
@@ -139,9 +140,13 @@ func (fixture *unpairFixture) serviceFile(t *testing.T) string {
 }
 
 func (fixture *unpairFixture) run(args ...string) int {
+	return fixture.runWithInput("y\n", args...)
+}
+
+func (fixture *unpairFixture) runWithInput(input string, args ...string) int {
 	fixture.stdout.Reset()
 	fixture.stderr.Reset()
-	fixture.client.Stdin = strings.NewReader("y\n")
+	fixture.client.Stdin = strings.NewReader(input)
 	fixture.client.Unpairer = New(Options{RequestTimeout: 30 * time.Millisecond, LockWait: 15 * time.Millisecond})
 	return cli.Run(context.Background(), args, *fixture.client, nil)
 }
@@ -164,10 +169,59 @@ func TestUnpairRemovesInOrder(t *testing.T) {
 	fixture.runner.events = &events
 	fixture.pair(t, true, true)
 	servicePath := fixture.serviceFile(t)
+	leftovers := []string{
+		filepath.Join(fixture.stateDir, ".credential-x1y2"),
+		filepath.Join(fixture.stateDir, "credential-check.json"),
+	}
+	for _, path := range leftovers {
+		if err := os.WriteFile(path, []byte("temporary secret"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixture.client.Store = credential.NewStore(&failDeleteBackend{
+		Backend: credential.NewFileBackend(fixture.stateDir),
+		onDelete: func(user string) {
+			if user != "worker" {
+				return
+			}
+			events = append(events, "credential.json")
+			for _, path := range leftovers {
+				if _, err := os.Stat(path); err != nil {
+					t.Errorf("leftover %s was removed before credential.json: %v", path, err)
+				}
+			}
+			if _, err := os.Stat(state.StatePath(fixture.stateDir)); err != nil {
+				t.Errorf("state.json was removed before credential.json: %v", err)
+			}
+		},
+	})
+	runtimeDir := filepath.Join(fixture.runtimeBase, "tervi")
 	fixture.runner.onCall = func(name string, args []string) {
+		if name == "systemctl" && len(args) > 2 && args[1] == "disable" && args[2] == "--now" {
+			called := false
+			err := control.WithLock(runtimeDir, func() error { called = true; return nil })
+			if err != nil || !called {
+				t.Errorf("daemon lock was held before Stop completed: err=%v callback=%v", err, called)
+			}
+		}
 		if name == "systemctl" && len(args) > 0 && args[len(args)-1] == "daemon-reload" {
-			if _, err := os.Stat(filepath.Join(fixture.runtimeBase, "tervi", "daemon.lock")); err != nil {
-				t.Errorf("daemon-reload ran without daemon.lock held: %v", err)
+			called := false
+			err := control.WithLock(runtimeDir, func() error { called = true; return nil })
+			if !errors.Is(err, control.ErrAlreadyRunning) || called {
+				t.Errorf("daemon lock was not held during service removal: err=%v callback=%v", err, called)
+			}
+			if _, err := os.Lstat(servicePath); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("daemon-reload ran before service file removal: %v", err)
+			}
+		}
+		if name == "loginctl" && len(args) > 0 && args[0] == "show-user" {
+			for _, path := range leftovers {
+				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("leftover %s remains by linger check: %v", path, err)
+				}
+			}
+			if _, err := os.Lstat(state.StatePath(fixture.stateDir)); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("state.json remains by linger check: %v", err)
 			}
 		}
 	}
@@ -179,7 +233,7 @@ func TestUnpairRemovesInOrder(t *testing.T) {
 	if fixture.authorization != "Bearer "+unpairTestCredential || fixture.requests.Load() != 1 {
 		t.Errorf("request auth=%q count=%d", fixture.authorization, fixture.requests.Load())
 	}
-	wantEvents := []string{"server", "systemctl --user disable --now tervi", "systemctl --user daemon-reload", "loginctl show-user --property=Linger --value"}
+	wantEvents := []string{"server", "systemctl --user disable --now tervi", "systemctl --user daemon-reload", "credential.json", "loginctl show-user --property=Linger --value"}
 	if fmt.Sprint(events) != fmt.Sprint(wantEvents) {
 		t.Errorf("events = %v, want %v", events, wantEvents)
 	}
@@ -195,6 +249,11 @@ func TestUnpairRemovesInOrder(t *testing.T) {
 	}
 	if _, err := os.Stat(servicePath); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("service file remains: %v", err)
+	}
+	for _, path := range leftovers {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("leftover %s remains: %v", path, err)
+		}
 	}
 }
 
@@ -219,8 +278,14 @@ func TestUnpairNoAnswer(t *testing.T) {
 	if requests.Load() != 1 {
 		t.Errorf("requests = %d, want one", requests.Load())
 	}
+	if len(fixture.runner.calls) != 0 {
+		t.Errorf("service was touched after no answer: %v", fixture.runner.calls)
+	}
 	if _, err := os.Stat(credential.Path(fixture.stateDir)); err != nil {
 		t.Errorf("credential removed after no answer: %v", err)
+	}
+	if _, err := os.Stat(state.StatePath(fixture.stateDir)); err != nil {
+		t.Errorf("state removed after no answer: %v", err)
 	}
 	if _, err := os.Stat(servicePath); err != nil {
 		t.Errorf("service removed after no answer: %v", err)
@@ -250,12 +315,18 @@ func TestUnpairCannotConnect(t *testing.T) {
 	if _, err := os.Stat(servicePath); err != nil {
 		t.Errorf("service removed when server was unavailable: %v", err)
 	}
+	if len(fixture.runner.calls) != 0 {
+		t.Errorf("service was touched when server was unavailable: %v", fixture.runner.calls)
+	}
+	if _, err := os.Stat(state.StatePath(fixture.stateDir)); err != nil {
+		t.Errorf("state removed when server was unavailable: %v", err)
+	}
 }
 
 func TestUnpairOtherAnswer(t *testing.T) {
 	fixture := newUnpairFixture(t, nil)
 	fixture.pair(t, true, true)
-	fixture.serviceFile(t)
+	servicePath := fixture.serviceFile(t)
 	fixture.status.Store(http.StatusInternalServerError)
 	code := fixture.run("unpair", "--yes")
 	want := "✗ " + fixture.server.URL + " couldn't unpair this computer (HTTP 500). Nothing was removed here.\n  Run tervi unpair again to finish, or revoke this computer on the Machines page.\n"
@@ -264,6 +335,15 @@ func TestUnpairOtherAnswer(t *testing.T) {
 	}
 	if _, err := os.Stat(credential.Path(fixture.stateDir)); err != nil {
 		t.Errorf("credential removed after 500: %v", err)
+	}
+	if _, err := os.Stat(state.StatePath(fixture.stateDir)); err != nil {
+		t.Errorf("state removed after 500: %v", err)
+	}
+	if _, err := os.Stat(servicePath); err != nil {
+		t.Errorf("service removed after 500: %v", err)
+	}
+	if len(fixture.runner.calls) != 0 {
+		t.Errorf("service was touched after 500: %v", fixture.runner.calls)
 	}
 	fixture.status.Store(http.StatusNoContent)
 	if code := fixture.run("unpair", "--yes"); code != 0 {
@@ -416,6 +496,9 @@ func TestUnpairLeftovers(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		localOnly   bool
+		answer      string
+		ask         bool
+		cancel      bool
 		credential  string
 		mode        os.FileMode
 		withService bool
@@ -424,6 +507,8 @@ func TestUnpairLeftovers(t *testing.T) {
 		{name: "service and state without credential", withService: true, withState: true},
 		{name: "damaged credential", credential: "not-json"},
 		{name: "exposed credential", credential: "valid", mode: 0644, localOnly: true},
+		{name: "prompt accepts yes", answer: " y \n", ask: true, withService: true, withState: true},
+		{name: "prompt declines", answer: "n\n", ask: true, cancel: true, credential: "damaged", withService: true, withState: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newUnpairFixture(t, nil)
@@ -452,14 +537,57 @@ func TestUnpairLeftovers(t *testing.T) {
 			if tc.withService {
 				fixture.serviceFile(t)
 			}
-			args := []string{"unpair", "--yes"}
+			var cancellationLeftovers []string
+			if tc.cancel {
+				cancellationLeftovers = []string{filepath.Join(fixture.stateDir, ".credential-cancel"), filepath.Join(fixture.stateDir, "credential-check.json")}
+				for _, path := range cancellationLeftovers {
+					if err := os.WriteFile(path, []byte("keep"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			args := []string{"unpair"}
+			if !tc.ask {
+				args = append(args, "--yes")
+			}
 			if tc.localOnly {
 				args = append(args, "--local-only")
 			}
-			if code := fixture.run(args...); code != 0 {
+			input := tc.answer
+			if input == "" {
+				input = "y\n"
+			}
+			code := fixture.runWithInput(input, args...)
+			if tc.cancel {
+				question := "This removes what is left of an earlier pairing on this computer. Continue? [y/N]\n"
+				if code != 1 || fixture.stdout.String() != question+"Nothing was changed.\n" {
+					t.Errorf("Run(cancel leftovers) = %d, stdout=%q", code, fixture.stdout.String())
+				}
+				for _, path := range []string{credential.Path(fixture.stateDir), state.StatePath(fixture.stateDir), filepath.Join(fixture.serviceDir, "tervi.service")} {
+					if _, err := os.Stat(path); err != nil {
+						t.Errorf("%s changed after declining leftovers: %v", path, err)
+					}
+				}
+				for _, path := range cancellationLeftovers {
+					if _, err := os.Stat(path); err != nil {
+						t.Errorf("%s changed after declining leftovers: %v", path, err)
+					}
+				}
+				if fixture.requests.Load() != 0 || len(fixture.runner.calls) != 0 {
+					t.Errorf("declined leftovers did work: requests=%d runner=%v", fixture.requests.Load(), fixture.runner.calls)
+				}
+				return
+			}
+			if code != 0 {
 				t.Fatalf("Run(leftovers) = %d, stdout=%q", code, fixture.stdout.String())
 			}
-			if !strings.Contains(fixture.stdout.String(), "✓ Removed what was left of the earlier pairing.") {
+			if tc.ask {
+				question := "This removes what is left of an earlier pairing on this computer. Continue? [y/N]\n"
+				success := "✓ Removed what was left of the earlier pairing.\n"
+				if fixture.stdout.String() != question+success {
+					t.Errorf("leftovers question/success order missing: %q", fixture.stdout.String())
+				}
+			} else if !strings.Contains(fixture.stdout.String(), "✓ Removed what was left of the earlier pairing.") {
 				t.Errorf("leftovers success line absent: %q", fixture.stdout.String())
 			}
 			if fixture.requests.Load() != 0 {
@@ -527,7 +655,8 @@ func TestUnpairServiceFileDeleteFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(servicePath, "child"), []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if code := fixture.run("unpair", "--yes"); code != 1 || !strings.Contains(fixture.stdout.String(), "✗ Can't delete "+servicePath+":") {
+	want := "✗ Can't delete " + servicePath + ": " + syscall.ENOTEMPTY.Error() + "\n  Finish with: tervi unpair --local-only\n"
+	if code := fixture.run("unpair", "--yes"); code != 1 || fixture.stdout.String() != want {
 		t.Errorf("Run(service file delete failure) = %d, stdout=%q", code, fixture.stdout.String())
 	}
 	if _, err := os.Stat(credential.Path(fixture.stateDir)); err != nil {
@@ -544,12 +673,20 @@ func TestUnpairServiceFileDeleteFailure(t *testing.T) {
 
 type failDeleteBackend struct {
 	credential.Backend
-	fail bool
+	fail     bool
+	err      error
+	onDelete func(user string)
 }
 
 func (backend *failDeleteBackend) Delete(user string) error {
+	if backend.onDelete != nil {
+		backend.onDelete(user)
+	}
 	if backend.fail && user == "worker" {
 		backend.fail = false
+		if backend.err != nil {
+			return backend.err
+		}
 		return errors.New("delete failed")
 	}
 	return backend.Backend.Delete(user)
@@ -559,9 +696,10 @@ func TestUnpairDeleteFailure(t *testing.T) {
 	fixture := newUnpairFixture(t, nil)
 	fixture.pair(t, true, true)
 	base := credential.NewFileBackend(fixture.stateDir)
-	backend := &failDeleteBackend{Backend: base, fail: true}
+	backend := &failDeleteBackend{Backend: base, fail: true, err: &os.PathError{Op: "remove", Path: credential.Path(fixture.stateDir), Err: syscall.EACCES}}
 	fixture.client.Store = credential.NewStore(backend)
-	if code := fixture.run("unpair", "--yes"); code != 1 || !strings.Contains(fixture.stdout.String(), "✗ Can't delete "+credential.Path(fixture.stateDir)+":") || !strings.Contains(fixture.stdout.String(), "  Finish with: tervi unpair --local-only\n") {
+	wantFailure := "✗ Can't delete " + credential.Path(fixture.stateDir) + ": permission denied\n  Finish with: tervi unpair --local-only\n"
+	if code := fixture.run("unpair", "--yes"); code != 1 || fixture.stdout.String() != wantFailure {
 		t.Errorf("Run(delete failure) = %d, stdout=%q", code, fixture.stdout.String())
 	}
 	if _, err := os.Stat(state.StatePath(fixture.stateDir)); err != nil {
@@ -584,7 +722,8 @@ func TestUnpairDeleteLeftoverFailure(t *testing.T) {
 	if err := os.WriteFile(child, []byte(unpairTestCredential), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if code := fixture.run("unpair", "--yes"); code != 1 || !strings.Contains(fixture.stdout.String(), "✗ Can't delete "+leftover+":") || !strings.Contains(fixture.stdout.String(), "  Finish with: tervi unpair --local-only\n") {
+	want := "✗ Can't delete " + leftover + ": " + syscall.ENOTEMPTY.Error() + "\n  Finish with: tervi unpair --local-only\n"
+	if code := fixture.run("unpair", "--yes"); code != 1 || fixture.stdout.String() != want {
 		t.Errorf("Run(leftover delete failure) = %d, stdout=%q", code, fixture.stdout.String())
 	}
 	if _, err := os.Stat(state.StatePath(fixture.stateDir)); err != nil {
@@ -616,8 +755,20 @@ func TestUnpairDeleteStateFailure(t *testing.T) {
 	if err := os.WriteFile(child, []byte("state"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if code := fixture.run("unpair", "--yes"); code != 1 || !strings.Contains(fixture.stdout.String(), "✗ Can't delete "+statePath+":") || !strings.Contains(fixture.stdout.String(), "  Finish with: tervi unpair --local-only\n") {
+	leftovers := []string{filepath.Join(fixture.stateDir, ".credential-before-state"), filepath.Join(fixture.stateDir, "credential-check.json")}
+	for _, path := range leftovers {
+		if err := os.WriteFile(path, []byte("leftover"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := "✗ Can't delete " + statePath + ": " + syscall.ENOTEMPTY.Error() + "\n  Finish with: tervi unpair --local-only\n"
+	if code := fixture.run("unpair", "--yes"); code != 1 || fixture.stdout.String() != want {
 		t.Errorf("Run(state delete failure) = %d, stdout=%q", code, fixture.stdout.String())
+	}
+	for _, path := range leftovers {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("leftover %s remains after state deletion was attempted: %v", path, err)
+		}
 	}
 	if _, err := os.Stat(credential.Path(fixture.stateDir)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("credential remains after state failure: %v", err)
@@ -637,7 +788,7 @@ func TestUnpairDeleteStateFailure(t *testing.T) {
 func TestUnpairLockFailure(t *testing.T) {
 	fixture := newUnpairFixture(t, nil)
 	fixture.pair(t, true, true)
-	fixture.serviceFile(t)
+	servicePath := fixture.serviceFile(t)
 	runtimeDir := filepath.Join(fixture.runtimeBase, "tervi")
 	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
 		t.Fatal(err)
@@ -649,8 +800,13 @@ func TestUnpairLockFailure(t *testing.T) {
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
-	if code := fixture.run("unpair", "--yes"); code != 1 || !strings.Contains(fixture.stdout.String(), "Can't stop tervi in the background") {
+	if code := fixture.run("unpair", "--yes"); code != 1 || !strings.Contains(fixture.stdout.String(), "Can't stop tervi in the background") || !strings.HasSuffix(fixture.stdout.String(), "  Finish with: tervi unpair --local-only\n") {
 		t.Errorf("Run(lock failure) = %d, stdout=%q", code, fixture.stdout.String())
+	}
+	for _, path := range []string{servicePath, credential.Path(fixture.stateDir), state.StatePath(fixture.stateDir)} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s changed after lock failure: %v", path, err)
+		}
 	}
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
 		t.Fatal(err)
@@ -662,7 +818,7 @@ func TestUnpairLockFailure(t *testing.T) {
 	fixture.assertNoPairingFiles(t)
 }
 
-func TestUnpairRemovesSecretLeftoversAndKeepsOtherFiles(t *testing.T) {
+func TestUnpairRemovesSecretLeftovers(t *testing.T) {
 	for _, localOnly := range []bool{false, true} {
 		t.Run(fmt.Sprintf("local-only=%v", localOnly), func(t *testing.T) {
 			fixture := newUnpairFixture(t, nil)
