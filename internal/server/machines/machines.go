@@ -1,4 +1,4 @@
-// Package machines provides the paired machines list API.
+// Package machines provides machine credential and listing routes.
 package machines
 
 import (
@@ -27,9 +27,11 @@ type listedMachine struct {
 	LastSeenSecondsAgo *int64 `json:"last_seen_seconds_ago"`
 }
 
-// Register adds the machines list API route to mux.
+// Register adds the machine routes to mux.
 func Register(mux *http.ServeMux, deps Deps) {
 	mux.Handle("GET /api/v1/machines", listHandler{deps: deps})
+	mux.Handle("POST /api/v1/machines/current/unpair", unpairHandler{deps: deps})
+	mux.Handle("POST /api/v1/machines/{machine_id}/revoke", revokeHandler{deps: deps})
 }
 
 type listHandler struct {

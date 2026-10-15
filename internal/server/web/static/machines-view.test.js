@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { REFRESH_MS, view } from './machines-view.js';
+import { afterRevoke, REFRESH_MS, revokeQuestion, view } from './machines-view.js';
 
 test('view builds the online row', () => {
   const result = view({ machines: [{
@@ -89,4 +89,68 @@ test('view keeps machine names as literal text', () => {
 
 test('view exports the five-second refresh interval', () => {
   assert.equal(REFRESH_MS, 5000);
+});
+
+test('revoke question includes the machine name as literal text', () => {
+  assert.equal(
+    revokeQuestion({ display_name: 'bert-desktop' }),
+    'Revoke bert-desktop? It stops working at once and must be paired again to come back.',
+  );
+  assert.equal(
+    revokeQuestion({ display_name: '<b>computer</b>' }),
+    'Revoke <b>computer</b>? It stops working at once and must be paired again to come back.',
+  );
+  const result = view({ machines: [{
+    display_name: '<b>computer</b>', os_name: 'Linux', os_version: '1', online: true,
+  }] });
+  assert.equal(result.rows[0], '● <b>computer</b>   Linux 1   Online');
+});
+
+test('view shows a revoke failure by machine name', () => {
+  const result = view({ machines: [], revokeFailure: 'bert-desktop' });
+
+  assert.equal(result.failureMessage, "Couldn't revoke bert-desktop. Try again.");
+});
+
+test('afterRevoke removes machines on 204 and 404 without a failure', () => {
+  const state = { machines: [
+    { machine_id: 'one', display_name: 'first' },
+    { machine_id: 'two', display_name: 'second' },
+  ], revokeFailure: null };
+
+  for (const status of [204, 404]) {
+    const result = afterRevoke(state, 'one', status);
+    assert.deepEqual(result.machines, [{ machine_id: 'two', display_name: 'second' }]);
+    assert.equal(result.revokeFailure, null);
+  }
+});
+
+test('afterRevoke keeps machines and names the failure for errors or no answer', () => {
+  const state = { machines: [
+    { machine_id: 'one', display_name: 'bert-desktop' },
+    { machine_id: 'two', display_name: 'other' },
+  ], revokeFailure: null };
+
+  for (const status of [500, null]) {
+    const result = afterRevoke(state, 'one', status);
+    assert.deepEqual(result.machines, state.machines);
+    assert.equal(result.revokeFailure, 'bert-desktop');
+    assert.equal(view(result).failureMessage, "Couldn't revoke bert-desktop. Try again.");
+  }
+
+  const afterRefresh = view({ machines: state.machines, revokeFailure: null });
+  assert.equal(afterRefresh.failureMessage, '');
+});
+
+test('afterRevoke restores the row if a refresh removed it while the dialog was open', () => {
+  const machine = { machine_id: 'one', display_name: 'bert-desktop' };
+  const state = { machines: [{ machine_id: 'two', display_name: 'other' }], revokeMachine: machine };
+
+  const failed = afterRevoke(state, 'one', 500);
+  assert.deepEqual(failed.machines, [...state.machines, machine]);
+  assert.equal(failed.revokeFailure, 'bert-desktop');
+
+  const gone = afterRevoke(state, 'one', 404);
+  assert.deepEqual(gone.machines, state.machines);
+  assert.equal(gone.revokeFailure, null);
 });
